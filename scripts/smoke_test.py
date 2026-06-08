@@ -103,21 +103,24 @@ def kis_balance(domain: str, token: str, app_key: str, app_secret: str,
     return cash
 
 
-def test_kis(name: str, domain: str, kp: str, sp: str, acc: str, bal_tr: str):
+def test_kis(name: str, domain: str, kp: str, sp: str, acc: str, bal_tr: str) -> bool:
+    """KIS 한 환경(실전/모의) 점검. 토큰+시세가 되면 True(해외 IP 게이트 통과 판정)."""
     print(f"[KIS {name}] {domain}")
     if not need(kp, sp, acc):
         print(f"  {SKIP} 키 미설정 ({kp}/{sp}/{acc})")
-        return
+        return False
     app_key, app_secret, account_no = os.getenv(kp), os.getenv(sp), os.getenv(acc)
     try:
         token = kis_token(domain, app_key, app_secret)
         print(f"  {OK} 토큰 발급 (App Key/Secret 유효)")
     except Exception as e:
         print(f"  {FAIL} 토큰 발급 실패: {e}")
-        return
+        return False
+    price_ok = False
     try:
         price = kis_price(domain, token, app_key, app_secret)
         print(f"  {OK} 시세 조회: 삼성전자 현재가 {price:,}원")
+        price_ok = True
     except Exception as e:
         print(f"  {FAIL} 시세 조회 실패: {e}")
     try:
@@ -125,6 +128,7 @@ def test_kis(name: str, domain: str, kp: str, sp: str, acc: str, bal_tr: str):
         print(f"  {OK} 잔고 조회: 예수금 {int(cash):,}원 (계좌번호 {account_no} 유효)")
     except Exception as e:
         print(f"  {FAIL} 잔고 조회 실패 (계좌번호/연동 확인 필요): {e}")
+    return price_ok
 
 
 # ─────────────────────────────────────────────────────────────
@@ -264,15 +268,29 @@ def test_discord():
 
 
 def main():
+    # 인자 'kis' → KIS만(해외 IP 게이트용). 없으면 전체.
+    only = sys.argv[1].lower() if len(sys.argv) > 1 else "all"
+
     print("=" * 60)
-    print(" 외부 API 연결 스모크 테스트")
+    print(" KIS 해외 IP 게이트" if only == "kis" else " 외부 API 연결 스모크 테스트")
     print("=" * 60)
 
-    test_kis("실전", "https://openapi.koreainvestment.com:9443",
-             "KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO", "TTTC8434R")
+    live_ok = test_kis("실전", "https://openapi.koreainvestment.com:9443",
+                       "KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO", "TTTC8434R")
     line()
-    test_kis("모의", "https://openapivts.koreainvestment.com:29443",
-             "KIS_PAPER_APP_KEY", "KIS_PAPER_APP_SECRET", "KIS_PAPER_ACCOUNT_NO", "VTTC8434R")
+    paper_ok = test_kis("모의", "https://openapivts.koreainvestment.com:29443",
+                        "KIS_PAPER_APP_KEY", "KIS_PAPER_APP_SECRET", "KIS_PAPER_ACCOUNT_NO", "VTTC8434R")
+
+    if only == "kis":
+        print("=" * 60)
+        if live_ok and paper_ok:
+            print("✅ KIS 게이트 통과 — 이 IP에서 실전·모의 시세 조회 OK")
+            print("   → GitHub Actions를 스케줄러로 사용 가능")
+            return
+        print("❌ KIS 게이트 실패 — 이 IP에서 KIS 차단/오류")
+        print("   → Oracle Cloud 무료(서울) 또는 집 맥미니로 호스팅 전환 필요")
+        sys.exit(1)
+
     line()
     test_anthropic()
     line()

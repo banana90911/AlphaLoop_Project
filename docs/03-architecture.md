@@ -137,7 +137,7 @@ stockai/                        # 리포 루트
 │   ├── corrections.py          #   수정주가·freshness(타임스탬프 기준)·vintage 보정 (4.2)
 │   └── sources/                #   출처별 어댑터 (1차→2차→3차 폴백, 동일 스키마 반환) — 11-2.18
 │       ├── base.py             #     어댑터 인터페이스 + 사용출처 라벨(data_vintage)
-│       └── (yfinance·stooq·fred·ecos·dart·kind …)
+│       └── (yfinance·stooq·fred·dart·kind …)
 │
 ├── risk/                       # 결정론 리스크·사이징·포트폴리오 (LLM 위임 금지)
 │   ├── risk_engine.py          #   하드룰·서킷브레이커·검사순서(A.1)·재개복구(A.2)·일일-4% 정의(P1-1)

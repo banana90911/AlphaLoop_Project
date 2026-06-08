@@ -1,0 +1,47 @@
+# ── 시크릿 (절대 커밋 금지) ──────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ── 파이썬 ───────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ── 가상환경 ─────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── 데이터·DB (로컬 산출물) ──────────────────────
+*.db
+*.sqlite
+*.sqlite3
+data/
+logs/
+*.log
+
+# ── 테스트·캐시 ──────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.cache/
+
+# ── 노트북 ───────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── OS·에디터 ────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

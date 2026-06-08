@@ -100,7 +100,7 @@
 
 
 설계 정본은 위 `docs/` 디렉터리다. `[PROJECT_PLAN.md](PROJECT_PLAN.md)`는 초기 원문(구버전)으로, 최신 결정은 `docs/`를 따른다.  
-비전문가용 학습 자료(주식·경제 용어, 통계 로직)는 `[docs/reference/](docs/reference/)`에 정리되어 있음.
+비전문가용 학습 자료(주식·경제 용어, 통계 로직)와 외부 API·키 발급 가이드는 `[docs/reference/](docs/reference/)`에 정리되어 있음 — 특히 [docs/reference/external-apis.md](docs/reference/external-apis.md)에 이 프로젝트가 쓰는 모든 API와 열쇠(Key·Secret·Token) 발급 방법을 단계별로 정리했다.
 
 ## 면책
 

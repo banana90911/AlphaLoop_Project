@@ -1,0 +1,85 @@
+# 외부 API·데이터원 레퍼런스
+
+설계 문서(04·05·06·09·11)가 참조하는 외부 서비스 명세·제약·역할의 단일 참조처. **키 값은 `.env`에만 두고, 여기엔 변수명만 적는다.**
+
+## 1. 서비스 목록
+
+| 서비스 | 받는 것 | 키(.env) | 우선순위 |
+|---|---|---|---|
+| **KIS Developers** | 국내 시세·수급·공매도·계좌·주문, 해외 시세 | `KIS_*` (실전·모의) | P0 |
+| **Anthropic (Claude)** | 뉴스 판단·매매 결정(LLM) | `ANTHROPIC_API_KEY` | P0 |
+| **네이버 검색** | 뉴스 헤드라인 | `NAVER_CLIENT_ID/SECRET` | P0 |
+| **yfinance** | 글로벌 지수·환율·VIX·SOX | 없음 | P0 |
+| **KRX OPEN API** | 과거 수급·공매도·신용(2010~) | `KRX_API_KEY` | P0(백테스트) |
+| **pykrx** | 상폐 종목 과거 시세 | 없음 | P1(백테스트) |
+| **DART** | 전자공시 | `DART_API_KEY` | P1 |
+| **FRED** | 美 매크로 | `FRED_API_KEY` | P1 |
+| **healthchecks.io** | 데드맨 스위치 | `HEALTHCHECK_URL` | P1 |
+| **Discord 웹훅** | 알림 | `DISCORD_WEBHOOK_URL` | P1 |
+
+## 2. 데이터원 역할 분담 (Phase 0 실측, 2026-06)
+
+KIS는 거래·실시간·최근엔 완벽하나 **백테스트용 과거 시계열·상폐종목은 안 준다.**
+
+| 데이터 | 출처 |
+|---|---|
+| 일봉 OHLCV(운영·최근), 실시간 수급·공매도, 계좌·주문 | **KIS** |
+| 과거 수급·공매도·신용(백테스트) | **KRX OPEN API** |
+| 상폐 종목 과거 시세(생존편향 차단) | **pykrx** / KRX |
+| 글로벌 지수·환율 | **yfinance** |
+
+## 3. KIS 명세
+
+- **도메인**: 실전 `openapi.koreainvestment.com:9443` / 모의 `openapivts.koreainvestment.com:29443`
+- **토큰**: `/oauth2/tokenP`, 24h 만료 → 캐싱·갱신
+- **Rate limit**: 연속 호출 시 "초당 거래건수 초과(rt_cd=1)" → 조회 루프에 **0.5~0.6초 간격**(특히 모의)
+- **일봉**: 한 호출 최대 ~100건 → 5~10년치는 구간 페이지네이션
+
+| 용도 | 엔드포인트 | TR_ID (실전 / 모의) |
+|---|---|---|
+| 현재가 | `quotations/inquire-price` | `FHKST01010100` |
+| 기간별 일봉 | `quotations/inquire-daily-itemchartprice` | `FHKST03010100` (수정주가 `FID_ORG_ADJ_PRC`) |
+| 투자자 수급 | `quotations/inquire-investor` | `FHKST01010900` (최근 30일만 → 과거는 KRX) |
+| 공매도 일별 | `quotations/daily-short-sale` | `FHPST04830000` |
+| 잔고 | `trading/inquire-balance` | `TTTC8434R` / `VTTC8434R` |
+| 현금 주문 | `trading/order-cash` | `TTTC0802U`·`TTTC0801U` / `VTTC0802U`·`VTTC0801U` |
+| 정정·취소 | `trading/order-rvsecncl` | `TTTC0803U` / `VTTC0803U` |
+
+**ORD_DVSN(주문구분)**: 00 지정가 · 01 시장가 · 02 조건부지정가 · 03 최유리 · 04 최우선 · 05~07 시간외 · 11~16 IOC/FOK · 21 중간가 · **22 스톱지정가** · 23·24 중간가 IOC/FOK
+- 스톱지정가(22) = `ORD_DVSN=22` + `CNDT_PRIC`(트리거가) + `ORD_UNPR`(발동 지정가) (05-risk 5-2)
+
+**모의 미지원**(실측·명세): 스톱지정가(22) — `"제공하지 않는 주문유형"`(2026-06-10) / 실현손익·기간손익·매매손익 조회 / 신용·예약주문. → 손절·KPI는 실전 소액(Phase 7.5)에서 검증(05-risk 5.2, 06-data 304).
+
+## 4. KRX OPEN API (승인 후 보강)
+
+`openapi.krx.co.kr`. 인증키로 주식·공매도·투자분석 **2010~** 제공. 회원가입 → 키 발급 → **서비스별 신청**(주식 일별매매·투자자별 거래·공매도), 승인 전 401. `.env`: `KRX_API_KEY`. **엔드포인트·파라미터는 키 승인 후 실측해 채운다.**
+
+## 5. pykrx
+
+스크래핑(키 없음). **상폐 종목 과거 시세 가능**(한진해운 검증). 수급·공매도 함수는 현재 깨짐(KRX User-Agent 차단) → 과거 수급/공매도는 KRX OPEN API로.
+
+## 6. `.env` 변수명
+
+```dotenv
+KIS_APP_KEY=  KIS_APP_SECRET=  KIS_ACCOUNT_NO=            # 실전(계좌 8자리-2자리)
+KIS_PAPER_APP_KEY=  KIS_PAPER_APP_SECRET=  KIS_PAPER_ACCOUNT_NO=   # 모의
+ANTHROPIC_API_KEY=
+NAVER_CLIENT_ID=  NAVER_CLIENT_SECRET=
+DART_API_KEY=  FRED_API_KEY=  KRX_API_KEY=
+HEALTHCHECK_URL=  DISCORD_WEBHOOK_URL=
+# yfinance·pykrx는 키 없음 / 운영 파라미터는 config/*.toml
+```
+
+## 7. vintage·모의 지원 매트릭스 (04-data 4.2 참조, 실측값)
+
+| 항목 | 현황 | 처리 |
+|---|---|---|
+| KIS 일봉 과거 | 12년+(~100건/호출) | 페이지네이션 |
+| KIS 수정주가 | 제공(액면분할 보정 확인) | 제공값 우선 |
+| KIS 투자자 수급 | 최근 30일만 | 과거는 KRX |
+| KIS 스톱22·손익조회 | 모의 미지원 | 실전 검증(5.2) |
+| pykrx 수급/공매도 | 깨짐 | KRX OPEN API |
+| pykrx 상폐 시세 | 가용 | 생존편향 차단 |
+| yfinance | silent 사후수정, 백업 Stooq는 지수·금리만(VIX·DXY·SOX·원자재·ADR 백업 불확실) | vintage 동결, ADR은 KIS 해외주식 대체(09-tech 31) |
+| FRED | 美10Y·기준금리=일별(vintage 작음), GDP·CPI=대폭수정 | GDP·CPI 도입 시 ALFRED |
+| KRX 잠정↔확정 | 수급 장중잠정→장후확정, 공매도·대차 T+2~3 | 잠정/확정 라벨로 누설 차단 |

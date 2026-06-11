@@ -1,0 +1,23 @@
+# 리스크·사이징·청산 파라미터 (튜닝 손잡이). 초기값은 직관에서 출발 → 백테스트 OOS 워크포워드로 확정.
+# 조정 파라미터 7개 이하 제약(04-data 4.x). 상세 근거는 docs/05-risk-trading.md.
+
+[limits]
+daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk 5-1 A: 실현+미실현 MTM·당일시작자본 대비)
+max_positions = 5            # 동시 보유 종목 수 상한
+
+[sizing]
+vol_target = 0.15            # 변동성 타깃팅 = 메인 엔진 (1일차 작동, 05-risk 5-2)
+kelly_fraction_cap = 0.5     # 프랙셔널 켈리 = 자동활성 상한 (천장)
+kelly_min_trades = 20        # 켈리 활성 최소 청산 n (그 전 휴면 — 05-risk 5-2)
+
+[exits]
+tp1_R = 1.0                  # 1차 익절 R 배수 (R = 진입가-최초손절가, 영구고정 P1-2)
+
+[screener]
+# 스크리닝 가중치(합 1.0) — 시작값, 백테스트로 확정 (04-data 4.x)
+w_momentum = 0.35
+w_supply = 0.25
+w_lowvol = 0.15
+w_alignment = 0.10
+w_value = 0.15
+top_n = 40                   # 워치리스트 상위 N + 보유 전부

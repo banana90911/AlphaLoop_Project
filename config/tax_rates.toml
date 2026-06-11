@@ -1,0 +1,16 @@
+# 날짜별 거래세·세제 (그 시점 값으로 과거 재현). 법 개정 시 새 effective_from 행 추가.
+# ⚠️ 아래 수치는 골격 placeholder — 시행 시점 정확값 확인 필요(거래세는 매년 바뀜, 04-data 4.x).
+
+[[sell_tax]]
+effective_from = "2025-01-01"
+market = "KOSPI"
+rate = 0.0018       # 매도 시 거래세+농특세(확인 필요)
+
+[[sell_tax]]
+effective_from = "2025-01-01"
+market = "KOSDAQ"
+rate = 0.0018       # (확인 필요)
+
+[brokerage]
+# 증권사 수수료율(KIS) — 계좌 조건 확인 후 설정
+rate = 0.00015

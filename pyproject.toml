@@ -1,0 +1,45 @@
+[project]
+name = "alphaloop"
+version = "0.1.0"
+description = "한국 주식 모멘텀+수급 스윙 자동매매 (1인·린 LLM)"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "anthropic>=0.40",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "structlog>=24.1",
+    "exchange-calendars>=4.5",
+]
+
+[project.optional-dependencies]
+data = ["yfinance>=0.2", "pykrx>=1.0"]          # 글로벌 시세 / 상폐 종목 과거 시세
+dashboard = ["streamlit>=1.30", "plotly>=5.20"] # 읽기 전용 대시보드
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
+
+# ── 가드레일 (불변식 기계 강제 — 03-arch 3.3) ──────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "TID"]
+
+# 직접 sqlite3.connect 금지 → memory/db.py의 connect()만 (11-2.2)
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sqlite3.connect".msg = "memory/db.py connect()만 사용 (직접 연결 금지 — 03-arch 3.3 / 11-2.2)"
+
+# 'if 실전' 모드 분기 금지(broker·config 외), 시간대 naive datetime 금지 등은
+# CI grep 룰로 별도 강제(11-2.7·11-2.9). ruff로 표현 불가한 규칙은 tests/test_guardrails.py.
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

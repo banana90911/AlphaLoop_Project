@@ -1,0 +1,10 @@
+# 모델 ID·버전 (deprecation 대응 — 11-3.6). 린 구성: 뉴스+결정만(메모리 project_capital_scale).
+# 정확한 모델 문자열은 출시에 따라 갱신. 비용은 llm_pricing.toml.
+
+[roles]
+news = "claude-haiku-4-5"        # 뉴스·촉매 분석 (저비용)
+decision = "claude-sonnet-4-6"   # 최종 매매 결정
+
+[params]
+# 결정 호출 기본값(필요 시 역할별 오버라이드)
+max_tokens = 2048

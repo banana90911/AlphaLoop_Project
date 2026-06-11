@@ -1,0 +1,20 @@
+# 날짜별·모델별 LLM 단가 (USD per 1M tokens). 응답 usage 토큰 × 단가 → 원화 환산해 순이익에서 차감(04-data 4.x).
+# 단가 변경 시 새 effective_from 행 추가(그 시점 값으로 과거 재현).
+
+[[pricing]]
+effective_from = "2026-01-01"
+model = "claude-opus-4-8"
+input = 5.0
+output = 25.0
+
+[[pricing]]
+effective_from = "2026-01-01"
+model = "claude-sonnet-4-6"
+input = 3.0
+output = 15.0
+
+[[pricing]]
+effective_from = "2026-01-01"
+model = "claude-haiku-4-5"
+input = 1.0
+output = 5.0

@@ -1,0 +1,17 @@
+# KIS·Anthropic 호출 한도 (모드별). 실측 반영 — 상세 docs/reference/external-apis.md.
+
+[kis.real]
+per_second = 20              # 공식 실전 초당 ~20건 (안전 운용은 80% = 16)
+safe_ratio = 0.8
+
+[kis.paper]
+per_second = 5               # 모의는 더 낮음. 실측: 연속 호출 시 "초당 거래건수 초과" → sleep 0.5~0.6 권장
+min_interval_sec = 0.6
+
+[kis.quote_loop]
+min_interval_sec = 0.6       # 일봉 등 대량 조회 루프 간격(실측 기준)
+
+[anthropic]
+# 티어별 RPM/TPM은 계정 티어에 따름. 호출 어댑터에서 백오프(11-3.1).
+max_retries = 3
+backoff_base_sec = 1.0

@@ -6,11 +6,11 @@
 
 | 서비스 | 받는 것 | 키(.env) | 우선순위 |
 |---|---|---|---|
-| **KIS Developers** | 국내 시세·수급·공매도·계좌·주문, 해외 시세 | `KIS_*` (실전·모의) | P0 |
+| **KIS Developers** | 국내 시세·공매도(과거 포함)·수급(최근30일)·계좌·주문, 해외 시세 | `KIS_*` (실전·모의) | P0 |
 | **Anthropic (Claude)** | 뉴스 판단·매매 결정(LLM) | `ANTHROPIC_API_KEY` | P0 |
 | **네이버 검색** | 뉴스 헤드라인 | `NAVER_CLIENT_ID/SECRET` | P0 |
 | **yfinance** | 글로벌 지수·환율·VIX·SOX | 없음 | P0 |
-| **KRX 정보데이터시스템**(스크래핑) | **과거 수급·공매도**(백테스트) | 없음 | P0(백테스트) |
+| **KRX 정보데이터시스템**(스크래핑) | **과거 수급**(백테스트, 공매도는 KIS로 대체) | 없음 | P0(백테스트) |
 | **pykrx** | 상폐 종목 과거 시세 | 없음 | P1(백테스트) |
 | **KRX OPEN API** | 과거 가격·종목정보(보조, 2010~) — *수급/공매도 없음* | `KRX_API_KEY` | P2 |
 | **DART** | 전자공시 | `DART_API_KEY` | P1 |
@@ -24,15 +24,19 @@ KIS는 거래·실시간·최근엔 완벽하나 **백테스트용 과거 시계
 
 | 데이터 | 출처 |
 |---|---|
-| 일봉 OHLCV(운영·최근), 실시간 수급·공매도, 계좌·주문 | **KIS** |
-| 과거 수급·공매도(백테스트) | **KRX 정보데이터시스템 직접 스크래핑** (data.krx.co.kr) |
+| 일봉 OHLCV(운영·최근), 계좌·주문 | **KIS** |
+| 공매도(운영·**과거 모두**) | **KIS** — 2018년치까지 실측 확인(아래 ★) |
+| 실시간 수급(최근 30거래일) | **KIS** |
+| 과거 수급(백테스트, 30일 초과) | **KRX 정보데이터시스템 직접 스크래핑** (data.krx.co.kr) |
 | 상폐 종목 과거 시세(생존편향 차단) | **pykrx** |
 | 글로벌 지수·환율 | **yfinance** |
+
+★ **2026-06-11 실측**(005930, 실전): 수급 `inquire-investor`는 최근 **30거래일만**(과거 불가) → 과거 수급은 KRX. 공매도 `daily-short-sale`은 `FID_INPUT_DATE`로 **2018·2020년 구간도 정상 반환**(82건/4개월) → **공매도는 KIS만으로 백테스트 가능, KRX 불필요.** 한 호출 ~100건 → 구간 페이지네이션.
 
 ## 3. KIS 명세
 
 - **도메인**: 실전 `openapi.koreainvestment.com:9443` / 모의 `openapivts.koreainvestment.com:29443`
-- **토큰**: `/oauth2/tokenP`, 24h 만료 → 캐싱·갱신
+- **토큰**: `/oauth2/tokenP`, 24h 만료. **발급은 1분당 1회 제한**(`EGW00133`, 2026-06-11 실측) → 반드시 파일 캐싱·재사용(매 호출 재발급 금지)
 - **Rate limit**: 연속 호출 시 "초당 거래건수 초과(rt_cd=1)" → 조회 루프에 **0.5~0.6초 간격**(특히 모의)
 - **일봉**: 한 호출 최대 ~100건 → 5~10년치는 구간 페이지네이션
 
@@ -40,8 +44,8 @@ KIS는 거래·실시간·최근엔 완벽하나 **백테스트용 과거 시계
 |---|---|---|
 | 현재가 | `quotations/inquire-price` | `FHKST01010100` |
 | 기간별 일봉 | `quotations/inquire-daily-itemchartprice` | `FHKST03010100` (수정주가 `FID_ORG_ADJ_PRC`) |
-| 투자자 수급 | `quotations/inquire-investor` | `FHKST01010900` (최근 30일만 → 과거는 KRX) |
-| 공매도 일별 | `quotations/daily-short-sale` | `FHPST04830000` |
+| 투자자 수급 | `quotations/inquire-investor` | `FHKST01010900` (최근 30거래일만, 실측 → 과거는 KRX) |
+| 공매도 일별 | `quotations/daily-short-sale` | `FHPST04830000` (`FID_INPUT_DATE_1/2`로 과거 구간 가능, ~100건/호출, 실측) |
 | 잔고 | `trading/inquire-balance` | `TTTC8434R` / `VTTC8434R` |
 | 현금 주문 | `trading/order-cash` | `TTTC0802U`·`TTTC0801U` / `VTTC0802U`·`VTTC0801U` |
 | 정정·취소 | `trading/order-rvsecncl` | `TTTC0803U` / `VTTC0803U` |
@@ -55,8 +59,8 @@ KIS는 거래·실시간·최근엔 완벽하나 **백테스트용 과거 시계
 
 과거 백테스트 데이터는 KRX의 두 시스템으로 나뉜다. **핵심(수급·공매도)은 OPEN API가 아니라 정보데이터시스템에 있다.**
 
-**(A) KRX 정보데이터시스템 (스크래핑) — 과거 수급·공매도의 출처**
-- `data.krx.co.kr/comm/bldAttendant/getJsonData.cmd`, **키 불필요**. 투자자별 거래실적·공매도가 여기 있다(OPEN API엔 없음).
+**(A) KRX 정보데이터시스템 (스크래핑) — 과거 수급의 출처** (공매도는 KIS로 대체되어 불필요)
+- `data.krx.co.kr/comm/bldAttendant/getJsonData.cmd`, **키 불필요**. 투자자별 거래실적이 여기 있다(OPEN API엔 없음).
 - 호출: `bld` 코드 + 헤더 `Referer: http://data.krx.co.kr/`. **정확한 bld는 구현 시 브라우저 네트워크 분석으로 확정**(추측 호출 금지).
 - pykrx도 이 시스템을 긁지만 수급/공매도 함수가 노후로 깨짐 → **직접 호출 구현 필요**(데이터 레이어 과제). OHLCV·상폐는 pykrx로 동작하므로 원천 차단은 아님.
 
@@ -87,7 +91,9 @@ HEALTHCHECK_URL=  DISCORD_WEBHOOK_URL=
 |---|---|---|
 | KIS 일봉 과거 | 12년+(~100건/호출) | 페이지네이션 |
 | KIS 수정주가 | 제공(액면분할 보정 확인) | 제공값 우선 |
-| KIS 투자자 수급 | 최근 30일만 | 과거는 KRX |
+| KIS 투자자 수급 | 최근 30거래일만(실측) | 과거는 KRX |
+| KIS 공매도 | 과거 가능(2018치 실측, ~100건/호출) | 구간 페이지네이션, **KRX 불필요** |
+| KIS 토큰 발급 | 1분당 1회(실측) | 파일 캐싱 재사용 |
 | KIS 스톱22·손익조회 | 모의 미지원 | 실전 검증(5.2) |
 | pykrx 수급/공매도 | 깨짐 | KRX 정보데이터시스템 직접 호출(4-A) |
 | KRX OPEN API | 수급/공매도 미제공(가격·종목정보만) | 가격은 KIS로, 보조만 |

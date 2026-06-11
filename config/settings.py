@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # ── 운영 ──
     healthcheck_url: str = ""
     discord_webhook_url: str = ""
+    # ── 모드 (모의/실전 전환은 이 플래그 하나로, 03-arch 3.3 / 11-2.9) ──
+    trading_mode: str = "paper"  # "paper" | "real"
     # ── 경로(호스트 비의존, 03-arch 3.3) ──
     db_path: str = "journal.sqlite"
 

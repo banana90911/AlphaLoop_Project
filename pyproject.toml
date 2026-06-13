@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-data = ["yfinance>=0.2", "pykrx>=1.0"]          # 글로벌 시세 / 상폐 종목 과거 시세
+data = ["yfinance>=0.2", "lxml>=5.0"]           # 글로벌 시세 / 네이버 금융 HTML 표 파싱(백테스트)
 dashboard = ["streamlit>=1.30", "plotly>=5.20"] # 읽기 전용 대시보드
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
 

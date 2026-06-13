@@ -39,7 +39,6 @@ class Settings(BaseSettings):
     naver_client_secret: str = ""
     dart_api_key: str = ""
     fred_api_key: str = ""
-    krx_api_key: str = ""
     # ── 운영 ──
     healthcheck_url: str = ""
     discord_webhook_url: str = ""

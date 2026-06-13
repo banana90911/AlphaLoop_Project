@@ -1,6 +1,24 @@
 # 날짜별 거래비용 (그 시점 값으로 백테스트 재현). 법 개정 시 새 effective_from 행 추가.
 # 증권거래세 = 매도 시 실부담(거래세 + 농어촌특별세). 우리 유니버스는 KOSPI·KOSDAQ만(코넥스 제외).
-# 출처: 기재부 인하 로드맵(2023 0.20% → 2024 0.18% → 2025 0.15%) + 2026 환원(금투세 무산, 2025-12-29 체결분~ 0.20%).
+# 출처: 기재부 인하 로드맵(2020 0.25% → 2021 0.23% → 2023 0.20% → 2024 0.18% → 2025 0.15%) + 2026 환원(금투세 무산, 2025-12-29 체결분~ 0.20%).
+
+[[sell_tax]]
+effective_from = "2020-01-01"
+market = "KOSPI"
+rate = 0.0025
+[[sell_tax]]
+effective_from = "2020-01-01"
+market = "KOSDAQ"
+rate = 0.0025
+
+[[sell_tax]]
+effective_from = "2021-01-01"
+market = "KOSPI"
+rate = 0.0023
+[[sell_tax]]
+effective_from = "2021-01-01"
+market = "KOSDAQ"
+rate = 0.0023
 
 [[sell_tax]]
 effective_from = "2023-01-01"

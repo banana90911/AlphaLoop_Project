@@ -1,16 +1,45 @@
-# 날짜별 거래세·세제 (그 시점 값으로 과거 재현). 법 개정 시 새 effective_from 행 추가.
-# ⚠️ 아래 수치는 골격 placeholder — 시행 시점 정확값 확인 필요(거래세는 매년 바뀜, 04-data 4.x).
+# 날짜별 거래비용 (그 시점 값으로 백테스트 재현). 법 개정 시 새 effective_from 행 추가.
+# 증권거래세 = 매도 시 실부담(거래세 + 농어촌특별세). 우리 유니버스는 KOSPI·KOSDAQ만(코넥스 제외).
+# 출처: 기재부 인하 로드맵(2023 0.20% → 2024 0.18% → 2025 0.15%) + 2026 환원(금투세 무산, 2025-12-29 체결분~ 0.20%).
+
+[[sell_tax]]
+effective_from = "2023-01-01"
+market = "KOSPI"
+rate = 0.0020
+[[sell_tax]]
+effective_from = "2023-01-01"
+market = "KOSDAQ"
+rate = 0.0020
+
+[[sell_tax]]
+effective_from = "2024-01-01"
+market = "KOSPI"
+rate = 0.0018
+[[sell_tax]]
+effective_from = "2024-01-01"
+market = "KOSDAQ"
+rate = 0.0018
 
 [[sell_tax]]
 effective_from = "2025-01-01"
 market = "KOSPI"
-rate = 0.0018       # 매도 시 거래세+농특세(확인 필요)
-
+rate = 0.0015
 [[sell_tax]]
 effective_from = "2025-01-01"
 market = "KOSDAQ"
-rate = 0.0018       # (확인 필요)
+rate = 0.0015
+
+[[sell_tax]]
+effective_from = "2025-12-29"
+market = "KOSPI"
+rate = 0.0020       # 거래세 0.05% + 농특세 0.15%
+[[sell_tax]]
+effective_from = "2025-12-29"
+market = "KOSDAQ"
+rate = 0.0020       # 거래세 0.20%
 
 [brokerage]
-# 증권사 수수료율(KIS) — 계좌 조건 확인 후 설정
-rate = 0.00015
+rate = 0.00015      # KIS 온라인/API 매매 수수료(추정, 매수·매도 각각) — 실제 약정 확인 필요
+
+[slippage]
+rate = 0.0010       # 추정 슬리피지(백테스트). 워크포워드 스트레스 시 2배 적용(10-1)

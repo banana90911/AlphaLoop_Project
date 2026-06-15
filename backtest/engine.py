@@ -86,14 +86,19 @@ def run(
     initial_capital: float,
     params: dict | None = None,
     tax_params: dict | None = None,
+    feats: dict[str, pd.DataFrame] | None = None,
 ) -> BacktestResult:
-    """포트폴리오 백테스트. prices[code]: date 인덱스 OHLCV(+foreign_net/inst_net 선택)."""
+    """포트폴리오 백테스트. prices[code]: date 인덱스 OHLCV(+foreign_net/inst_net 선택).
+
+    feats: 사전계산한 피처(파라미터 무관)를 주입하면 재계산을 건너뛴다(튜닝 시 대량 호출 가속).
+    """
     rp = params or load_params("risk_params")
     entry, limits, weights = rp["entry"], rp["limits"], rp["screener"]
     max_pos, top_n = limits["max_positions"], weights["top_n"]
     stop_k, score_min = entry["stop_atr_k"], entry["score_min"]
 
-    feats = {c: build_features(df) for c, df in prices.items()}
+    if feats is None:
+        feats = {c: build_features(df) for c, df in prices.items()}
     all_dates = sorted({d for df in prices.values() for d in df.index if start <= d <= end})
 
     cash = initial_capital

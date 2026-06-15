@@ -15,10 +15,9 @@ import numpy as np
 
 from backtest import loader, tune
 from config.settings import load_params
+from data import cache
 from eval import gate, metrics
 
-CODES = ["005930", "000660", "035720", "005380", "051910",
-         "035420", "000270", "068270", "012330", "105560"]
 CAPITAL = 10_000_000.0
 TRAIN, TEST = 252, 63          # IS 1년 / OOS 1분기(거래일)
 
@@ -26,7 +25,12 @@ TRAIN, TEST = 252, 63          # IS 1년 / OOS 1분기(거래일)
 def main() -> None:
     base = load_params("risk_params")
     tax = load_params("tax_rates")
-    prices, markets = loader.load_prices(CODES)
+    uni = cache.load("universe")
+    if uni is None:
+        raise SystemExit("universe 캐시 없음 — `python -m data.collect` 먼저 실행")
+    codes = uni["code"].tolist()
+    markets_map = dict(zip(uni["code"], uni["market"], strict=True))
+    prices, markets = loader.load_prices(codes, markets_map)
     print(f"종목 {len(prices)}개 로드, 거래일 "
           f"{len(sorted({d for df in prices.values() for d in df.index}))}일\n")
 

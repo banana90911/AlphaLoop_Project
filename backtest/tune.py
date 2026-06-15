@@ -64,9 +64,15 @@ class WFRecord:
     oos_returns: pd.Series
 
 
-def _run(prices, markets, p, *, start, end, capital, tax) -> engine.BacktestResult:
+def _run(prices, markets, p, *, start, end, capital, tax, feats=None
+         ) -> engine.BacktestResult:
     return engine.run(prices, markets, start=start, end=end,
-                      initial_capital=capital, params=p, tax_params=tax)
+                      initial_capital=capital, params=p, tax_params=tax, feats=feats)
+
+
+def _precompute_feats(prices: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """피처는 파라미터 무관 → 튜닝 대량호출 전 한 번만 계산(엔진 재계산 회피)."""
+    return {c: engine.build_features(df) for c, df in prices.items()}
 
 
 def walkforward_tune(
@@ -88,19 +94,20 @@ def walkforward_tune(
     splits = rolling_splits(dates, train_size=train_size, test_size=test_size,
                             step=step, anchored=anchored)
     candidates = param_grid(base_params, grid)
+    feats = _precompute_feats(prices)
     records: list[WFRecord] = []
     for sp in splits:
         # IS: 후보 전체 평가 → 최고 조합
         best_score, best_p = float("-inf"), candidates[0]
         for p in candidates:
             r = _run(prices, markets, p, start=sp.train_start, end=sp.train_end,
-                     capital=initial_capital, tax=tax_params)
+                     capital=initial_capital, tax=tax_params, feats=feats)
             s = objective(r)
             if s > best_score:
                 best_score, best_p = s, p
         # OOS: 최고 조합만 (손 안 댄 구간)
         oos = _run(prices, markets, best_p, start=sp.test_start, end=sp.test_end,
-                   capital=initial_capital, tax=tax_params)
+                   capital=initial_capital, tax=tax_params, feats=feats)
         records.append(WFRecord(
             split=sp, best_params=best_p, is_score=best_score,
             oos_return=metrics.total_return(oos.equity),
@@ -158,10 +165,11 @@ def perf_matrix(
     splits = rolling_splits(dates, train_size=train_size, test_size=test_size,
                             step=step, anchored=False)
     candidates = param_grid(base_params, grid)
+    feats = _precompute_feats(prices)
     mat = np.zeros((len(splits), len(candidates)))
     for i, sp in enumerate(splits):
         for j, p in enumerate(candidates):
             r = _run(prices, markets, p, start=sp.test_start, end=sp.test_end,
-                     capital=initial_capital, tax=tax_params)
+                     capital=initial_capital, tax=tax_params, feats=feats)
             mat[i, j] = metrics.total_return(r.equity)
     return mat

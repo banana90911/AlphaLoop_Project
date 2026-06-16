@@ -21,6 +21,19 @@ from eval import gate, metrics
 CAPITAL = 10_000_000.0
 TRAIN, TEST = 252, 63          # IS 1년 / OOS 1분기(거래일)
 
+# 확장 grid(2차): 기존 4개 범위 확장(경계값 해소) + 핵심 2개(거래당 위험·보유수) 추가 = 6손잡이.
+# 손잡이당 2~3값 → 3×3×2×2×2×2 = 144조합. 데이터(17구간) 한계 내에서 PBO 폭증을 피하는 절충.
+GRID = {
+    ("entry", "score_min"):      [0.40, 0.50, 0.55],   # 1차에서 0.50(최저)만 선택 → 아래로 확장
+    ("entry", "stop_atr_k"):     [2.0, 2.5, 3.0],       # 1차에서 2.5(최고) 다수 → 위로 확장
+    ("exits", "tp1_R"):          [1.5, 2.0],            # 1차에서 경계 아님(양쪽 선택)
+    ("exits", "trail_k"):        [3.0, 3.5],            # 1차에서 3.0(최고) 다수 → 위로 확장
+    ("sizing", "risk_pct_max"):  [0.015, 0.025],        # 신규: 거래당 위험 상한(MDD -52%와 직결)
+    ("limits", "max_positions"): [5, 8],                # 신규: 동시 보유 종목 수(집중↔분산)
+}
+_ABBR = {"score_min": "sm", "stop_atr_k": "sk", "tp1_R": "tp",
+         "trail_k": "tk", "risk_pct_max": "rp", "max_positions": "mp"}
+
 
 def main() -> None:
     base = load_params("risk_params")
@@ -32,23 +45,21 @@ def main() -> None:
     markets_map = dict(zip(uni["code"], uni["market"], strict=True))
     prices, markets = loader.load_prices(codes, markets_map)
     print(f"종목 {len(prices)}개 로드, 거래일 "
-          f"{len(sorted({d for df in prices.values() for d in df.index}))}일\n")
+          f"{len(sorted({d for df in prices.values() for d in df.index}))}일")
+    print(f"grid {len(tune.param_grid(base, GRID))}조합 × {len(GRID)}손잡이\n")
 
     # ── 워크포워드 튜닝 ──
     recs = tune.walkforward_tune(
         prices, markets, train_size=TRAIN, test_size=TEST,
-        initial_capital=CAPITAL, base_params=base, tax_params=tax,
+        initial_capital=CAPITAL, base_params=base, grid=GRID, tax_params=tax,
     )
     print(f"워크포워드 구간 {len(recs)}개 (IS={TRAIN}일 / OOS={TEST}일)")
-    print("─" * 72)
+    print("─" * 78)
     for i, r in enumerate(recs, 1):
-        e = r.best_params["entry"]
-        x = r.best_params["exits"]
-        print(f"[{i}] OOS {r.split.test_start}~{r.split.test_end}  "
-              f"수익 {r.oos_return:+7.2%}  IS샤프 {r.is_score:5.2f}  │ "
-              f"score_min={e['score_min']} stop_k={e['stop_atr_k']} "
-              f"tp1_R={x['tp1_R']} trail_k={x['trail_k']}")
-    print("─" * 72)
+        pstr = " ".join(f"{_ABBR[k]}={r.best_params[s][k]}" for (s, k) in GRID)
+        print(f"[{i:2d}] OOS {r.split.test_start}~{r.split.test_end} "
+              f"수익 {r.oos_return:+7.2%} IS샤프 {r.is_score:5.2f} │ {pstr}")
+    print("─" * 78)
 
     # ── 전체 OOS 곡선 vs 벤치마크 ──
     oos_eq = tune.oos_equity(recs, initial_capital=CAPITAL)
@@ -73,9 +84,10 @@ def main() -> None:
         print(f"   벤치 {name:13s} {val:+.2%}")
 
     # ── 과최적화 검정 ──
-    candidates = tune.param_grid(base)
+    candidates = tune.param_grid(base, GRID)
     mat = tune.perf_matrix(prices, markets, train_size=TRAIN, test_size=TEST,
-                           initial_capital=CAPITAL, base_params=base, tax_params=tax)
+                           initial_capital=CAPITAL, base_params=base, grid=GRID,
+                           tax_params=tax)
     n_blocks = (mat.shape[0] // 2) * 2          # PBO용 짝수 블록 (≤ 구간수)
     pbo = gate.pbo_cscv(mat, n_splits=n_blocks) if n_blocks >= 2 else float("nan")
 
@@ -99,12 +111,10 @@ def main() -> None:
         print(f"   {'✓' if v else '✗'} {k}")
 
     # ── 모달 추천 파라미터 ──
-    rec = tune.recommend_params(recs, base)
+    rec = tune.recommend_params(recs, base, GRID)
     print("\n■ 추천 파라미터(모달):")
-    print(f"   entry.score_min  {base['entry']['score_min']} → {rec['entry']['score_min']}")
-    print(f"   entry.stop_atr_k {base['entry']['stop_atr_k']} → {rec['entry']['stop_atr_k']}")
-    print(f"   exits.tp1_R      {base['exits']['tp1_R']} → {rec['exits']['tp1_R']}")
-    print(f"   exits.trail_k    {base['exits']['trail_k']} → {rec['exits']['trail_k']}")
+    for (s, k) in GRID:
+        print(f"   {s}.{k:14s} {base[s][k]} → {rec[s][k]}")
 
 
 if __name__ == "__main__":

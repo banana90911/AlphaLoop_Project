@@ -64,10 +64,11 @@ class WFRecord:
     oos_returns: pd.Series
 
 
-def _run(prices, markets, p, *, start, end, capital, tax, feats=None
+def _run(prices, markets, p, *, start, end, capital, tax, feats=None, trend=None
          ) -> engine.BacktestResult:
     return engine.run(prices, markets, start=start, end=end,
-                      initial_capital=capital, params=p, tax_params=tax, feats=feats)
+                      initial_capital=capital, params=p, tax_params=tax,
+                      feats=feats, market_trend=trend)
 
 
 def _precompute_feats(prices: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
@@ -87,6 +88,7 @@ def walkforward_tune(
     anchored: bool = False,
     grid: dict | None = None,
     tax_params: dict | None = None,
+    market_trend: dict | None = None,
     objective: Callable[[engine.BacktestResult], float] = is_objective,
 ) -> list[WFRecord]:
     """롤링 워크포워드 튜닝. 각 구간: IS에서 grid 전체 평가→최고 선택, OOS에서 그 1개만 평가."""
@@ -101,13 +103,15 @@ def walkforward_tune(
         best_score, best_p = float("-inf"), candidates[0]
         for p in candidates:
             r = _run(prices, markets, p, start=sp.train_start, end=sp.train_end,
-                     capital=initial_capital, tax=tax_params, feats=feats)
+                     capital=initial_capital, tax=tax_params, feats=feats,
+                     trend=market_trend)
             s = objective(r)
             if s > best_score:
                 best_score, best_p = s, p
         # OOS: 최고 조합만 (손 안 댄 구간)
         oos = _run(prices, markets, best_p, start=sp.test_start, end=sp.test_end,
-                   capital=initial_capital, tax=tax_params, feats=feats)
+                   capital=initial_capital, tax=tax_params, feats=feats,
+                   trend=market_trend)
         records.append(WFRecord(
             split=sp, best_params=best_p, is_score=best_score,
             oos_return=metrics.total_return(oos.equity),
@@ -156,6 +160,7 @@ def perf_matrix(
     step: int | None = None,
     grid: dict | None = None,
     tax_params: dict | None = None,
+    market_trend: dict | None = None,
 ) -> np.ndarray:
     """PBO(CSCV)용 성과행렬: shape (n_splits, n_candidates), 각 칸=후보의 OOS 구간수익.
 
@@ -170,6 +175,7 @@ def perf_matrix(
     for i, sp in enumerate(splits):
         for j, p in enumerate(candidates):
             r = _run(prices, markets, p, start=sp.test_start, end=sp.test_end,
-                     capital=initial_capital, tax=tax_params, feats=feats)
+                     capital=initial_capital, tax=tax_params, feats=feats,
+                     trend=market_trend)
             mat[i, j] = metrics.total_return(r.equity)
     return mat

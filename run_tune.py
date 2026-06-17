@@ -12,14 +12,18 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
-from backtest import loader, tune
+from backtest import loader, regime, tune
 from config.settings import load_params
 from data import cache
+from data.sources import index_history
 from eval import gate, metrics
 
 CAPITAL = 10_000_000.0
 TRAIN, TEST = 252, 63          # IS 1년 / OOS 1분기(거래일)
+INDEX_START = "20200101"       # 지수는 종목보다 앞당겨 받음(SMA 워밍업 확보)
+TREND_DAYS = 200               # 하락장 방어: 지수 SMA200 위면 매수 허용(고정, 손잡이 미증가)
 
 # 확장 grid(2차): 기존 4개 범위 확장(경계값 해소) + 핵심 2개(거래당 위험·보유수) 추가 = 6손잡이.
 # 손잡이당 2~3값 → 3×3×2×2×2×2 = 144조합. 데이터(17구간) 한계 내에서 PBO 폭증을 피하는 절충.
@@ -35,6 +39,16 @@ _ABBR = {"score_min": "sm", "stop_atr_k": "sk", "tp1_R": "tp",
          "trail_k": "tk", "risk_pct_max": "rp", "max_positions": "mp"}
 
 
+def _load_index_close(market: str, end: str):
+    """시장 지수 종가(date 인덱스). 캐시 없으면 yfinance로 받아 캐시."""
+    name = f"index_{market}"
+    df = cache.load(name)
+    if df is None:
+        df = index_history.fetch_index(market, INDEX_START, end)
+        cache.save(name, df)
+    return df.set_index("date").sort_index()["close"]
+
+
 def main() -> None:
     base = load_params("risk_params")
     tax = load_params("tax_rates")
@@ -44,14 +58,21 @@ def main() -> None:
     codes = uni["code"].tolist()
     markets_map = dict(zip(uni["code"], uni["market"], strict=True))
     prices, markets = loader.load_prices(codes, markets_map)
-    print(f"종목 {len(prices)}개 로드, 거래일 "
-          f"{len(sorted({d for df in prices.values() for d in df.index}))}일")
-    print(f"grid {len(tune.param_grid(base, GRID))}조합 × {len(GRID)}손잡이\n")
+    all_dates = sorted({d for df in prices.values() for d in df.index})
+    print(f"종목 {len(prices)}개 로드, 거래일 {len(all_dates)}일")
+    print(f"grid {len(tune.param_grid(base, GRID))}조합 × {len(GRID)}손잡이")
+
+    # ── 하락장 방어: 시장별 지수 추세 ──
+    end_ymd = (pd.Timestamp(all_dates[-1]) + pd.Timedelta(days=1)).strftime("%Y%m%d")
+    idx_close = {mk: _load_index_close(mk, end_ymd) for mk in set(markets.values())}
+    trend = regime.market_trend(idx_close, TREND_DAYS)
+    print(f"하락장 방어 ON: 지수 SMA{TREND_DAYS} 추세 필터 ({', '.join(idx_close)})\n")
 
     # ── 워크포워드 튜닝 ──
     recs = tune.walkforward_tune(
         prices, markets, train_size=TRAIN, test_size=TEST,
         initial_capital=CAPITAL, base_params=base, grid=GRID, tax_params=tax,
+        market_trend=trend,
     )
     print(f"워크포워드 구간 {len(recs)}개 (IS={TRAIN}일 / OOS={TEST}일)")
     print("─" * 78)
@@ -87,7 +108,7 @@ def main() -> None:
     candidates = tune.param_grid(base, GRID)
     mat = tune.perf_matrix(prices, markets, train_size=TRAIN, test_size=TEST,
                            initial_capital=CAPITAL, base_params=base, grid=GRID,
-                           tax_params=tax)
+                           tax_params=tax, market_trend=trend)
     n_blocks = (mat.shape[0] // 2) * 2          # PBO용 짝수 블록 (≤ 구간수)
     pbo = gate.pbo_cscv(mat, n_splits=n_blocks) if n_blocks >= 2 else float("nan")
 

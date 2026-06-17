@@ -87,10 +87,13 @@ def run(
     params: dict | None = None,
     tax_params: dict | None = None,
     feats: dict[str, pd.DataFrame] | None = None,
+    market_trend: dict[str, pd.Series] | None = None,
 ) -> BacktestResult:
     """포트폴리오 백테스트. prices[code]: date 인덱스 OHLCV(+foreign_net/inst_net 선택).
 
     feats: 사전계산한 피처(파라미터 무관)를 주입하면 재계산을 건너뛴다(튜닝 시 대량 호출 가속).
+    market_trend: 시장별 상승추세 bool 시계열(backtest/regime). 주면 하락추세 시장의
+      신규 진입을 막는다(하락장 방어). None이면 방어 없음(기존 동작).
     """
     rp = params or load_params("risk_params")
     entry, limits, weights = rp["entry"], rp["limits"], rp["screener"]
@@ -152,6 +155,11 @@ def run(
                         break
                     if code in positions or row["score"] < score_min:
                         continue
+                    # 하락장 방어: 해당 종목 시장이 하락추세면 신규 진입 안 함
+                    if market_trend is not None:
+                        tr = market_trend.get(markets[code])
+                        if tr is not None and not bool(tr.get(d, True)):
+                            continue
                     f = feats[code]
                     close, atr, mom = f.at[d, "close"], f.at[d, "atr"], f.at[d, "momentum"]
                     # 워밍업 미완(momentum NaN) 또는 하락 모멘텀이면 진입 안 함

@@ -49,6 +49,12 @@ def _load_index_close(market: str, end: str):
     return df.set_index("date").sort_index()["close"]
 
 
+def _split_sharpe(returns: pd.Series) -> float:
+    """구간(split) 단위 샤프 = 구간수익 평균 ÷ 표준편차. 표준편차 0이면 0."""
+    sd = returns.std(ddof=1)
+    return float(returns.mean() / sd) if sd and not np.isnan(sd) else 0.0
+
+
 def main() -> None:
     base = load_params("risk_params")
     tax = load_params("tax_rates")
@@ -87,7 +93,6 @@ def main() -> None:
     if oos_eq.empty or len(oos_eq) < 2:
         print("OOS 거래 부족 — 판정 불가")
         return
-    oos_r = metrics.daily_returns(oos_eq)
     strat = metrics.summary(oos_eq)
     print(f"\n■ 전체 OOS  누적 {strat['total_return']:+.2%}  "
           f"샤프 {strat['sharpe']:.2f}  MDD {strat['max_drawdown']:.2%}  "
@@ -112,12 +117,20 @@ def main() -> None:
     n_blocks = (mat.shape[0] // 2) * 2          # PBO용 짝수 블록 (≤ 구간수)
     pbo = gate.pbo_cscv(mat, n_splits=n_blocks) if n_blocks >= 2 else float("nan")
 
-    sr_obs = strat["sharpe"] / np.sqrt(metrics._PPY)          # per-obs 환산
-    sr_std = float(np.std([metrics.sharpe(oos_r)], ddof=0)) or 0.5  # 단일추정 보수값
-    dsr = gate.deflated_sharpe(sr_obs, len(oos_r), len(candidates), sr_std)
+    # DSR: 구간(split) 단위로 정합 계산 — observed·sr_std·표본을 같은 단위로.
+    # sr_std는 후보군(perf_matrix)의 구간샤프 분포에서 산출(다중비교 보정의 핵심).
+    sel = pd.Series([r.oos_return for r in recs])             # 선택전략 구간수익
+    observed_sr = _split_sharpe(sel)
+    cand_sr = [s for j in range(mat.shape[1])
+               if (s := _split_sharpe(pd.Series(mat[:, j]))) != 0.0]
+    sr_std = float(np.std(cand_sr, ddof=1)) if len(cand_sr) > 1 else 0.0
+    dsr = gate.deflated_sharpe(observed_sr, len(sel), len(candidates), sr_std,
+                               skew=float(sel.skew()),
+                               kurtosis=float(sel.kurtosis() + 3.0))
 
     print(f"\n■ 과최적화  PBO {pbo:.2%} (블록 {n_blocks})  "
-          f"DSR {dsr:.2%}  후보 {len(candidates)}개")
+          f"DSR {dsr:.2%}  후보 {len(candidates)}개 "
+          f"(obs_sr {observed_sr:.3f}·sr_std {sr_std:.3f})")
 
     # ── 방향성 게이트(누적수익 기준) ──
     g = gate.directional_gate(

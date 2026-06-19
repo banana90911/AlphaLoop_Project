@@ -19,6 +19,14 @@ single_order_pct = 0.30          # 단일 주문 노출이 자본의 이 비율 
 max_new_orders_per_capital = 5   # 신규 진입 주문 수 임계(기준 자본액당)
 order_count_capital_base = 10_000_000  # 위 기준 자본(원): 1,000만원당 5건
 
+[decision]
+# B안(code_decider) 종합점수 가중·임계 (10-3.1 B, 워크포워드 확정). C와 차이는 결정 주체뿐.
+w_screen = 0.6               # 스크리너 점수 가중
+w_catalyst = 0.4             # 촉매(뉴스) 점수 가중
+w_calibration = 0.0          # 보정신뢰 가중(calibration 미구현 → 0, 구현 후 상향)
+entry_threshold = 0.60       # 신규 진입 종합점수 임계 τ
+exit_threshold = 0.40        # 보유 논지무효 임계(촉매·점수 이 아래로 떨어지면 청산)
+
 [portfolio]
 # 포트폴리오 배분 (05-risk 5-2, 전부 시작값 — 14장서 자금 확정 후 백테스트로 확정)
 max_per_sector = 2               # 한 섹터 동시 보유 종목 수 상한(섹터당 30% 한도와 별개)

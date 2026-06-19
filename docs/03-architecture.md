@@ -104,9 +104,10 @@
 - **LLM은 두 칸에서만** — `agents/`만 Anthropic SDK를 호출한다. `data/`·`risk/`·`exec/`·`eval/`·`backtest/`는 *순수 결정론 코드*(LLM 미관여).
 
 ```
-stockai/                        # 리포 루트
+프로젝트 루트                    # ✅=구현 완료 / (예정)=설계 청사진(미구현)
 ├── run_trading_cycle.py        # ★매매 사이클 단일 진입점 (외부 스케줄러가 호출; trigger_type로 정기/이벤트 구분)
-├── run_event_monitor.py        # 이벤트 트리거 폴링 감시 (보유종목 공시·급변 → 위 진입점을 event로 호출) — 3.1
+├── run_event_monitor.py        # 이벤트 트리거 폴링 감시 (보유종목 공시·급변 → 위 진입점을 event로 호출) — 3.1 (예정)
+├── run_tune.py                 # 백테스트 워크포워드 튜닝 진입점 (전종목·게이트 판정) — 10-4
 ├── pyproject.toml              # 의존성 + ruff/mypy 가드레일 설정 (불변식 기계 강제)
 │
 ├── config/                     # ◆모드 분기 화이트리스트◆ 설정의 단일 로딩 진입점
@@ -127,17 +128,22 @@ stockai/                        # 리포 루트
 │   └── kis_client.py           #   인증·토큰자동갱신·조회·주문·정정취소·rate limit·재시도·송출실패 즉시조회(P1-4)
 │
 ├── data/                       # Tier별 수집·보정·압축 (전부 코드, LLM 미관여)
-│   ├── screener.py             #   후보 선별/워치리스트 (필터 통과 집합 내 백분위 — P1-7)
-│   ├── market_data.py          #   Tier0 시세·수급·공매도·대차·신용·프로그램매매
-│   ├── indicators.py           #   Tier0c 지표·레짐·섹터 상대강도 (numpy/pandas)
-│   ├── global_macro.py         #   Tier1 글로벌·매크로 (1a/1b 고정 + 1c 동적 + ADR; 시리즈별 백업 — P1-7)
-│   ├── calendar.py             #   Tier2 이벤트 캘린더 (코드 플래그)
-│   ├── news.py                 #   Tier3b 헤드라인 수집 + 종목 매칭 노이즈 처리 (네이버 — P1-7)
-│   ├── fundamentals.py         #   Tier4b 추정실적·목표주가·투자의견 (KIS)
-│   ├── corrections.py          #   수정주가·freshness(타임스탬프 기준)·vintage 보정 (4.2)
-│   └── sources/                #   출처별 어댑터 (1차→2차→3차 폴백, 동일 스키마 반환) — 11-2.18
-│       ├── base.py             #     어댑터 인터페이스 + 사용출처 라벨(data_vintage)
-│       └── (yfinance·stooq·fred·dart·kind …)
+│   ├── screener.py             #   후보 선별/워치리스트 (필터 통과 집합 내 백분위 — P1-7) ✅
+│   ├── indicators.py           #   지표(sma·ema·momentum·atr·realized_vol·rsi·정배열·수급) ✅
+│   ├── cache.py                #   백테스트 입력 parquet 캐시(실전 전환 시 폐기) — 10-4 ✅
+│   ├── collect.py              #   백테스트 데이터 수집 오케스트레이션(이어받기·실패격리) — 10-4 ✅
+│   ├── market_data.py          #   Tier0 운영 실시간 시세·수급·공매도 (예정; 현재 broker/kis_client가 조회)
+│   ├── global_macro.py         #   Tier1 글로벌·매크로 (1a/1b 고정 + 1c 동적 + ADR) (예정)
+│   ├── calendar.py             #   Tier2 이벤트 캘린더 (코드 플래그) (예정)
+│   ├── news.py                 #   Tier3b 헤드라인 수집 + 종목 매칭 (네이버 — P1-7) (예정)
+│   ├── fundamentals.py         #   Tier4b 추정실적·목표주가·투자의견 (KIS) (예정)
+│   ├── corrections.py          #   수정주가·freshness·vintage 보정 (4.2) (예정)
+│   └── sources/                #   출처별 어댑터 (동일 스키마 반환) — 11-2.18
+│       ├── kis_history.py      #     KIS 과거 일봉·공매도(구간 페이지네이션) ✅
+│       ├── naver_finance.py    #     네이버 과거 수급(외국인·기관)·상폐 시세(스크래핑) ✅
+│       ├── universe.py         #     KIS 종목마스터(.mst) 보통주 유니버스 ✅
+│       ├── index_history.py    #     코스피·코스닥 지수(yfinance, 하락장 방어 입력) ✅
+│       └── (운영 어댑터: fred·dart·kind 등 — 예정)
 │
 ├── risk/                       # 결정론 리스크·사이징·포트폴리오 (LLM 위임 금지)
 │   ├── risk_engine.py          #   하드룰·서킷브레이커·검사순서(A.1)·재개복구(A.2)·일일-4% 정의(P1-1)
@@ -167,14 +173,17 @@ stockai/                        # 리포 루트
 │   └── trading_cycle.py        #   9단계 오케스트레이션 (평범한 함수 + asyncio.gather)
 │
 ├── backtest/                   # 과거 재생 (직접 구현, zipline/vectorbt 미사용)
-│   ├── engine.py               #   재생·체결현실·룩어헤드/생존편향 차단
-│   ├── walkforward.py          #   OOS 워크포워드 분할
-│   └── seed.py                 #   학습 테이블 시드 (calibration·outcomes·켈리 p·b 선채움) — 7.19
+│   ├── engine.py               #   재생·체결현실·룩어헤드/생존편향 차단·하락장 방어 주입 ✅
+│   ├── walkforward.py          #   OOS 워크포워드 분할(롤링/앵커드) ✅
+│   ├── tune.py                 #   워크포워드 파라미터 튜닝(IS선택/OOS평가)·PBO 성과행렬 — 10-4 ✅
+│   ├── regime.py               #   시장 레짐(지수 SMA 추세) 필터 = 하락장 방어 — 10-4 ✅
+│   ├── loader.py               #   캐시 parquet → 엔진 입력(가격+수급 병합) ✅
+│   └── seed.py                 #   학습 테이블 시드 (calibration·outcomes·켈리 p·b 선채움) — 7.19 (예정)
 │
 ├── eval/                       # 성과·게이트 (전부 코드)
-│   ├── metrics.py              #   KPI 3겹(세전/세후/net)·벤치마크 4종
-│   ├── gate.py                 #   Go/No-Go (방향성 게이트 P1-5·PBO·Deflated Sharpe)
-│   └── compare.py              #   3자 비교 A/B/C 실행 (10-3)
+│   ├── metrics.py              #   KPI·벤치마크(현 구현: 균등가중·현금 / 코스피·모멘텀 예정) — 10-4 ✅
+│   ├── gate.py                 #   Go/No-Go (방향성 게이트 P1-5·PBO·Deflated Sharpe) ✅
+│   └── compare.py              #   3자 비교 A/B/C 실행 (10-3) (예정)
 │
 ├── ops/                        # 무인 운영 (silent failure 차단)
 │   ├── heartbeat.py            #   dead-man's switch ping (정상종료/SafeStop 구분)

@@ -4,12 +4,17 @@ import pytest
 from config.settings import load_params
 from risk.risk_engine import (
     Account,
+    MarketState,
     Position,
+    StockStatus,
     breakers_tripped,
+    can_auto_resume,
     check_new_buy,
     daily_loss_pct,
     drawdown_pct,
     safety_check,
+    screen_cycle,
+    screen_order,
 )
 
 
@@ -79,3 +84,66 @@ def test_safety_check():
     assert safety_check(acc, prices_ok=True, balance_matches=True)
     assert not safety_check(acc, prices_ok=False, balance_matches=True)
     assert not safety_check(acc, prices_ok=True, balance_matches=False)
+
+
+# ── A.1 검사 순서 ──
+def test_screen_cycle_proceed(params):
+    d = screen_cycle(MarketState(), _acc(10_000_000), params)
+    assert d.action == "proceed"
+
+
+def test_screen_cycle_halt_on_balance(params):
+    # 잔고 불일치가 최우선(시장 마비보다 먼저)
+    d = screen_cycle(MarketState(balance_ok=False, halted=True), _acc(10_000_000), params)
+    assert d.action == "halt" and "잔고" in d.reason
+
+
+def test_screen_cycle_skip_on_market_halt(params):
+    d = screen_cycle(MarketState(halted=True), _acc(10_000_000), params)
+    assert d.action == "skip"
+
+
+def test_screen_cycle_new_blocked_on_breaker(params):
+    acc = _acc(0, [Position("A", "S", 100, 95_000)])    # -5% 일일손실
+    d = screen_cycle(MarketState(), acc, params)
+    assert d.action == "new_blocked" and "daily_loss" in d.reason
+
+
+def test_screen_order_blocks_suspended(params):
+    acc = _acc(10_000_000)
+    v = screen_order(acc, "A", "반도체", 1_000_000, StockStatus(suspended=True), params)
+    assert not v and "거래정지" in v.reason
+
+
+def test_screen_order_hardrule_first(params):
+    # 하드룰(종목당) 위반이 종목상태보다 먼저 잡힘
+    acc = _acc(10_000_000)
+    v = screen_order(acc, "A", "반도체", 3_000_000, StockStatus(vi=True), params)
+    assert not v and "종목당" in v.reason
+
+
+def test_screen_order_liquidity(params):
+    acc = _acc(10_000_000)
+    v = screen_order(acc, "A", "반도체", 1_000_000, StockStatus(), params, liquidity_ok=False)
+    assert not v and "유동성" in v.reason
+
+
+def test_screen_order_ok(params):
+    acc = _acc(10_000_000)
+    assert screen_order(acc, "A", "반도체", 1_000_000, StockStatus(), params)
+
+
+# ── A.2 재개 ──
+def test_auto_resume_daily_loss():
+    assert can_auto_resume("daily_loss")
+
+
+def test_auto_resume_drawdown_needs_recovery():
+    assert can_auto_resume("drawdown", recovered_to_half=True)
+    assert not can_auto_resume("drawdown", recovered_to_half=True, deadlock=True)
+    assert not can_auto_resume("drawdown", recovered_to_half=False)
+
+
+def test_safe_stop_needs_human():
+    assert not can_auto_resume("safe_stop")
+    assert not can_auto_resume("balance_mismatch")

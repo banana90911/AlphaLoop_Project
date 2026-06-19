@@ -119,3 +119,96 @@ def safety_check(acc: Account, *, prices_ok: bool, balance_matches: bool) -> Ver
     if not balance_matches:
         return Verdict(False, "잔고 불일치(KIS↔내부)")
     return Verdict(True)
+
+
+# ── A.1 검사 순서 · 충돌 처리 (결정론 절차) ────────────────────────────────
+@dataclass
+class MarketState:
+    """사이클 시작 시점의 시장·시스템 상태 플래그(데이터 공급은 추후 broker/data)."""
+    balance_ok: bool = True       # KIS 실잔고 ↔ 내부 잔고 일치 (A.1 1)
+    halted: bool = False          # 임시휴장·반장 마감 후 (A.1 2)
+    sidecar: bool = False         # 사이드카 발동 중 (A.1 2)
+    market_cb: bool = False       # KRX 시장 전체 서킷브레이커 (A.1 2)
+    prices_ok: bool = True        # 시세 신선도·이상 없음 (A.1 3)
+
+
+@dataclass
+class StockStatus:
+    """종목별 매매 가능 상태 플래그 (A.1 7). 전부 False면 정상."""
+    limit_lock: bool = False      # 점상/점하(호가 소멸)
+    suspended: bool = False       # 거래정지·관리·투자경고/위험
+    vi: bool = False              # VI 발동 중(이번 사이클만 회피)
+    overheated: bool = False      # 단기과열(30분 단일가)
+
+
+@dataclass
+class CycleDecision:
+    """사이클 레벨 판정. action ∈ {proceed, new_blocked, skip, halt}."""
+    action: str
+    reason: str = ""
+
+
+def screen_cycle(market: MarketState, acc: Account, params: dict) -> CycleDecision:
+    """A.1 1~4: 사이클 레벨 게이트. *덜 회복 가능한 것 먼저*, 첫 위반 단일 사유로 판정.
+
+    - halt: 잔고/시세 이상 → 매매 중단(보유 청산도 보류, 안전정지)
+    - skip: 시장 마비 → 사이클 완전 스킵
+    - new_blocked: 우리측 서킷브레이커 발동 → 신규만 차단(보유 청산은 정상)
+    - proceed: 정상
+    """
+    if not market.balance_ok:                                   # 1 선행 게이트
+        return CycleDecision("halt", "잔고 불일치(KIS↔내부)")
+    if market.halted:                                           # 2 시장 마비
+        return CycleDecision("skip", "임시휴장·반장")
+    if market.sidecar:
+        return CycleDecision("skip", "사이드카 발동")
+    if market.market_cb:
+        return CycleDecision("skip", "KRX 시장 서킷브레이커")
+    if not market.prices_ok:                                    # 3 데이터 이상
+        return CycleDecision("halt", "시세 데이터 이상")
+    tripped = breakers_tripped(acc, params)                     # 4 우리측 서킷브레이커
+    if tripped:
+        return CycleDecision("new_blocked", f"서킷브레이커: {','.join(sorted(tripped))}")
+    return CycleDecision("proceed")
+
+
+def screen_order(
+    acc: Account, code: str, sector: str, add_value: float,
+    status: StockStatus, params: dict, *, liquidity_ok: bool = True,
+) -> Verdict:
+    """A.1 6~8: 개별 신규매수 주문 게이트(하드룰 → 종목상태 → 유동성). 첫 위반 단일 사유."""
+    v = check_new_buy(acc, code, sector, add_value, params)     # 6 하드룰 한도
+    if not v:
+        return v
+    if status.limit_lock:                                       # 7 종목 상태
+        return Verdict(False, "점상/점하(호가 소멸)")
+    if status.suspended:
+        return Verdict(False, "거래정지·관리·투자경고")
+    if status.vi:
+        return Verdict(False, "VI 발동 중")
+    if status.overheated:
+        return Verdict(False, "단기과열(단일가)")
+    if not liquidity_ok:                                        # 8 유동성 한도
+        return Verdict(False, "유동성 한도(ADV) 초과")
+    return Verdict(True)
+
+
+# ── A.2 재개 · 복구 절차 ────────────────────────────────────────────────
+def can_auto_resume(
+    breaker: str, *, recovered_to_half: bool = False,
+    error_rate_ok: bool = False, deadlock: bool = False,
+) -> bool:
+    """A.2: 서킷브레이커별 자동 재개 가능 여부. 시스템 신뢰성 문제(SafeStop류)는 항상 사람 개입.
+
+    - daily_loss: 당일 중단·날짜 경계에서 자동 리셋(호출측이 날짜 판정) → True
+    - drawdown: 한도의 50% 아래로 자연 회복 시 자동, 단 손절 데드락이면 사람
+    - api_error: 오류율 50% 아래 30분 유지 시 자동
+    - 그 외(safe_stop·잔고불일치·데이터오류·모델이상): 사람 개입 필수 → False
+    """
+    if breaker == "daily_loss":
+        return True
+    if breaker == "drawdown":
+        return recovered_to_half and not deadlock
+    if breaker == "api_error":
+        return error_rate_ok
+    return False

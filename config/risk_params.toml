@@ -4,8 +4,14 @@
 [limits]
 daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk 5-1 A: 실현+미실현 MTM·당일시작자본 대비)
 max_positions = 5            # 동시 보유 종목 수 상한
-per_name_pct = 0.13          # 종목당 유도 한도(≈13%, 5-1 A: 하한가 갭에도 일일바닥 단독 미돌파)
+per_name_pct = 0.13          # 종목당 유도 한도(≈13%, 5-1 A: 하한가 갭에도 일일바닥 단독 미돌파; 사이징 권장선)
+per_name_hard_pct = 0.25     # 종목당 하드 상한(절대 차단, 유도 per_name_pct와 별개 — 05-risk A.1·A.3)
+sector_pct = 0.30            # 섹터 집중 하드 한도 (05-risk 5-1 A.1·5-1 상관 페널티)
+gross_exposure_max = 1.0     # 총노출 상한(레버리지 금지 — 05-risk A.1)
 adv_participation = 0.01     # 유동성 한도: 일평균거래대금(ADV)의 1%
+
+[circuit_breaker]
+drawdown_halt_pct = 0.20     # 고점 대비 누적 낙폭 정지(시작값, 백테스트 튜닝 — 05-risk 5-1·A.2)
 
 [sizing]
 # 변동성 타깃팅(메인) — 거래당 위험 비율. conviction 0→min, 1→max (05-risk 5-2 §119)

@@ -5,12 +5,14 @@ from config.settings import load_params
 from risk.risk_engine import (
     Account,
     MarketState,
+    OrderProposal,
     Position,
     StockStatus,
     breakers_tripped,
     can_auto_resume,
     check_new_buy,
     daily_loss_pct,
+    detect_anomaly,
     drawdown_pct,
     safety_check,
     screen_cycle,
@@ -147,3 +149,37 @@ def test_auto_resume_drawdown_needs_recovery():
 def test_safe_stop_needs_human():
     assert not can_auto_resume("safe_stop")
     assert not can_auto_resume("balance_mismatch")
+
+
+# ── A.3 모델 이상행동 ──
+def test_anomaly_normal_ok(params):
+    acc = _acc(10_000_000)
+    props = [OrderProposal("A", "buy", 1_000_000), OrderProposal("B", "buy", 1_000_000)]
+    assert detect_anomaly(props, acc, params)
+
+
+def test_anomaly_single_order_too_big(params):
+    acc = _acc(10_000_000)
+    props = [OrderProposal("A", "buy", 4_000_000)]   # 40% > 30%
+    v = detect_anomaly(props, acc, params)
+    assert not v and "단일주문" in v.reason
+
+
+def test_anomaly_order_flood(params):
+    acc = _acc(10_000_000)                            # 1000만 → 5건 한도
+    props = [OrderProposal(f"S{i}", "buy", 500_000) for i in range(6)]
+    v = detect_anomaly(props, acc, params)
+    assert not v and "폭주" in v.reason
+
+
+def test_anomaly_flood_scales_with_capital(params):
+    acc = _acc(20_000_000)                            # 2000만 → 10건 한도
+    props = [OrderProposal(f"S{i}", "buy", 500_000) for i in range(8)]
+    assert detect_anomaly(props, acc, params)         # 8건 OK
+
+
+def test_anomaly_buy_sell_conflict(params):
+    acc = _acc(10_000_000)
+    props = [OrderProposal("A", "buy", 1_000_000), OrderProposal("A", "sell", 1_000_000)]
+    v = detect_anomaly(props, acc, params)
+    assert not v and "충돌" in v.reason

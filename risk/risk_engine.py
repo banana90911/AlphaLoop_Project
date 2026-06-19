@@ -193,6 +193,42 @@ def screen_order(
     return Verdict(True)
 
 
+# ── A.3 모델 이상행동 임계 (결정론 킬스위치) ───────────────────────────────
+@dataclass
+class OrderProposal:
+    """제안 주문(LLM/전략 출력). value=주문 금액(원)."""
+    code: str
+    side: str        # "buy" | "sell"
+    value: float
+
+
+def detect_anomaly(proposals: list[OrderProposal], acc: Account, params: dict) -> Verdict:
+    """A.3: 모델 이상행동 감지 → 하나라도 걸리면 SafeStop(전체 정지·사람 개입).
+
+    버그로 인한 주문 폭주·논리 모순을 싸고 단순하게 차단(임계는 config·튜닝).
+    """
+    a = params["anomaly"]
+    eq = acc.equity
+    if eq <= 0:
+        return Verdict(False, "자본 0 이하")
+    # 단일 주문 노출이 자본의 single_order_pct 초과 (종목당 하드룰 우회 시도 = 이상 신호)
+    for p in proposals:
+        if p.value > a["single_order_pct"] * eq + 1e-6:
+            return Verdict(False, f"단일주문 노출 {a['single_order_pct']:.0%} 초과({p.code})")
+    # 신규 진입 주문 수 폭주 (자본 비례 절대 상한)
+    new_buys = [p for p in proposals if p.side == "buy"]
+    limit = a["max_new_orders_per_capital"] * (eq / a["order_count_capital_base"])
+    if len(new_buys) > limit + 1e-9:
+        return Verdict(False, f"신규 진입 주문 폭주({len(new_buys)}건 > {limit:.1f})")
+    # 동일 종목 매수·매도 동시 제안 (방향 충돌 = 명백한 버그)
+    buys = {p.code for p in proposals if p.side == "buy"}
+    sells = {p.code for p in proposals if p.side == "sell"}
+    conflict = buys & sells
+    if conflict:
+        return Verdict(False, f"동일종목 매수·매도 충돌({sorted(conflict)[0]})")
+    return Verdict(True)
+
+
 # ── A.2 재개 · 복구 절차 ────────────────────────────────────────────────
 def can_auto_resume(
     breaker: str, *, recovered_to_half: bool = False,

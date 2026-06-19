@@ -13,6 +13,12 @@ adv_participation = 0.01     # 유동성 한도: 일평균거래대금(ADV)의 1
 [circuit_breaker]
 drawdown_halt_pct = 0.20     # 고점 대비 누적 낙폭 정지(시작값, 백테스트 튜닝 — 05-risk 5-1·A.2)
 
+[anomaly]
+# 모델 이상행동 → SafeStop 임계 (05-risk A.3, 전부 튜닝 출발값)
+single_order_pct = 0.30          # 단일 주문 노출이 자본의 이 비율 초과 시 SafeStop
+max_new_orders_per_capital = 5   # 신규 진입 주문 수 임계(기준 자본액당)
+order_count_capital_base = 10_000_000  # 위 기준 자본(원): 1,000만원당 5건
+
 [sizing]
 # 변동성 타깃팅(메인) — 거래당 위험 비율. conviction 0→min, 1→max (05-risk 5-2 §119)
 risk_pct_min = 0.0075

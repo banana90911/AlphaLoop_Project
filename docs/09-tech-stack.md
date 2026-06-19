@@ -53,10 +53,14 @@ DART 전자공시는 한국 공식·정형 공시로, 일반 뉴스 크롤링보
 - **백업·암호화** — 매 사이클 종료 후 `sqlite3 .backup`(또는 연속 백업이 필요하면 `litestream`)으로 atomic 스냅샷을 떠 3-2-1 백업(로컬 2차 + 클라우드, 클라이언트 측 암호화)을 만든다(16.6). 저장 데이터 암호화는 OS 디스크 암호화(**macOS FileVault**, 우리 규모에 충분)를 기본으로 하고, DB 단위 암호화가 필요하면 `SQLCipher`.
 - **회피**: SQLAlchemy·SQLModel 등 ORM — 추상화 이득이 작고 감사 가능성과 충돌. 벡터DB·임베딩(Chroma·FAISS·OpenAI embeddings) — 명시적 범위 제외.
 
-### 9.8 데이터 처리·지표 계산 — `pandas` · `numpy` · `exchange_calendars`
+### 9.8 데이터 처리·지표 계산 — `pandas` · `numpy` · `scipy` · `exchange_calendars`
 
-- `**pandas`** — OHLCV 시계열, GROUP BY 집계, 워크포워드 슬라이싱), 자본곡선·KPI 등 표 형태 데이터 전반.
+- `**pandas`** — OHLCV 시계열, GROUP BY 집계, 워크포워드 슬라이싱, 자본곡선·KPI 등 표 형태 데이터 전반.
 - `**numpy**` — MA·RSI·MACD·ATR·실현변동성·52주 고저·백분위 환산을 직접 계산. 지표 식이 단순해서 numpy 20줄이면 끝나고, 직접 짜야 비용·세금·슬리피지 보정이 같은 자리에 들어간다.
+- `**scipy**` — 게이트 통계 전용(`scipy.stats.norm`) — Deflated Sharpe·PBO의 정규분포 함수. 백테스트 과최적화 검정(`eval/gate.py`)에만 사용.
+- **백테스트 입력 저장 — `pyarrow`(parquet)**: 과거 시세·수급 캐시를 열 단위 압축 저장(`data/cache.py`). 운영 DB(SQLite)와 분리된 *백테스트 전용 입력*이라 실전 전환 시 폐기.
+- `**lxml**` — 네이버 금융 스크래핑의 `pandas.read_html` 파서(과거 수급·상폐 시세).
+- `**yfinance**` — 코스피·코스닥 지수(하락장 방어 입력) 및 Tier1 글로벌·매크로.
 - `**exchange_calendars**` — KRX·NYSE 거래일·휴장·반장 판정("시간 맞추기"의 결정론 기반). 한국 공휴일은 음력·대체공휴일 때문에 손코딩하면 버그가 잦으므로 라이브러리에 위임.
 - **회피**: TA-Lib·pandas-ta — C 의존성·추가 학습 비용이 "numpy/pandas 직접 계산" 정책의 이득을 넘는다. zipline·vectorbt 등 백테스트 프레임워크 — "통제·재현 우선"에 따라 직접 구현.
 

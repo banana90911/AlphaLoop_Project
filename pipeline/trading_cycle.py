@@ -3,40 +3,66 @@
 상태머신(`intent`→`ordering`→`recorded`)을 축으로, 부품이 준비된 단계부터 채운다.
 - 1단계(후보 선별): `market_data`가 주어지면 작동, 없으면 빈 사이클(상태머신만).
 - 5단계(결정): `account`까지 주어지면 결정 파이프라인(A/B/C)을 *드라이런*으로 돌린다.
-- 6단계(리스크): 사이클 레벨 게이트(`screen_cycle`)로 신규 차단/스킵/정지를 판정한다.
+- 6단계(리스크): 사이클 게이트(`screen_cycle`) → 신규(buy)별 수량 환산(`sizing`) +
+  이상행동 게이트(`detect_anomaly`) + 종목당 하드룰로 *집행 계획*(PlannedOrder)을 짠다.
 
-드라이런 경계: 7단계 실주문 송출은 `exec` 미구현이라 *하지 않는다*(결정 JSON까지만).
-종목별 금액 게이트(`screen_order`·`detect_anomaly`)와 수량 환산(`sizing`)·decisions 상세
-적재는 다음 증분 — 여기선 사이클 레벨 게이트와 결정 산출까지 배선한다(12 Phase 4 게이트).
+드라이런 경계: 7단계 실주문 송출은 `exec` 미구현이라 *하지 않는다*(집행 계획까지만).
+섹터 한도(`screen_order`)는 종목→섹터 매핑이 아직 없어 보류(백테스트 engine도 미적용),
+보유 동적관리(trim/sell)의 청산 집행(`exits`)·decisions 상세 적재도 다음 증분이다.
 """
 from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
+from math import floor
 
 import pandas as pd
 
 from agents.code_decider import Candidate
+from backtest.engine import build_features
 from config.settings import load_params
 from core.schemas import DeciderOutput, OrderAction
 from core.timeutils import now_utc
+from data.panel import latest_row
 from memory import journal
 from pipeline import screening
 from pipeline.decision import run_decision
-from risk.risk_engine import Account, MarketState, screen_cycle
+from risk import sizing
+from risk.risk_engine import (
+    Account,
+    MarketState,
+    OrderProposal,
+    detect_anomaly,
+    screen_cycle,
+)
+
+
+@dataclass
+class PlannedOrder:
+    """드라이런 집행 계획 — sizing 환산 결과(실송출 전). 신규(buy) 진입 한 건."""
+    code: str
+    qty: int
+    price: float
+    stop: float
+    thesis: str = ""
+
+    @property
+    def value(self) -> float:
+        return self.qty * self.price
 
 
 @dataclass
 class CycleResult:
-    """사이클 산출. cycle_id는 06 cycles 키, 나머지는 드라이런 결정 결과.
+    """사이클 산출. cycle_id는 06 cycles 키, 나머지는 드라이런 결정·집행 계획.
 
-    cycle_action ∈ {proceed, new_blocked, skip, halt}(screen_cycle 판정). decision은
-    account가 주어진 정기 사이클에서만 채워지고, 그 외(이벤트·빈 사이클)는 None이다.
+    cycle_action ∈ {proceed, new_blocked, skip, halt}(screen_cycle·detect_anomaly).
+    decision/planned_orders는 account가 주어진 정기 사이클에서만 채워진다.
     """
     cycle_id: str
     watchlist: list[str] = field(default_factory=list)
     decision: DeciderOutput | None = None
+    planned_orders: list[PlannedOrder] = field(default_factory=list)
     cycle_action: str = "proceed"
     blocked_reason: str = ""
 
@@ -50,6 +76,50 @@ def _drop_new_entries(out: DeciderOutput) -> DeciderOutput:
     """신규/추가(buy·add) 제거 — 서킷브레이커 시 보유 동적관리만 허용(A.1 4 new_blocked)."""
     kept = [o for o in out.orders if o.action not in (OrderAction.BUY, OrderAction.ADD)]
     return DeciderOutput(orders=kept, notes=out.notes)
+
+
+def _plan_entries(
+    decision: DeciderOutput,
+    market_data: dict[str, pd.DataFrame],
+    account: Account,
+    params: dict,
+    asof: date | None,
+) -> list[PlannedOrder]:
+    """신규(buy) 제안 → 수량 환산 집행 계획. 백테스트 engine 진입과 같은 패턴(룩어헤드 차단).
+
+    각 종목 asof 최신 close·ATR로 stop=close−stop_atr_k·ATR을 세우고, sizing이 변동성
+    타깃팅 수량을 낸다(종목당 하드룰을 extra_caps 천장으로). conviction=결정자 risk_budget.
+    워밍업 미완(ATR/close 결측)·stop≤0·qty≤0은 무진입(백테스트와 동일 게이트).
+    """
+    e, lim = params["entry"], params["limits"]
+    equity = account.equity
+    name_cap_value = lim["per_name_hard_pct"] * equity     # 종목당 하드 상한(금액)
+    planned: list[PlannedOrder] = []
+    for o in decision.orders:
+        if o.action not in (OrderAction.BUY, OrderAction.ADD):
+            continue                                       # 신규/추가만(보유관리는 후속 exits)
+        df = market_data.get(o.code)
+        if df is None or df.empty:
+            continue
+        row = latest_row(build_features(df), asof)
+        if row is None:
+            continue
+        close, atr, mom = row["close"], row["atr"], row["momentum"]
+        # 백테스트 engine과 동일 게이트: 워밍업 미완·하락 모멘텀이면 무진입(규칙 정합)
+        if pd.isna(close) or pd.isna(atr) or atr <= 0 or pd.isna(mom) or mom <= 0:
+            continue
+        stop = close - e["stop_atr_k"] * atr
+        if stop <= 0:
+            continue
+        name_cap_qty = floor(name_cap_value / close) if close > 0 else 0
+        qty = sizing.position_qty(
+            equity, close, stop, conviction=o.risk_budget,
+            extra_caps=(name_cap_qty,), params=params,
+        )
+        if qty <= 0:
+            continue
+        planned.append(PlannedOrder(o.code, qty, float(close), float(stop), o.thesis))
+    return planned
 
 
 def run_cycle(
@@ -95,6 +165,7 @@ def run_cycle(
     # 3단계 기억 검색은 lessons 0건이면 휴면(retrieval) — 결정 입력 미배선(후속).
 
     decision: DeciderOutput | None = None
+    planned: list[PlannedOrder] = []
     cycle_action = "proceed"
     blocked_reason = ""
 
@@ -114,11 +185,19 @@ def run_cycle(
             )
             if verdict.action == "new_blocked":          # 서킷브레이커: 신규 제거
                 decision = _drop_new_entries(decision)
+            # 6단계 후반: 신규 수량 환산 → 이상행동 게이트(SafeStop)
+            planned = _plan_entries(decision, market_data, account, p, asof)
+            proposals = [OrderProposal(o.code, "buy", o.value) for o in planned]
+            anomaly = detect_anomaly(proposals, account, p)
+            if not anomaly:                              # 모델 이상행동 → 전체 정지
+                planned, cycle_action, blocked_reason = [], "halt", anomaly.reason
         # halt/skip은 결정 자체를 하지 않음(매매 중단/사이클 스킵)
 
     journal.advance_status(conn, cycle_id, "ordering")
-    # 7단계: 주문 송출 — 드라이런(미구현, 차단). exec 붙으면 여기서 decision을 집행.
+    # 7단계: 주문 송출 — 드라이런(미구현, 차단). exec 붙으면 planned를 KIS로 집행.
 
     journal.advance_status(conn, cycle_id, "recorded")
-    # 8단계: 기록 — cycles 상태(decisions 상세 적재는 journal 확장 후).
-    return CycleResult(cycle_id, watchlist, decision, cycle_action, blocked_reason)
+    # 8단계: 기록 — cycles 상태(decisions·trades 상세 적재는 journal 확장 후).
+    return CycleResult(
+        cycle_id, watchlist, decision, planned, cycle_action, blocked_reason
+    )

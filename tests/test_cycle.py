@@ -70,7 +70,8 @@ def test_advance_status_rejects_unknown(tmp_path):
 
 def test_decision_runs_for_scheduled_with_account(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
-    acc = Account(start_capital=1_000_000, cash=1_000_000)
+    # equity 1천만원: anomaly 신규주문 폭주 임계(1천만원당 5건)에 걸리지 않는 규모
+    acc = Account(start_capital=10_000_000, cash=10_000_000)
     res = run_cycle(conn, market_data=_universe(), account=acc, mode="B")
     assert res.cycle_action == "proceed"
     assert res.decision is not None                  # 결정 단계 실행됨(드라이런)
@@ -106,4 +107,33 @@ def test_balance_mismatch_halts(tmp_path):
                     market_state=MarketState(balance_ok=False))
     assert res.cycle_action == "halt"
     assert res.decision is None                      # 잔고 불일치 → 결정 안 함
+    conn.close()
+
+
+# ── 6단계 후반: sizing 환산 + 이상행동 게이트(드라이런 집행 계획) ──
+
+def test_sizing_produces_planned_orders(tmp_path):
+    conn = init_db(str(tmp_path / "t.db"))
+    p = copy.deepcopy(load_params("risk_params"))
+    p["decision"]["entry_threshold"] = 0.0           # 상승 후보 buy 시도
+    acc = Account(start_capital=10_000_000, cash=10_000_000)
+    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B", params=p)
+    assert res.cycle_action == "proceed"
+    assert res.planned_orders                         # 집행 계획 산출됨
+    for o in res.planned_orders:
+        assert o.qty > 0 and o.price > 0
+        assert o.stop < o.price                       # 손절은 진입가 아래(롱)
+        assert o.code in {"UP1", "UP2"}               # 하락(DN·FLAT)은 모멘텀 게이트로 배제
+    conn.close()
+
+
+def test_anomaly_gate_safe_stops(tmp_path):
+    conn = init_db(str(tmp_path / "t.db"))
+    p = copy.deepcopy(load_params("risk_params"))
+    p["decision"]["entry_threshold"] = 0.0
+    p["anomaly"]["single_order_pct"] = 0.001          # 어떤 주문도 이상으로 판정되게
+    acc = Account(start_capital=10_000_000, cash=10_000_000)
+    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B", params=p)
+    assert res.cycle_action == "halt"                 # SafeStop
+    assert res.planned_orders == []                   # 집행 계획 비움
     conn.close()

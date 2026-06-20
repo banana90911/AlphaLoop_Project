@@ -64,6 +64,8 @@
 - **뉴스 헤드라인 수집** — 네이버 검색 API thin wrapper: **종목 매칭 노이즈 처리(종목코드/섹터 조합 쿼리·발행시각 윈도우·오매칭 제거, P1-7)**. (판단은 Phase 4 LLM.)
 - **게이트**: Tier0/1/2 수집·압축 결과 정확성 + 라우팅이 의도대로 + vintage 정책 작동(10-2 ③).
 
+**진행 현황(2026-06)**: **후보 선별·Tier0 시세 운영 경로 구현 완료** — `data/screener.py`(백분위 가중)·`data/panel.py`(asof 횡단면 패널 = 백테스트 `build_features` 재사용)·`pipeline/screening.py`(1단계 = 패널+스크리너, 이벤트는 보유로 좁힘)·`data/market_data.py`(운영 최근 시세·수급 fetch → prices dict, 메모리 비영속·백테스트 캐시와 분리). `trading_cycle.run_cycle`에 1단계 연결. 테스트 +20(총 228). *미연결/예정*: 전종목 스크리닝의 운영 시세 확보 전략(매 사이클 2500종목 실시간 fetch는 rate limit상 비현실 — 일일 스냅샷 vs 사전필터 풀 vs KRX 일괄 미결정), Tier1 글로벌·매크로(`global_macro.py`), Tier2 캘린더(`calendar.py`), 거래일/freshness 판정, 뉴스 수집 wrapper. KIS investor 수급 출력 컬럼 라이브 1회 검증(external-apis §3).
+
 ---
 
 ### Phase 3 — 리스크 엔진 + 사이징·청산·포트폴리오 (결정 파이프라인보다 먼저)
@@ -90,7 +92,7 @@
 - 9단계 파이프라인 조립 — `pipeline/trading_cycle.py`(단일 진입점 `run_trading_cycle.py`). JSON 검증/4단계 폴백(11-3.3), 부분 실패 룰(11-3.5).
 - **게이트**: 실주문 차단 플래그로 *파이프라인 드라이런*(10-2 ④) — 뉴스 견해·결정 JSON·반대 시나리오 반영·로그 검증.
 
-**진행 현황(2026-06)**: **결정 부품 구현 완료** — `core/schemas.py`(catalyst·decider pydantic 전체검증)·`agents/llm_client.py`(call_json: 역할별 모델·재시도·JSON 4단계 폴백)·`agents/catalyst.py`(묶음1회·부분실패)·`agents/decider.py`(C, 반대의견 게이트 P1-2)·`agents/code_decider.py`(B 대조군)·`pipeline/decision.py`(A/B/C 모드 진입점). **실호출 검증**: Haiku 촉매 분석·Sonnet 결정 모두 JSON 정상(강세 buy·약세 제외). 테스트 +28(총 185). *미연결*: 9단계 전체 사이클(trading_cycle은 상태머신 스텁 — 데이터 수집[Phase 2 운영]·주문 송출[exec] 미구현), 보정통계·교훈 입력(Phase 5), llm_calls 적재(journal 연결). → 결정 *흐름*은 완성, *전체 사이클 조립*은 데이터·exec 후.
+**진행 현황(2026-06)**: **결정 부품 구현 완료** — `core/schemas.py`(catalyst·decider pydantic 전체검증)·`agents/llm_client.py`(call_json: 역할별 모델·재시도·JSON 4단계 폴백)·`agents/catalyst.py`(묶음1회·부분실패)·`agents/decider.py`(C, 반대의견 게이트 P1-2)·`agents/code_decider.py`(B 대조군)·`pipeline/decision.py`(A/B/C 모드 진입점). **실호출 검증**: Haiku 촉매 분석·Sonnet 결정 모두 JSON 정상(강세 buy·약세 제외). 테스트 +28(총 185). *미연결*: 9단계 전체 사이클(trading_cycle은 1단계 후보 선별까지 연결, 2단계 운영 시세는 `market_data` 구현 — 3~7단계 LLM 결정·8단계 주문 송출[exec] 미연결), 보정통계·교훈 입력(Phase 5), llm_calls 적재(journal 연결). → 결정 *흐름*은 완성, *전체 사이클 조립*은 3~8단계 배선 남음.
 
 ---
 
@@ -120,7 +122,7 @@
 - **학습 테이블 시드**: 5~10년 재생으로 calibration·outcomes 칸을 선채움(시간가중 자동 적용). 켈리 p·b 초기값·confidence 0.5배 정책(7.19).
 - **게이트 (★실자본 경로의 1차 관문)**: **방향성 Go/No-Go 통과(P1-5)** — net 기준 4벤치마크 전부 초과 + Deflated Sharpe>0 + PBO<50% + 민감도 절벽 없음. *하나라도 미달이면 No-Go*(절대 임계는 자금 확정 후 추가).
 
-**진행 현황(2026-06, 상세 10-4)**: 엔진·워크포워드·튜닝·하락장 방어(`regime.py`)·지표·스크리너·사이징·청산·비용·게이트 **구현 완료**. 전종목 2,537개·5.4년으로 워크포워드 4차 실행 — 하락장 방어 추가로 OOS **+42.5%**·PBO 43%·**게이트 3/4 통과**(DSR 36%만 미달, 정직한 불합격). *미구현/정합 과제*: 학습 시드(`seed.py`)·3자 비교(`compare.py`, LLM 연동 후)·벤치마크(현 2종, 코스피·모멘텀 미구현)·민감도/스트레스 자동화·DSR 임계 확정(문서 ">0" ↔ 코드 0.95).
+**진행 현황(2026-06, 상세 10-4)**: 엔진·워크포워드·튜닝·하락장 방어(`regime.py`)·지표·스크리너·사이징·청산·비용·게이트 **구현 완료**. 전종목 2,537개·5.4년으로 워크포워드 4차 실행 — 하락장 방어 추가로 OOS **+42.5%**·PBO 43%·**게이트 3/4 통과**(DSR 36%만 미달, 정직한 불합격). 학습 시드(`backtest/seed.py`: outcomes 선채움·켈리 p·b) **구현 완료**. *미구현/정합 과제*: 3자 비교(`compare.py`, LLM 연동 후)·벤치마크(현 2종, 코스피·모멘텀 미구현)·민감도/스트레스 자동화·DSR 임계 확정(문서 ">0" ↔ 코드 0.95).
 
 ---
 

@@ -129,6 +129,7 @@
 │
 ├── data/                       # Tier별 수집·보정·압축 (전부 코드, LLM 미관여)
 │   ├── screener.py             #   후보 선별/워치리스트 (필터 통과 집합 내 백분위 — P1-7) ✅
+│   ├── panel.py                #   운영 횡단면 패널(asof 최신행 → 스크리너 입력) — 3.1 1단계 ✅
 │   ├── indicators.py           #   지표(sma·ema·momentum·atr·realized_vol·rsi·정배열·수급) ✅
 │   ├── cache.py                #   백테스트 입력 parquet 캐시(실전 전환 시 폐기) — 10-4 ✅
 │   ├── collect.py              #   백테스트 데이터 수집 오케스트레이션(이어받기·실패격리) — 10-4 ✅
@@ -171,7 +172,8 @@
 │   └── shadow.py               #   반사실 가상손익(거부·무거래 재생, 추정치) — 7.18 ✅
 │
 ├── pipeline/
-│   ├── trading_cycle.py        #   9단계 오케스트레이션 (현재 상태머신 스텁) ✅
+│   ├── trading_cycle.py        #   9단계 오케스트레이션 (상태머신 + 1단계 후보 선별 연결) ✅
+│   ├── screening.py            #   1단계 후보 선별 = 패널+스크리너 결합(이벤트는 보유로 좁힘) — 3.1 ✅
 │   └── decision.py             #   결정 흐름 조립 A/B/C 모드(촉매→결정) — 10-3.1 ✅
 │
 ├── backtest/                   # 과거 재생 (직접 구현, zipline/vectorbt 미사용)

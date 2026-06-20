@@ -26,6 +26,7 @@ w_catalyst = 0.4             # 촉매(뉴스) 점수 가중
 w_calibration = 0.0          # 보정신뢰 가중(calibration 미구현 → 0, 구현 후 상향)
 entry_threshold = 0.60       # 신규 진입 종합점수 임계 τ
 exit_threshold = 0.40        # 보유 논지무효 임계(촉매·점수 이 아래로 떨어지면 청산)
+dissent_min = 0.60           # C안 결정자: 반대시나리오 반영도 이 미만이면 강제 무거래(P1-2)
 
 [portfolio]
 # 포트폴리오 배분 (05-risk 5-2, 전부 시작값 — 14장서 자금 확정 후 백테스트로 확정)

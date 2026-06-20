@@ -93,7 +93,7 @@
 - 8단계 파이프라인 조립 — `pipeline/trading_cycle.py`(단일 진입점 `run_trading_cycle.py`). JSON 검증/4단계 폴백(11-3.3), 부분 실패 룰(11-3.5).
 - **게이트**: 실주문 차단 플래그로 *파이프라인 드라이런*(10-2 ④) — 뉴스 견해·결정 JSON·반대 시나리오 반영·로그 검증.
 
-**진행 현황(2026-06)**: **결정 부품 구현 완료** — `core/schemas.py`(catalyst·decider pydantic 전체검증)·`agents/llm_client.py`(call_json: 역할별 모델·재시도·JSON 4단계 폴백)·`agents/catalyst.py`(묶음1회·부분실패)·`agents/decider.py`(C, 반대의견 게이트 P1-2)·`agents/code_decider.py`(B 대조군)·`pipeline/decision.py`(A/B/C 모드 진입점). **실호출 검증**: Haiku 촉매 분석·Sonnet 결정 모두 JSON 정상(강세 buy·약세 제외). 테스트 +28(총 185). *미연결*: 8단계 전체 사이클(trading_cycle은 1단계 후보 선별까지 연결, 2단계 운영 시세는 `market_data` 구현 — 3~6단계 LLM 결정·7단계 주문 송출[exec] 미연결), 보정통계·교훈 입력(Phase 5), llm_calls 적재(journal 연결). → 결정 *흐름*은 완성, *전체 사이클 조립*은 3~8단계 배선 남음.
+**진행 현황(2026-06)**: **결정 부품 구현 완료** — `core/schemas.py`(catalyst·decider pydantic 전체검증)·`agents/llm_client.py`(call_json: 역할별 모델·재시도·JSON 4단계 폴백)·`agents/catalyst.py`(묶음1회·부분실패)·`agents/decider.py`(C, 반대의견 게이트 P1-2)·`agents/code_decider.py`(B 대조군)·`pipeline/decision.py`(A/B/C 모드 진입점). **실호출 검증**: Haiku 촉매 분석·Sonnet 결정 모두 JSON 정상(강세 buy·약세 제외). **사이클 배선 1차**: `trading_cycle.run_cycle`이 1단계 워치리스트 → **5단계 결정(`run_decision` A/B/C) → 6단계 사이클 리스크 게이트(`screen_cycle`: halt/skip/new_blocked/proceed)**까지 *드라이런*으로 연결(반환을 `CycleResult`로 확장, 서킷브레이커 시 신규 제거·잔고불일치 halt 검증). 테스트 +33(총 238). *미연결*: 7단계 실주문 송출(`exec` 미구현이라 드라이런으로 차단), 종목별 금액 게이트(`screen_order`·`detect_anomaly`)+수량 환산(`sizing`)+decisions 상세 적재(2단계 운영 시세는 `market_data` 구현), 4단계 뉴스 수집 wrapper(현재 빈 번들), 보정통계·교훈 입력(Phase 5). → 결정 *흐름*+사이클 레벨 게이트 완성, *주문 집행·금액 사이징·기록 적재*가 다음 배선.
 
 ---
 

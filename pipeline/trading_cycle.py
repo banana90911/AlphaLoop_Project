@@ -136,6 +136,7 @@ def run_cycle(
     market_state: MarketState | None = None,
     mode: str = "C",
     params: dict | None = None,
+    source: str = "paper",
 ) -> CycleResult:
     """한 사이클 실행. 반환: CycleResult.
 
@@ -196,8 +197,13 @@ def run_cycle(
     journal.advance_status(conn, cycle_id, "ordering")
     # 7단계: 주문 송출 — 드라이런(미구현, 차단). exec 붙으면 planned를 KIS로 집행.
 
+    # 8단계: 기록 — 결정 제안을 decisions에 적재(trades 적재는 주문 집행 연결 후).
+    if decision is not None:
+        stops = {p.code: p.stop for p in planned}
+        journal.record_decisions(
+            conn, cycle_id, decision.orders, stops=stops, source=source
+        )
     journal.advance_status(conn, cycle_id, "recorded")
-    # 8단계: 기록 — cycles 상태(decisions·trades 상세 적재는 journal 확장 후).
     return CycleResult(
         cycle_id, watchlist, decision, planned, cycle_action, blocked_reason
     )

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from config.settings import load_params
-from core.schemas import OrderAction
+from core.schemas import OrderAction, ProposedOrder
 from memory import journal
 from memory.db import init_db
 from pipeline.trading_cycle import run_cycle
@@ -136,4 +136,61 @@ def test_anomaly_gate_safe_stops(tmp_path):
     res = run_cycle(conn, market_data=_universe(), account=acc, mode="B", params=p)
     assert res.cycle_action == "halt"                 # SafeStop
     assert res.planned_orders == []                   # 집행 계획 비움
+    conn.close()
+
+
+# ── 8단계 기록: 결정 제안 decisions 적재 ──
+
+def test_decisions_persisted(tmp_path):
+    conn = init_db(str(tmp_path / "t.db"))
+    p = copy.deepcopy(load_params("risk_params"))
+    p["decision"]["entry_threshold"] = 0.0
+    acc = Account(start_capital=10_000_000, cash=10_000_000)
+    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B", params=p)
+    rows = conn.execute(
+        "SELECT symbol, action, side, stop_loss, source FROM decisions WHERE cycle_id=?",
+        (res.cycle_id,),
+    ).fetchall()
+    assert rows                                        # 결정이 DB에 남음
+    buys = [r for r in rows if r["action"] == "buy"]
+    assert buys and all(r["side"] == "buy" for r in buys)
+    assert all(r["source"] == "paper" for r in rows)
+    # buy의 stop_loss는 집행 계획(planned)에서 채워짐
+    planned_codes = {o.code for o in res.planned_orders}
+    for r in buys:
+        if r["symbol"] in planned_codes:
+            assert r["stop_loss"] is not None and r["stop_loss"] > 0
+    conn.close()
+
+
+def test_no_decision_no_rows(tmp_path):
+    conn = init_db(str(tmp_path / "t.db"))
+    res = run_cycle(conn, market_data=_universe())     # account 없음 → 결정 없음
+    rows = conn.execute(
+        "SELECT 1 FROM decisions WHERE cycle_id=?", (res.cycle_id,)
+    ).fetchall()
+    assert rows == []
+    conn.close()
+
+
+def test_record_decisions_maps_actions_and_skips_hold(tmp_path):
+    conn = init_db(str(tmp_path / "t.db"))
+    journal.create_cycle(conn, "C1", "scheduled")
+    orders = [
+        ProposedOrder(code="A", action=OrderAction.BUY, risk_budget=0.5),
+        ProposedOrder(code="B", action=OrderAction.TRIM, risk_budget=0.3),
+        ProposedOrder(code="C", action=OrderAction.HOLD),     # 적재 생략 대상
+        ProposedOrder(code="D", action=OrderAction.SELL),
+    ]
+    ids = journal.record_decisions(conn, "C1", orders, stops={"A": 95.0})
+    assert len(ids) == 3                                       # hold 제외
+    rows = {
+        r["symbol"]: r for r in conn.execute(
+            "SELECT symbol, action, side, stop_loss FROM decisions WHERE cycle_id='C1'"
+        )
+    }
+    assert rows["A"]["action"] == "buy" and rows["A"]["stop_loss"] == 95.0
+    assert rows["B"]["action"] == "trim" and rows["B"]["side"] == "sell"  # 부분청산=sell side
+    assert rows["D"]["action"] == "sell" and rows["D"]["side"] == "sell"
+    assert "C" not in rows                                     # hold 미적재
     conn.close()

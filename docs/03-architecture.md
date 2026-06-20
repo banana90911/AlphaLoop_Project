@@ -133,7 +133,7 @@
 │   ├── indicators.py           #   지표(sma·ema·momentum·atr·realized_vol·rsi·정배열·수급) ✅
 │   ├── cache.py                #   백테스트 입력 parquet 캐시(실전 전환 시 폐기) — 10-4 ✅
 │   ├── collect.py              #   백테스트 데이터 수집 오케스트레이션(이어받기·실패격리) — 10-4 ✅
-│   ├── market_data.py          #   Tier0 운영 실시간 시세·수급·공매도 (예정; 현재 broker/kis_client가 조회)
+│   ├── market_data.py          #   Tier0 운영 최근 시세·수급 fetch → prices dict(메모리, 캐시 비영속) — 3.1 2단계 ✅
 │   ├── global_macro.py         #   Tier1 글로벌·매크로 (1a/1b 고정 + 1c 동적 + ADR) (예정)
 │   ├── calendar.py             #   Tier2 이벤트 캘린더 (코드 플래그) (예정)
 │   ├── news.py                 #   Tier3b 헤드라인 수집 + 종목 매칭 (네이버 — P1-7) (예정)

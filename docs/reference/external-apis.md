@@ -48,7 +48,7 @@
 |---|---|---|
 | 현재가 | `quotations/inquire-price` | `FHKST01010100` |
 | 기간별 일봉 | `quotations/inquire-daily-itemchartprice` | `FHKST03010100` (수정주가 `FID_ORG_ADJ_PRC`) |
-| 투자자 수급 | `quotations/inquire-investor` | `FHKST01010900` (최근 30거래일만, 실측 → 과거는 네이버) |
+| 투자자 수급 | `quotations/inquire-investor` | `FHKST01010900` (최근 30거래일만, 실측 → 과거는 네이버). ★출력 컬럼(`orgn_ntby_qty`·`frgn_ntby_qty`·`stck_bsop_date`)은 `data/market_data._INVESTOR_COLS`에 가정해 둠 — **라이브 1회 검증 필요**(다르면 `KISHistoryError`로 명확히 실패, 조용한 오염 없음) |
 | 공매도 일별 | `quotations/daily-short-sale` | `FHPST04830000` (`FID_INPUT_DATE_1/2`로 과거 구간 가능, ~100건/호출, 실측) |
 | 잔고 | `trading/inquire-balance` | `TTTC8434R` / `VTTC8434R` |
 | 현금 주문 | `trading/order-cash` | `TTTC0802U`·`TTTC0801U` / `VTTC0802U`·`VTTC0801U` |

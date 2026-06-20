@@ -162,12 +162,13 @@
 │   └── reflection.py           #   회고 (초기 보류 — 스텁, helped_score 입증 후 구현) (예정)
 │
 ├── memory/                     # ★SQLite 학습·기억 (유일한 프로세스 공유점)
-│   ├── db.py                   #   connect() 단일 진입점 (WAL·busy_timeout·foreign_keys PRAGMA) — 직접 connect 금지
-│   ├── schema.sql              #   스키마 (6장 객체 카탈로그)
-│   ├── migrations/             #   순번 SQL (forward+backward, schema_version) — 11-2.11
-│   ├── journal.py              #   사이클 적재·조회 (decisions·trades·outcomes·shadow_outcomes …)
-│   ├── calibration.py          #   보정통계 집계 (수축·Wilson 신뢰구간·시간가중)
-│   └── retrieval.py            #   인출 스코어러 (구조화 + lessons 부재 시 decisions↔outcomes 원시매칭 — P1-6)
+│   ├── db.py                   #   connect() 단일 진입점 (WAL·busy_timeout·foreign_keys PRAGMA) ✅
+│   ├── schema.sql              #   스키마 (6장 객체 카탈로그) ✅
+│   ├── migrations/             #   순번 SQL (forward+backward, schema_version) — 11-2.11 (예정)
+│   ├── journal.py              #   사이클 적재·조회 (decisions·trades·outcomes·shadow_outcomes …) ✅
+│   ├── calibration.py          #   보정통계 (수축·Wilson 신뢰구간·시간가중) — 7.5·7.6·7.15 ✅
+│   ├── retrieval.py            #   인출 스코어러 (구조화 + lessons 부재 시 decisions↔outcomes 원시매칭 — P1-6) ✅
+│   └── shadow.py               #   반사실 가상손익(거부·무거래 재생, 추정치) — 7.18 ✅
 │
 ├── pipeline/
 │   ├── trading_cycle.py        #   9단계 오케스트레이션 (현재 상태머신 스텁) ✅

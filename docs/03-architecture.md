@@ -180,7 +180,7 @@
 │   ├── tune.py                 #   워크포워드 파라미터 튜닝(IS선택/OOS평가)·PBO 성과행렬 — 10-4 ✅
 │   ├── regime.py               #   시장 레짐(지수 SMA 추세) 필터 = 하락장 방어 — 10-4 ✅
 │   ├── loader.py               #   캐시 parquet → 엔진 입력(가격+수급 병합) ✅
-│   └── seed.py                 #   학습 테이블 시드 (calibration·outcomes·켈리 p·b 선채움) — 7.19 (예정)
+│   └── seed.py                 #   학습 테이블 시드 (outcomes 선채움·켈리 p·b) — 7.19 ✅
 │
 ├── eval/                       # 성과·게이트 (전부 코드)
 │   ├── metrics.py              #   KPI·벤치마크(현 구현: 균등가중·현금 / 코스피·모멘텀 예정) — 10-4 ✅

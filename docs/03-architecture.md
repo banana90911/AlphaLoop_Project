@@ -119,10 +119,10 @@
 │   └── risk_params.toml        #   리스크/사이징/청산 파라미터 (한도·k·tp1_R·N_min 등 튜닝 손잡이)
 │
 ├── core/                       # 공용 기반 (얇은 유틸 — 프레임워크 아님)
-│   ├── schemas.py              #   pydantic 스키마 (decider JSON·에이전트 응답·entry_thesis) — 부분파싱 금지의 구현체
-│   ├── timeutils.py            #   UTC/KST 경계 함수 (시간대 정규화 단일 책임) — 11-2.7
-│   ├── trading_days.py         #   거래일/휴장/반장 판정 (exchange_calendars + KIS 영업일 2중)
-│   └── costs.py                #   비용·세금·슬리피지 단일 모델 (백테스트·실거래 공통) — 4.x·10-1
+│   ├── schemas.py              #   pydantic 스키마 (catalyst·decider JSON·부분파싱 금지의 구현체) ✅
+│   ├── timeutils.py            #   UTC/KST 경계 함수 (시간대 정규화 단일 책임) — 11-2.7 ✅
+│   ├── trading_days.py         #   거래일/휴장/반장 판정 (exchange_calendars + KIS 영업일 2중) (예정)
+│   └── costs.py                #   비용·세금·슬리피지 단일 모델 (백테스트·실거래 공통) — 4.x·10-1 ✅
 │
 ├── broker/                     # ◆모드 분기 화이트리스트◆ KIS 연동 (도메인·계좌 주입)
 │   └── kis_client.py           #   인증·토큰자동갱신·조회·주문·정정취소·rate limit·재시도·송출실패 즉시조회(P1-4)
@@ -155,11 +155,11 @@
 │   └── exits.py                #   청산 우선순위·R기준 고정(P1-2)·스톱 재동기화·에스컬레이션·집행채널 선후(P1-2)
 │
 ├── agents/                     # ◆LLM 칸◆ Anthropic SDK 직접 호출 (여기서만 LLM)
-│   ├── llm_client.py           #   AsyncAnthropic 래퍼·캐싱·재시도·JSON 4단계 폴백·llm_calls 적재 (11-3)
-│   ├── catalyst.py             #   뉴스·촉매 분석가 (확정)
-│   ├── decider.py              #   결정 에이전트 (조건부 — 3자비교로 존속 판정)
-│   ├── code_decider.py         #   B안: 코드 규칙 결정 (3자비교 대조군·가장 단순한 완결버전 — P1-3)
-│   └── reflection.py           #   회고 (초기 보류 — 스텁, helped_score 입증 후 구현)
+│   ├── llm_client.py           #   Anthropic 래퍼·캐싱·재시도·JSON 4단계 폴백·call_json (11-3) ✅
+│   ├── catalyst.py             #   뉴스·촉매 분석가(묶음1회·부분실패 허용) ✅
+│   ├── decider.py              #   결정 에이전트(C, 반대의견 게이트 P1-2 — 3자비교로 존속 판정) ✅
+│   ├── code_decider.py         #   B안: 코드 규칙 결정 (3자비교 대조군·가장 단순한 완결버전 — P1-3) ✅
+│   └── reflection.py           #   회고 (초기 보류 — 스텁, helped_score 입증 후 구현) (예정)
 │
 ├── memory/                     # ★SQLite 학습·기억 (유일한 프로세스 공유점)
 │   ├── db.py                   #   connect() 단일 진입점 (WAL·busy_timeout·foreign_keys PRAGMA) — 직접 connect 금지
@@ -170,7 +170,8 @@
 │   └── retrieval.py            #   인출 스코어러 (구조화 + lessons 부재 시 decisions↔outcomes 원시매칭 — P1-6)
 │
 ├── pipeline/
-│   └── trading_cycle.py        #   9단계 오케스트레이션 (평범한 함수 + asyncio.gather)
+│   ├── trading_cycle.py        #   9단계 오케스트레이션 (현재 상태머신 스텁) ✅
+│   └── decision.py             #   결정 흐름 조립 A/B/C 모드(촉매→결정) — 10-3.1 ✅
 │
 ├── backtest/                   # 과거 재생 (직접 구현, zipline/vectorbt 미사용)
 │   ├── engine.py               #   재생·체결현실·룩어헤드/생존편향 차단·하락장 방어 주입 ✅

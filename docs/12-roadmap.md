@@ -90,6 +90,8 @@
 - 9단계 파이프라인 조립 — `pipeline/trading_cycle.py`(단일 진입점 `run_trading_cycle.py`). JSON 검증/4단계 폴백(11-3.3), 부분 실패 룰(11-3.5).
 - **게이트**: 실주문 차단 플래그로 *파이프라인 드라이런*(10-2 ④) — 뉴스 견해·결정 JSON·반대 시나리오 반영·로그 검증.
 
+**진행 현황(2026-06)**: **결정 부품 구현 완료** — `core/schemas.py`(catalyst·decider pydantic 전체검증)·`agents/llm_client.py`(call_json: 역할별 모델·재시도·JSON 4단계 폴백)·`agents/catalyst.py`(묶음1회·부분실패)·`agents/decider.py`(C, 반대의견 게이트 P1-2)·`agents/code_decider.py`(B 대조군)·`pipeline/decision.py`(A/B/C 모드 진입점). **실호출 검증**: Haiku 촉매 분석·Sonnet 결정 모두 JSON 정상(강세 buy·약세 제외). 테스트 +28(총 185). *미연결*: 9단계 전체 사이클(trading_cycle은 상태머신 스텁 — 데이터 수집[Phase 2 운영]·주문 송출[exec] 미구현), 보정통계·교훈 입력(Phase 5), llm_calls 적재(journal 연결). → 결정 *흐름*은 완성, *전체 사이클 조립*은 데이터·exec 후.
+
 ---
 
 ### Phase 5 — 기억·학습 루프 (정량, 코드 중심)

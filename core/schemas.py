@@ -36,6 +36,13 @@ class CatalystView(BaseModel):
         return 0.5
 
 
+class CatalystBatch(BaseModel):
+    """촉매 분석가의 묶음 1회 호출 결과(여러 종목, 12 Phase 4 비용 절감)."""
+    model_config = {"extra": "forbid"}
+
+    views: list[CatalystView] = Field(default_factory=list)
+
+
 class OrderAction(StrEnum):
     BUY = "buy"      # 신규 진입
     ADD = "add"      # 추가 매수

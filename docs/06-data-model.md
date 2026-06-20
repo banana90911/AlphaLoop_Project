@@ -159,12 +159,12 @@
 | `side`                                | 매수/매도                                                                        |
 | `qty_risk_budget`                     | decider가 제안한 리스크 예산(코드가 수량 환산)                                               |
 | `rationale`                           | 결정 근거(왜)                                                                     |
-| `entry_thesis`                        | 진입 논지 JSON: `catalyst`·`invalidation_price`·`rr_ratio`·`net_edge_after_cost` |
+| `entry_thesis`                        | 진입 논지 JSON: `catalyst`·`invalidation_price`·`rr_ratio`·`net_edge_after_cost` + `decision_signals`(모멘텀·수급·거래대금 등 결정 시점 *대표 숫자 신호* — 대시보드 ③ 펼침에서 옛 거래도 보이도록 압축에서 살리는 소형 보존본; 원본 전체는 `context_snapshot`. 보유/청산 동적관리 결정도 해당 종목 신호를 같은 키로) |
 | `stop_loss`·`take_profit`·`exit_plan` | 손절·익절·청산 계획                                                                  |
 | `confidence`                          | decider 확신도                                                                  |
 | `dissent_addressed`                   | 반대 시나리오 반박 반영 내용 (결정자 지시문 내 "반대 경우 검토" 결과 — 별도 악마의 변호인 호출 없음, 3-2장)            |
 | `no_trade_reason`                     | 무거래 사유(`action=no_trade`)                                                    |
-| `context_snapshot`                    | 그 시점 입력 컨텍스트 스냅샷(Warm 진입 시 NULL로 압축)                                         |
+| `context_snapshot`                    | 그 시점 입력 컨텍스트 스냅샷 *전체*(Warm 진입 시 NULL로 압축 — 6개월까지만 완전). 대시보드가 옛 거래에서도 보여줄 *대표 숫자*는 `entry_thesis.decision_signals`로 별도 보존 |
 | `regime_tag`                          | 레짐 스냅샷 태그(코드가 매 사이클 산출, 결정 시점 고정 — 사후 회고가 국면을 알게)                            |
 | `session_label`                       | `morning`/`afternoon`(보정 통계의 세션 차원 단일 소스)                                    |
 | `source`·`decided_at`                 |                                                                              |
@@ -276,7 +276,7 @@
 
 | 테이블                   | 행당 크기        | 압축 방식                                                                                                 |
 | --------------------- | ------------ | ----------------------------------------------------------------------------------------------------- |
-| `decisions`           | 큼 (논지·컨텍스트)  | Warm 진입 시 컨텍스트 스냅샷 컬럼 NULL. 결정 본문·`entry_thesis`·`session_label`·레짐 태그는 그대로 보존                        |
+| `decisions`           | 큼 (논지·컨텍스트)  | Warm 진입 시 컨텍스트 스냅샷 컬럼 NULL. 결정 본문·`entry_thesis`(대표 숫자 신호 `decision_signals` 포함)·`session_label`·레짐 태그는 그대로 보존 — 대시보드 ③ 펼침이 옛 거래에서도 모멘텀·수급을 보이는 근거 |
 | `agent_predictions`   | 중간 (view·근거) | Warm 진입 시 `근거` 텍스트 50자 축약. `view·confidence·적중여부·model_version`은 그대로(모델별 보정이 Warm에서도 재현돼야 함)          |
 | `trades` · `outcomes` | 작음 (수량·가격)   | 5년까지 그대로 보존 후 Archive. 자본곡선·KPI 재계산의 1차 자료라 적극 보존                                                     |
 | `lessons`             | 자연어 텍스트      | `expiry` 도래 또는 `helped_score < 임계` → 비활성. 비슷한 교훈이 같은 (셋업, 레짐) 칸에 5건 이상 누적 시 회고가 통합 lesson 생성 후 원본 비활성 |

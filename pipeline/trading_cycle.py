@@ -1,8 +1,8 @@
-"""매매 사이클 9단계 오케스트레이션 (03-arch 3.1).
+"""매매 사이클 8단계 오케스트레이션 (03-arch 3.1).
 
 상태머신(`intent`→`ordering`→`recorded`)을 축으로, 부품이 준비된 단계부터 채운다.
 1단계(후보 선별)는 `market_data`가 주어지면 작동하고, 없으면 빈 사이클로 흐른다(상태머신만).
-3~8단계(기억·LLM·리스크·주문)는 후속 Phase에서 연결한다.
+2~8단계(데이터·기억·LLM·리스크·주문·기록)는 후속 Phase에서 연결한다.
 """
 from __future__ import annotations
 
@@ -51,12 +51,12 @@ def run_cycle(
     else:
         watchlist = list(holdings)                       # 빈 사이클(데이터 미주입)
 
-    # 3~7단계: 기억 검색 → LLM 분석·결정 (후속 Phase, watchlist 입력)
+    # 2~6단계: 데이터 수집 → 기억 검색 → LLM 분석·결정 → 리스크 검증 (후속 Phase, watchlist 입력)
 
     journal.advance_status(conn, cycle_id, "ordering")
-    # 8단계: 주문 송출·체결 기록 (후속 Phase)
+    # 7단계: 주문 송출 (후속 Phase)
 
     journal.advance_status(conn, cycle_id, "recorded")
-    # 9단계: 마감·정합성 (후속 Phase)
+    # 8단계: 기록·정합성 (후속 Phase)
     _ = watchlist  # 후속 단계 입력(현재는 선별까지만)
     return cycle_id

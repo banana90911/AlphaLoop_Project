@@ -230,14 +230,14 @@
 | **트리거 감지 시 (사이클 발동 전)** | 감지 시점·종류·종목·기준가 + 발동/미발동 사유                                 | `trigger_events` (1행)           |
 | **사이클 시작 (1단계 직전)**     | `cycle_id` 발급, 상태 `intent`로 1행 (트리거 참조·source 포함)           | `cycles` (1행)                   |
 | **데이터 수집 후 (2단계)**      | KIS 실잔고와 내부 보유 대조·동기화                                       | `positions` (갱신)                |
-| **LLM 호출마다 (4~6단계)**    | 페이로드·토큰·비용·지연·`parse_status`                                | `llm_calls` (호출당 1행)            |
-| **주문 송출 시작 (8단계 직전)**   | 같은 cycle 행의 상태를 `ordering`으로 갱신                             | `cycles` (행 갱신)                 |
-| **결정 시점 (6단계 후)**       | 결정 1건 + 근거 + `entry_thesis` + 컨텍스트 스냅샷 + 레짐·세션 + `cycle_id` | `decisions` (결정당 1행)            |
+| **LLM 호출마다 (4~5단계)**    | 페이로드·토큰·비용·지연·`parse_status`                                | `llm_calls` (호출당 1행)            |
+| **주문 송출 시작 (7단계 직전)**   | 같은 cycle 행의 상태를 `ordering`으로 갱신                             | `cycles` (행 갱신)                 |
+| **결정 시점 (5단계 후)**       | 결정 1건 + 근거 + `entry_thesis` + 컨텍스트 스냅샷 + 레짐·세션 + `cycle_id` | `decisions` (결정당 1행)            |
 | 〃                       | 거래 종목별 LLM 에이전트(뉴스·결정자) 각각 `view·confidence·근거`                       | `agent_predictions` (거래종목 × 에이전트 수) |
-| **주문 체결 시 (8단계)**       | KIS 주문·체결 내역 + `client_order_id` + `cycle_id`               | `trades`                        |
+| **주문 체결 시 (7단계)**       | KIS 주문·체결 내역 + `client_order_id` + `cycle_id`               | `trades`                        |
 | 〃                       | 신규 진입 체결 시 보유 1행 생성/갱신                                      | `positions`                     |
 | **거래정지 지정 시**           | 정지 직전 시가 동결 + 사유                                            | `frozen_positions` (1행)         |
-| **사이클 정상 종료 (9단계 끝)**   | 같은 cycle 행의 상태를 `recorded`로 갱신, `finished_at` 기록            | `cycles` (행 갱신)                 |
+| **사이클 정상 종료 (8단계 끝)**   | 같은 cycle 행의 상태를 `recorded`로 갱신, `finished_at` 기록            | `cycles` (행 갱신)                 |
 | **SafeStop 발생/해제 시**    | 사유·시점·자동수동 / 해제자·사유·시점                                      | `safe_stop_events` (1행/갱신)      |
 | **포지션 청산 시** (며칠~몇 주 후) | 실현손익 + `positions.status=closed`                            | `outcomes` (+`positions` 갱신)    |
 | 〃                       | "그 전문가 예측 맞았나" 적중·손익 귀속                                     | `agent_predictions` 행 갱신        |

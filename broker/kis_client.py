@@ -276,12 +276,14 @@ class KISClient:
 
     # ── 주문 API ─────────────────────────────────────────────────────
     def order_cash(
-        self, code: str, qty: int, price: int, *, side: str, ord_dvsn: str = "11"
+        self, code: str, qty: int, price: int, *, side: str, ord_dvsn: str = "11",
+        cndt_pric: int | None = None,
     ) -> dict[str, Any]:
         """현금 주문 송출. side='buy'|'sell'. ord_dvsn 기본 11(IOC지정가, 진입용 11-2.8).
 
         **재시도 금지** — 호출부는 KISError 시 get_daily_orders로 접수 여부를 확인할 것(11-2.3).
-        시장가(01) 등 price 무의미한 유형은 ORD_UNPR='0'.
+        시장가(01) 등 price 무의미한 유형은 ORD_UNPR='0'. 스톱지정가(22)는 cndt_pric
+        (CNDT_PRIC=트리거가)를 함께 전달하고 ORD_UNPR=발동지정가(external-apis §59).
         """
         if side not in ("buy", "sell"):
             raise ValueError(f"side는 buy|sell: {side!r}")
@@ -294,7 +296,33 @@ class KISClient:
             "ORD_QTY": str(qty),
             "ORD_UNPR": str(price),
         }
+        if cndt_pric is not None:
+            body["CNDT_PRIC"] = str(cndt_pric)
         return self._post_order("/uapi/domestic-stock/v1/trading/order-cash", tr_id, body)
+
+    def place_stop(
+        self, *, code: str, qty: int, trigger_price: int, limit_price: int,
+        client_order_id: str,
+    ) -> "Fill":
+        """손절 스톱지정가(22) 등록(exec.orders.Broker 프로토콜). 진입 체결 직후 호출돼
+        장간 갭 동안 손절선 도달 시 KIS가 자동 발동하게 한다(맨몸 포지션 방지, 11-2.3).
+
+        대기 주문이라 즉시 체결이 아니다 — 접수 성공이면 status='submitted'(filled_qty=0),
+        발동·체결은 사후 사이클의 reconcile가 일별체결조회로 확인한다(후속).
+
+        TODO(라이브 검증): KIS 모의가 스톱지정가(22)를 지원하는지, CNDT_PRIC 동작을
+        모의 1회 송출로 실측 확정 필요(IOC 미지원과 별개 — reference_kis_paper_no_ioc).
+        """
+        from exec.orders import Fill
+        try:
+            resp = self.order_cash(
+                code, qty, limit_price, side="sell", ord_dvsn="22",
+                cndt_pric=trigger_price,
+            )
+            out = resp.get("output") or resp
+            return Fill(0, None, "submitted", out.get("ODNO") or out.get("odno"))
+        except KISError:
+            return Fill(0, None, "rejected")
 
     def place_entry(
         self, *, code: str, qty: int, price: int, ord_dvsn: str, client_order_id: str

@@ -149,7 +149,7 @@
 │   └── portfolio.py            #   동시보유·섹터분산·교체매매·레짐별 노출 ✅
 │
 ├── exec/                       # 주문·청산 집행
-│   ├── orders.py               #   주문 송출·idempotency(client_order_id)·부분체결 reconcile ◑(진입 송출·trades/positions 적재 완료; 스톱등록·부분체결 분할은 후속)
+│   ├── orders.py               #   주문 송출·idempotency(client_order_id)·부분체결 reconcile ◑(진입 송출·체결 즉시 손절 스톱(22) 등록·trades/positions 적재 완료; 부분체결 분할은 후속)
 │   └── exits.py                #   청산 우선순위·R기준 고정(P1-2)·스톱 재동기화·에스컬레이션·집행채널 선후(P1-2)
 │
 ├── agents/                     # ◆LLM 칸◆ Anthropic SDK 직접 호출 (여기서만 LLM)

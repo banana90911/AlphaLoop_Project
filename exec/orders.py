@@ -19,6 +19,7 @@ from memory import journal
 
 # 진입 주문구분 — 모드별(11-2.14 + 모의 IOC 미지원 보정). if-분기 아닌 데이터 룩업.
 ENTRY_ORD_DVSN = {"real": "11", "paper": "00", "backtest": "00"}
+STOP_ORD_DVSN = "22"   # 손절 스톱지정가(11-2.14). 트리거 도달 시 KIS 자동 발동.
 
 
 @dataclass
@@ -40,6 +41,11 @@ class Broker(Protocol):
     """
     def place_entry(
         self, *, code: str, qty: int, price: int, ord_dvsn: str, client_order_id: str
+    ) -> Fill: ...
+
+    def place_stop(
+        self, *, code: str, qty: int, trigger_price: int, limit_price: int,
+        client_order_id: str,
     ) -> Fill: ...
 
 
@@ -79,11 +85,32 @@ def execute_entries(
             source=source, ordered_at=ts,
             filled_at=ts if fill.filled_qty > 0 else None,
         )
+        trade_ids.append(coid)
         if fill.filled_qty > 0 and fill.fill_price is not None:
             journal.upsert_entry_position(
                 conn, cycle_id=cycle_id, symbol=o.code, add_qty=fill.filled_qty,
                 fill_price=fill.fill_price, entry_decision_id=did,
                 current_stop_price=o.stop,
             )
-        trade_ids.append(coid)
+            # 손절 스톱 KIS 등록 — 체결 즉시 등록해 장간 갭 맨몸 포지션을 막는다(11-2.3).
+            trade_ids.append(
+                _register_stop(conn, o, fill.filled_qty, cycle_id, seq, did, source, ts, broker)
+            )
     return trade_ids
+
+
+def _register_stop(conn, o, filled_qty, cycle_id, seq, did, source, ts, broker) -> str:
+    """체결 수량만큼 손절 스톱지정가(22)를 등록하고 trades에 적재. 반환: 스톱 trade_id."""
+    stop_coid = f"{cycle_id}-{o.code}-stop-{seq}"
+    stop = int(round(o.stop))
+    sf = broker.place_stop(
+        code=o.code, qty=filled_qty, trigger_price=stop, limit_price=stop,
+        client_order_id=stop_coid,
+    )
+    journal.record_trade(
+        conn, trade_id=stop_coid, cycle_id=cycle_id, decision_id=did,
+        client_order_id=stop_coid, symbol=o.code, side="sell", ord_dvsn=STOP_ORD_DVSN,
+        order_qty=filled_qty, filled_qty=0, order_price=float(stop), trigger_price=float(stop),
+        status=sf.status, source=source, ordered_at=ts,
+    )
+    return stop_coid

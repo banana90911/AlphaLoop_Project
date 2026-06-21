@@ -48,6 +48,10 @@ class Broker(Protocol):
         client_order_id: str,
     ) -> Fill: ...
 
+    def place_exit(
+        self, *, code: str, qty: int, ord_dvsn: str, client_order_id: str
+    ) -> Fill: ...
+
 
 def execute_entries(
     conn,
@@ -90,7 +94,7 @@ def execute_entries(
             journal.upsert_entry_position(
                 conn, cycle_id=cycle_id, symbol=o.code, add_qty=fill.filled_qty,
                 fill_price=fill.fill_price, entry_decision_id=did,
-                current_stop_price=o.stop,
+                current_stop_price=o.stop, initial_stop_price=o.stop,   # 진입 시 initial=current(R 고정)
             )
             # 손절 스톱 KIS 등록 — 체결 즉시 등록해 장간 갭 맨몸 포지션을 막는다(11-2.3).
             trade_ids.append(

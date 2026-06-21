@@ -97,8 +97,12 @@
 | `symbol`                             |                                    |
 | `qty`·`avg_price`                    | 보유 수량·평단가                          |
 | `sector`                             | KRX 업종(섹터 집중도 한도·교체매매용)            |
+| `market`                             | KOSPI/KOSDAQ(거래세율·비용 산식). 종목→시장 매핑 부재 시 NULL |
 | `entry_decision_id` (FK→`decisions`) | 이 포지션을 연 진입 결정                     |
-| `current_stop_price`                 | 현재 KIS에 상주하는 스톱지정가 트리거(매 사이클 재동기화) |
+| `initial_stop_price`                 | 진입 시 최초 손절가 — R(=진입가−최초손절) 고정 기준, 불변(§97) |
+| `current_stop_price`                 | 현재 KIS에 상주하는 스톱지정가 트리거(트레일·본전 상향으로 변동, 매 사이클 재동기화) |
+| `tp1_done`                           | +1.5R 부분익절 1회 완료 여부(청산 ③ 멱등성)      |
+| `entry_date`                         | 진입일(YYYY-MM-DD) — 보유일·비용 산정 기준     |
 | `status`                             | `open`/`closed`                    |
 | `opened_at`·`updated_at`             | 최초 진입·마지막 동기화 시각                   |
 

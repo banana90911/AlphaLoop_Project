@@ -150,7 +150,7 @@
 │
 ├── exec/                       # 주문·청산 집행
 │   ├── orders.py               #   주문 송출·idempotency(client_order_id)·부분체결 reconcile ◑(진입 송출·체결 즉시 손절 스톱(22) 등록·trades/positions 적재 완료; 부분체결 분할은 후속)
-│   └── exits.py                #   청산 우선순위·R기준 고정(P1-2)·스톱 재동기화·에스컬레이션·집행채널 선후(P1-2)
+│   └── exits.py                #   청산 우선순위·R기준 고정(P1-2)·스톱 재동기화·에스컬레이션·집행채널 선후(P1-2) ◑(decide_exit·execute_exits[송출·outcomes·positions] 완료; KIS 스톱 정정·미체결 에스컬레이션·잔고 동기화는 후속)
 │
 ├── agents/                     # ◆LLM 칸◆ Anthropic SDK 직접 호출 (여기서만 LLM)
 │   ├── llm_client.py           #   Anthropic 래퍼·캐싱·재시도·JSON 4단계 폴백·call_json (11-3) ✅

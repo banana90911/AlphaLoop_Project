@@ -324,6 +324,37 @@ class KISClient:
         except KISError:
             return Fill(0, None, "rejected")
 
+    def place_exit(
+        self, *, code: str, qty: int, ord_dvsn: str, client_order_id: str
+    ) -> "Fill":
+        """청산 송출 + 체결 확인(exec.orders.Broker 프로토콜). 시장가류는 ORD_UNPR=0.
+
+        진입과 동일하게 일별주문체결조회를 단일 진실로 체결을 확정한다(place_entry 참조).
+        TODO(라이브 검증): place_entry와 동일 — 응답 필드·모의 IOC시장가(13) 지원 여부.
+        """
+        from exec.orders import Fill
+        odno: str | None = None
+        try:
+            resp = self.order_cash(code, qty, 0, side="sell", ord_dvsn=ord_dvsn)
+            out = resp.get("output") or resp
+            odno = out.get("ODNO") or out.get("odno")
+        except KISError:
+            pass
+        try:
+            rows = self.get_daily_orders(_today_kst())
+        except KISError:
+            return Fill(0, None, "submitted", odno)
+        match = next((r for r in rows if odno and r.get("odno") == odno), None)
+        if match is None:
+            cands = [r for r in rows if r.get("pdno") == code]
+            match = cands[-1] if cands else None
+        if match is None:
+            return Fill(0, None, "rejected" if odno is None else "submitted", odno)
+        filled = int(match.get("tot_ccld_qty") or 0)
+        avg = float(match.get("avg_prvs") or 0) or None
+        status = "filled" if filled >= qty else ("partial" if filled > 0 else "submitted")
+        return Fill(filled, avg, status, odno)
+
     def place_entry(
         self, *, code: str, qty: int, price: int, ord_dvsn: str, client_order_id: str
     ) -> "Fill":

@@ -137,12 +137,16 @@ def upsert_entry_position(
     fill_price: float,
     entry_decision_id: str | None,
     current_stop_price: float | None,
+    initial_stop_price: float | None = None,
+    market: str | None = None,
+    entry_date: str | None = None,
     sector: str | None = None,
 ) -> str:
     """신규/추가 진입 체결 → `positions` 생성 또는 수량·평단 갱신(7단계). 반환: position_id.
 
     같은 종목 open 보유가 있으면 수량 합산·평단 가중평균으로 갱신(추가매수), 없으면 신규
-    생성(position_id=cycle_id_symbol). 종목→섹터 매핑 부재라 sector는 기본 NULL(후속).
+    생성(position_id=cycle_id_symbol). 추가매수 시 R 기준(initial_stop·entry_date)은 첫
+    진입값을 유지(불변, §97). 종목→섹터·시장 매핑 부재라 sector·market은 기본 NULL(후속).
     """
     ts = utc_iso()
     row = conn.execute(
@@ -162,14 +166,94 @@ def upsert_entry_position(
     else:
         pid = f"{cycle_id}_{symbol}"
         conn.execute(
-            "INSERT INTO positions(position_id, symbol, qty, avg_price, sector, "
-            "entry_decision_id, current_stop_price, status, opened_at, updated_at) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
-            (pid, symbol, add_qty, fill_price, sector, entry_decision_id,
-             current_stop_price, ts, ts),
+            "INSERT INTO positions(position_id, symbol, qty, avg_price, sector, market, "
+            "entry_decision_id, initial_stop_price, current_stop_price, tp1_done, "
+            "entry_date, status, opened_at, updated_at) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'open', ?, ?)",
+            (pid, symbol, add_qty, fill_price, sector, market, entry_decision_id,
+             initial_stop_price if initial_stop_price is not None else current_stop_price,
+             current_stop_price, entry_date or ts[:10], ts, ts),
         )
     conn.commit()
     return pid
+
+
+def update_stop(conn: sqlite3.Connection, position_id: str, new_stop: float) -> None:
+    """트레일링 스톱 상향 — `current_stop_price` 갱신(청산 없음, exits ④)."""
+    conn.execute(
+        "UPDATE positions SET current_stop_price=?, updated_at=? WHERE position_id=?",
+        (new_stop, utc_iso(), position_id),
+    )
+    conn.commit()
+
+
+def reduce_position(
+    conn: sqlite3.Connection,
+    position_id: str,
+    *,
+    sell_qty: int,
+    new_stop: float | None = None,
+    mark_tp1: bool = False,
+) -> None:
+    """부분 청산 — 수량 차감 + (선택) 손절 본전 상향·tp1 완료 표시(exits ③)."""
+    row = conn.execute(
+        "SELECT qty, current_stop_price, tp1_done FROM positions WHERE position_id=?",
+        (position_id,),
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute(
+        "UPDATE positions SET qty=?, current_stop_price=?, tp1_done=?, updated_at=? "
+        "WHERE position_id=?",
+        (max(0, row["qty"] - sell_qty),
+         new_stop if new_stop is not None else row["current_stop_price"],
+         1 if mark_tp1 else row["tp1_done"], utc_iso(), position_id),
+    )
+    conn.commit()
+
+
+def close_position(conn: sqlite3.Connection, position_id: str) -> None:
+    """전량 청산 — status=closed, 잔량 0(exits ①·②·⑤)."""
+    conn.execute(
+        "UPDATE positions SET status='closed', qty=0, updated_at=? WHERE position_id=?",
+        (utc_iso(), position_id),
+    )
+    conn.commit()
+
+
+def record_outcome(
+    conn: sqlite3.Connection,
+    *,
+    outcome_id: str,
+    position_id: str,
+    entry_decision_id: str | None,
+    symbol: str,
+    entry_price: float,
+    exit_price: float,
+    qty: int,
+    holding_days: int,
+    gross_pnl: float,
+    net_pnl: float,
+    return_pct: float,
+    exit_reason: str,
+    source: str = "paper",
+    closed_at: str | None = None,
+) -> None:
+    """청산 실현손익 1건을 `outcomes`에 적재(부분·전량 청산 공통). net_pnl은 비용 차감 후.
+
+    KPI·학습(calibration·shadow)의 1차 자료 — 산식은 백테스트 `engine._close`와 동일하게
+    `core.costs.trade_cost` 기반(06-data §306 모드 무관 동일 경로).
+    """
+    conn.execute(
+        "INSERT INTO outcomes(outcome_id, position_id, entry_decision_id, symbol, "
+        "entry_price, exit_price, qty, holding_days, gross_pnl, net_pnl, return_pct, "
+        "exit_reason, closed_at, source) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (outcome_id, position_id, entry_decision_id, symbol, entry_price, exit_price,
+         qty, holding_days, gross_pnl, net_pnl, return_pct, exit_reason,
+         closed_at or utc_iso(), source),
+    )
+    conn.commit()
 
 
 def recover_pending_cycles(conn: sqlite3.Connection) -> list[str]:

@@ -26,7 +26,7 @@ from config.settings import get_settings
 from core.schemas import DeciderOutput, OrderAction
 from core.timeutils import now_utc
 from data.panel import latest_row
-from exec import orders
+from exec import exits, orders
 from exec.orders import Broker
 from memory import journal
 from pipeline import screening
@@ -213,14 +213,25 @@ def run_cycle(
                 decision_ids[o.code] = f"{cycle_id}_{o.code}_buy"
 
     journal.advance_status(conn, cycle_id, "ordering")
-    # 7단계: 주문 송출. broker 주입 시 planned를 KIS로 실집행, 미주입이면 드라이런(차단).
+    # 7단계: 주문 송출. broker 주입 시 KIS 실집행(보유 청산으로 자금 회수 → 신규 진입,
+    # 백테스트 engine 순서와 정합), 미주입이면 드라이런(차단).
     trade_ids: list[str] = []
-    if broker is not None and planned:
+    if broker is not None:
         order_mode = get_settings().trading_mode
-        trade_ids = orders.execute_entries(
-            conn, planned, broker=broker, cycle_id=cycle_id,
-            decision_ids=decision_ids, order_mode=order_mode, source=source,
-        )
+        if market_data:                                  # 보유 청산(규칙 decide_exit + LLM sell)
+            llm_sells = (
+                [o.code for o in decision.orders if o.action == OrderAction.SELL]
+                if decision is not None else []
+            )
+            trade_ids += exits.execute_exits(
+                conn, market_data, broker=broker, cycle_id=cycle_id, asof=asof,
+                order_mode=order_mode, source=source, llm_sells=llm_sells,
+            )
+        if planned:                                      # 신규 진입
+            trade_ids += orders.execute_entries(
+                conn, planned, broker=broker, cycle_id=cycle_id,
+                decision_ids=decision_ids, order_mode=order_mode, source=source,
+            )
 
     journal.advance_status(conn, cycle_id, "recorded")
     return CycleResult(

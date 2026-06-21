@@ -69,8 +69,12 @@ CREATE TABLE IF NOT EXISTS positions (
     qty                INTEGER NOT NULL,
     avg_price          REAL NOT NULL,
     sector             TEXT,
+    market             TEXT,                                 -- KOSPI/KOSDAQ(거래세율·비용 산식). 매핑 부재 시 NULL
     entry_decision_id  TEXT REFERENCES decisions(decision_id),
-    current_stop_price REAL,
+    initial_stop_price REAL,                                 -- R 고정 기준(진입 시 최초 손절, 불변 — 05-risk §97)
+    current_stop_price REAL,                                 -- 트레일링·본전 상향으로 변동
+    tp1_done           INTEGER NOT NULL DEFAULT 0,           -- +1.5R 부분익절 1회 완료 여부
+    entry_date         TEXT,                                 -- 보유일·비용 산정 기준일(YYYY-MM-DD)
     status             TEXT NOT NULL CHECK(status IN ('open','closed')),
     opened_at          TEXT NOT NULL,
     updated_at         TEXT

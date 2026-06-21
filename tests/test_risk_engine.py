@@ -178,6 +178,18 @@ def test_anomaly_flood_scales_with_capital(params):
     assert detect_anomaly(props, acc, params)         # 8건 OK
 
 
+def test_anomaly_flood_floor_small_capital(params):
+    """소액(비례식<1건)이라도 동시보유 상한(floor=max_positions)까지 정상 진입 허용(A.3)."""
+    acc = _acc(1_000_000)                             # 100만 → 비례식 0.5건, floor=max_positions
+    mp = params["limits"]["max_positions"]
+    assert detect_anomaly([OrderProposal("A", "buy", 200_000)], acc, params)   # 단일 진입 OK
+    props = [OrderProposal(f"S{i}", "buy", 100_000) for i in range(mp)]
+    assert detect_anomaly(props, acc, params)         # floor만큼 동시 진입 OK
+    props = [OrderProposal(f"S{i}", "buy", 50_000) for i in range(mp + 1)]
+    v = detect_anomaly(props, acc, params)
+    assert not v and "폭주" in v.reason               # floor 초과는 폭주
+
+
 def test_anomaly_buy_sell_conflict(params):
     acc = _acc(10_000_000)
     props = [OrderProposal("A", "buy", 1_000_000), OrderProposal("A", "sell", 1_000_000)]

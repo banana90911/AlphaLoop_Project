@@ -18,6 +18,8 @@ drawdown_halt_pct = 0.20     # 고점 대비 누적 낙폭 정지(시작값, 백
 single_order_pct = 0.30          # 단일 주문 노출이 자본의 이 비율 초과 시 SafeStop
 max_new_orders_per_capital = 5   # 신규 진입 주문 수 임계(기준 자본액당)
 order_count_capital_base = 10_000_000  # 위 기준 자본(원): 1,000만원당 5건
+# 실효 임계 = max(limits.max_positions, 위 비례식). 소액에서 비례식이 1건 미만으로
+# 쪼그라들어 정상 첫 진입을 막는 것 방지(하한=동시보유 상한). 상세 05-risk A.3.
 
 [decision]
 # B안(code_decider) 종합점수 가중·임계 (10-3.1 B, 워크포워드 확정). C와 차이는 결정 주체뿐.

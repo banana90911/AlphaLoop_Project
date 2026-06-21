@@ -215,9 +215,15 @@ def detect_anomaly(proposals: list[OrderProposal], acc: Account, params: dict) -
     for p in proposals:
         if p.value > a["single_order_pct"] * eq + 1e-6:
             return Verdict(False, f"단일주문 노출 {a['single_order_pct']:.0%} 초과({p.code})")
-    # 신규 진입 주문 수 폭주 (자본 비례 절대 상한)
+    # 신규 진입 주문 수 폭주 (자본 비례 상한, 단 동시보유 상한을 하한으로).
+    # 비례식만 쓰면 소액(예 100만원)에서 임계가 1건 미만(0.5건)으로 쪼그라들어 정상
+    # 첫 진입조차 폭주로 오판 → SafeStop. 한 사이클 정상 신규 최대치 = 빈 포트폴리오를
+    # 한 번에 채우는 동시보유 상한(max_positions)이므로 그것을 floor로 깐다(05-risk A.3).
     new_buys = [p for p in proposals if p.side == "buy"]
-    limit = a["max_new_orders_per_capital"] * (eq / a["order_count_capital_base"])
+    limit = max(
+        params["limits"]["max_positions"],
+        a["max_new_orders_per_capital"] * (eq / a["order_count_capital_base"]),
+    )
     if len(new_buys) > limit + 1e-9:
         return Verdict(False, f"신규 진입 주문 폭주({len(new_buys)}건 > {limit:.1f})")
     # 동일 종목 매수·매도 동시 제안 (방향 충돌 = 명백한 버그)

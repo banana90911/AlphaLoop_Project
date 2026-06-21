@@ -26,6 +26,7 @@ from config.settings import get_settings
 from core.schemas import DeciderOutput, OrderAction
 from core.timeutils import now_utc
 from data.panel import latest_row
+from data.sources import universe
 from exec import exits, orders
 from exec.orders import Broker
 from memory import journal
@@ -230,7 +231,8 @@ def run_cycle(
         if planned:                                      # 신규 진입
             trade_ids += orders.execute_entries(
                 conn, planned, broker=broker, cycle_id=cycle_id,
-                decision_ids=decision_ids, order_mode=order_mode, source=source,
+                decision_ids=decision_ids, market_map=universe.load_market_map(),
+                order_mode=order_mode, source=source,
             )
 
     journal.advance_status(conn, cycle_id, "recorded")

@@ -40,7 +40,8 @@ def test_entry_fill_records_trade_and_position(tmp_path):
     planned = [PlannedOrder("005930", 3, 70000.0, 65000.0)]
     fb = FakeBroker({"005930": Fill(3, 70000.0, "filled")})
     tids = execute_entries(
-        conn, planned, broker=fb, cycle_id="CY1", order_mode="paper"
+        conn, planned, broker=fb, cycle_id="CY1", order_mode="paper",
+        market_map={"005930": "KOSPI"},
     )
     assert tids == ["CY1-005930-buy-0", "CY1-005930-stop-0"]   # 진입 + 손절 스톱
     t = conn.execute("SELECT * FROM trades WHERE trade_id='CY1-005930-buy-0'").fetchone()
@@ -48,9 +49,11 @@ def test_entry_fill_records_trade_and_position(tmp_path):
     assert t["ord_dvsn"] == "00"                       # paper = IOC 미지원 보정
     assert t["client_order_id"] == "CY1-005930-buy-0"
     p = conn.execute(
-        "SELECT qty, avg_price, current_stop_price FROM positions WHERE symbol='005930'"
+        "SELECT qty, avg_price, current_stop_price, market, initial_stop_price "
+        "FROM positions WHERE symbol='005930'"
     ).fetchone()
     assert p["qty"] == 3 and p["avg_price"] == 70000.0 and p["current_stop_price"] == 65000.0
+    assert p["market"] == "KOSPI" and p["initial_stop_price"] == 65000.0   # 시장 매핑·R고정
     # 손절 스톱(22)이 체결 수량만큼 등록됨(맨몸 포지션 방지 11-2.3)
     s = conn.execute("SELECT * FROM trades WHERE trade_id='CY1-005930-stop-0'").fetchone()
     assert s["side"] == "sell" and s["ord_dvsn"] == "22" and s["order_qty"] == 3

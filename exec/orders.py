@@ -60,6 +60,7 @@ def execute_entries(
     broker: Broker,
     cycle_id: str,
     decision_ids: dict[str, str] | None = None,
+    market_map: dict[str, str] | None = None,
     order_mode: str = "paper",
     source: str = "paper",
     now: str | None = None,
@@ -67,9 +68,11 @@ def execute_entries(
     """신규 진입(planned) 송출·체결 → trades·positions 적재. 반환: trade_id 목록.
 
     planned: PlannedOrder 시퀀스(code·qty·price·stop). decision_ids: code→decision_id
-    (8단계 결정 적재 결과, trades.decision_id FK). 체결(filled_qty>0)이면 positions 갱신.
+    (8단계 결정 적재 결과, trades.decision_id FK). market_map: code→시장(거래세율·비용,
+    positions.market). 체결(filled_qty>0)이면 positions 갱신.
     """
     decision_ids = decision_ids or {}
+    market_map = market_map or {}
     ord_dvsn = ENTRY_ORD_DVSN[order_mode]
     ts = now or utc_iso()
     trade_ids: list[str] = []
@@ -95,6 +98,7 @@ def execute_entries(
                 conn, cycle_id=cycle_id, symbol=o.code, add_qty=fill.filled_qty,
                 fill_price=fill.fill_price, entry_decision_id=did,
                 current_stop_price=o.stop, initial_stop_price=o.stop,   # 진입 시 initial=current(R 고정)
+                market=market_map.get(o.code),
             )
             # 손절 스톱 KIS 등록 — 체결 즉시 등록해 장간 갭 맨몸 포지션을 막는다(11-2.3).
             trade_ids.append(

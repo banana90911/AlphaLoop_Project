@@ -12,7 +12,7 @@ from pipeline.trading_cycle import run_cycle
 from risk.risk_engine import Account, MarketState
 
 
-def _series(start: float, step: float, n: int = 120) -> pd.DataFrame:
+def _series(start: float, step: float, n: int = 300) -> pd.DataFrame:   # 12-1 모멘텀 워밍업(252+20) 확보
     idx = pd.bdate_range(end="2024-06-28", periods=n).date
     close = start + step * np.arange(n)
     return pd.DataFrame(

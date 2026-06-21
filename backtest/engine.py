@@ -66,7 +66,7 @@ def build_features(df: pd.DataFrame, *, supply_window: int = 20) -> pd.DataFrame
     """종목 OHLCV(+수급) → 스크리너·청산용 피처 시계열. index=date."""
     out = pd.DataFrame(index=df.index)
     out["close"] = df["close"]
-    out["momentum"] = ind.momentum(df["close"], 60)
+    out["momentum"] = ind.momentum(df["close"], 252, skip=20)   # 12-1 모멘텀(04-data)
     out["atr"] = ind.atr(df["high"], df["low"], df["close"], 20)
     out["lowvol"] = ind.realized_vol(df["close"], 20)
     out["alignment"] = ind.alignment_score(df["close"])

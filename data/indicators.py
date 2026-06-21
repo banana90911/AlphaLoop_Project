@@ -20,9 +20,13 @@ def ema(s: pd.Series, n: int) -> pd.Series:
     return s.ewm(span=n, adjust=False).mean()
 
 
-def momentum(close: pd.Series, n: int) -> pd.Series:
-    """n거래일 수익률 = close_t / close_{t-n} − 1."""
-    return close / close.shift(n) - 1.0
+def momentum(close: pd.Series, n: int, skip: int = 0) -> pd.Series:
+    """n거래일 모멘텀 = close_{t-skip} / close_{t-n} − 1.
+
+    skip>0이면 최근 skip거래일을 제외한다(단기 반전 구간 배제). skip=0이면 오늘 기준
+    단순 n일 수익률. 운영 기본은 12-1 모멘텀(n=252, skip=20) — 04-data §스크리너 근거.
+    """
+    return close.shift(skip) / close.shift(n) - 1.0
 
 
 def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:

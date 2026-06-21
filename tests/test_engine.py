@@ -32,7 +32,8 @@ def test_build_features_columns():
 
 
 def test_uptrend_enters_and_profits():
-    prices = {"UP": _df(150, 0.005), "DOWN": _df(150, -0.003)}
+    # 12-1 모멘텀 워밍업(252+20) 이후 거래가 생기도록 충분히 긴 시계열
+    prices = {"UP": _df(350, 0.005), "DOWN": _df(350, -0.003)}
     markets = {"UP": "KOSPI", "DOWN": "KOSDAQ"}
     dates = prices["UP"].index
     r = engine.run(prices, markets, start=dates[0], end=dates[-1],
@@ -45,7 +46,7 @@ def test_uptrend_enters_and_profits():
 
 
 def test_no_trades_before_warmup():
-    # 워밍업(60) 못 채우는 짧은 데이터 → 거래 없음
+    # 워밍업(12-1 모멘텀=252+20) 못 채우는 짧은 데이터 → 모멘텀 NaN → 거래 없음
     prices = {"A": _df(40, 0.005), "B": _df(40, -0.003)}
     markets = {"A": "KOSPI", "B": "KOSPI"}
     dates = prices["A"].index

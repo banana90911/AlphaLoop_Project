@@ -9,7 +9,7 @@ from pipeline import screening
 from pipeline.trading_cycle import run_cycle
 
 
-def _series(start: float, step: float, n: int = 120, end: date = date(2024, 6, 28)) -> pd.DataFrame:
+def _series(start: float, step: float, n: int = 300, end: date = date(2024, 6, 28)) -> pd.DataFrame:
     idx = pd.bdate_range(end=end, periods=n).date
     close = start + step * np.arange(n)
     return pd.DataFrame(

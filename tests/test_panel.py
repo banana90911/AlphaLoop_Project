@@ -27,14 +27,15 @@ def test_panel_has_screen_columns():
 
 
 def test_rising_stock_has_positive_momentum():
-    prices = {"UP": _series(120, 1000, 10), "DOWN": _series(120, 2000, -5)}
+    # 12-1 모멘텀 워밍업(252+20) 이상 길이라야 momentum 값이 산출됨
+    prices = {"UP": _series(300, 1000, 10), "DOWN": _series(300, 2000, -5)}
     pnl = panel.build_panel(prices)
     assert pnl.loc["UP", "momentum"] > 0
     assert pnl.loc["DOWN", "momentum"] < 0
 
 
 def test_warmup_incomplete_drops_stock():
-    # 60일 모멘텀 워밍업 미완(30행) → momentum NaN이지만 close는 유효해 행은 남고
+    # 12-1 모멘텀 워밍업 미완(30행) → momentum NaN이지만 close는 유효해 행은 남고
     # momentum만 NaN(스크리너가 중립 처리). 행 자체가 빠지는 건 close가 없을 때다.
     prices = {"SHORT": _series(30, 1000, 10)}
     pnl = panel.build_panel(prices)

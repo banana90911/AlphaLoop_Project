@@ -89,11 +89,17 @@ def walkforward_tune(
     grid: dict | None = None,
     tax_params: dict | None = None,
     market_trend: dict | None = None,
+    warmup: int = 0,
     objective: Callable[[engine.BacktestResult], float] = is_objective,
 ) -> list[WFRecord]:
-    """롤링 워크포워드 튜닝. 각 구간: IS에서 grid 전체 평가→최고 선택, OOS에서 그 1개만 평가."""
+    """롤링 워크포워드 튜닝. 각 구간: IS에서 grid 전체 평가→최고 선택, OOS에서 그 1개만 평가.
+
+    warmup: 앞쪽 N거래일은 split 대상에서 제외(피처는 전체 history로 계산). 모멘텀처럼
+    워밍업이 긴 지표가 IS 구간을 통째로 NaN으로 만들어 거래 0건→파라미터 임의선택되는
+    초반 낭비 split을 막는다.
+    """
     dates = sorted({d for df in prices.values() for d in df.index})
-    splits = rolling_splits(dates, train_size=train_size, test_size=test_size,
+    splits = rolling_splits(dates[warmup:], train_size=train_size, test_size=test_size,
                             step=step, anchored=anchored)
     candidates = param_grid(base_params, grid)
     feats = _precompute_feats(prices)
@@ -161,13 +167,15 @@ def perf_matrix(
     grid: dict | None = None,
     tax_params: dict | None = None,
     market_trend: dict | None = None,
+    warmup: int = 0,
 ) -> np.ndarray:
     """PBO(CSCV)용 성과행렬: shape (n_splits, n_candidates), 각 칸=후보의 OOS 구간수익.
 
     eval.gate.pbo_cscv에 넣어 'IS 최고 조합이 OOS에서 중앙값 이하로 떨어지는 확률'을 잰다.
+    warmup: walkforward_tune과 동일 — 앞쪽 N거래일 split 제외(split 정합 유지).
     """
     dates = sorted({d for df in prices.values() for d in df.index})
-    splits = rolling_splits(dates, train_size=train_size, test_size=test_size,
+    splits = rolling_splits(dates[warmup:], train_size=train_size, test_size=test_size,
                             step=step, anchored=False)
     candidates = param_grid(base_params, grid)
     feats = _precompute_feats(prices)

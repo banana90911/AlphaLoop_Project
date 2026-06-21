@@ -28,6 +28,7 @@ from eval import gate, metrics
 RESULTS_DIR = Path("tune_results")   # 워크포워드 실행 결과 보존(재실행 없이 재확인용)
 CAPITAL = 10_000_000.0
 TRAIN, TEST = 252, 63          # IS 1년 / OOS 1분기(거래일)
+MOM_WARMUP = 252               # 12-1 모멘텀 워밍업(첫 유효값=252번째 거래일) → 초반 split 제외
 INDEX_START = "20200101"       # 지수는 종목보다 앞당겨 받음(SMA 워밍업 확보)
 TREND_DAYS = 200               # 하락장 방어: 지수 SMA200 위면 매수 허용(고정, 손잡이 미증가)
 
@@ -84,7 +85,7 @@ def main() -> None:
     recs = tune.walkforward_tune(
         prices, markets, train_size=TRAIN, test_size=TEST,
         initial_capital=CAPITAL, base_params=base, grid=GRID, tax_params=tax,
-        market_trend=trend,
+        market_trend=trend, warmup=MOM_WARMUP,
     )
     print(f"워크포워드 구간 {len(recs)}개 (IS={TRAIN}일 / OOS={TEST}일)")
     print("─" * 78)
@@ -128,7 +129,7 @@ def main() -> None:
     candidates = tune.param_grid(base, GRID)
     mat = tune.perf_matrix(prices, markets, train_size=TRAIN, test_size=TEST,
                            initial_capital=CAPITAL, base_params=base, grid=GRID,
-                           tax_params=tax, market_trend=trend)
+                           tax_params=tax, market_trend=trend, warmup=MOM_WARMUP)
     n_blocks = (mat.shape[0] // 2) * 2          # PBO용 짝수 블록 (≤ 구간수)
     pbo = gate.pbo_cscv(mat, n_splits=n_blocks) if n_blocks >= 2 else float("nan")
 
@@ -162,7 +163,7 @@ def main() -> None:
     stress_recs = tune.walkforward_tune(
         prices, markets, train_size=TRAIN, test_size=TEST,
         initial_capital=CAPITAL, base_params=base, grid=GRID,
-        tax_params=stress_tax, market_trend=trend,
+        tax_params=stress_tax, market_trend=trend, warmup=MOM_WARMUP,
     )
     stress_eq = tune.oos_equity(stress_recs, initial_capital=CAPITAL)
     stress_ret = metrics.total_return(stress_eq) if len(stress_eq) >= 2 else -1.0

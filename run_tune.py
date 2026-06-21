@@ -11,6 +11,11 @@
 """
 from __future__ import annotations
 
+import copy
+import json
+from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -20,6 +25,7 @@ from data import cache
 from data.sources import index_history
 from eval import gate, metrics
 
+RESULTS_DIR = Path("tune_results")   # 워크포워드 실행 결과 보존(재실행 없이 재확인용)
 CAPITAL = 10_000_000.0
 TRAIN, TEST = 252, 63          # IS 1년 / OOS 1분기(거래일)
 INDEX_START = "20200101"       # 지수는 종목보다 앞당겨 받음(SMA 워밍업 확보)
@@ -98,16 +104,25 @@ def main() -> None:
           f"샤프 {strat['sharpe']:.2f}  MDD {strat['max_drawdown']:.2%}  "
           f"Calmar {strat['calmar']:.2f}")
 
-    # 벤치마크: OOS 기간 균등가중 매수후보유(같은 종목군)
+    # 벤치마크 4종(10-1): OOS 기간 net 누적수익으로 비교 — 전부 초과해야 ① 통과
+    bench_start = recs[0].split.test_start
     bench_prices = {c: df["close"] for c, df in prices.items()}
     ew = metrics.equal_weight_equity(bench_prices, CAPITAL)
-    ew = ew.loc[ew.index >= recs[0].split.test_start]
+    ew = ew.loc[ew.index >= bench_start]
+    # 코스피 지수(없으면 첫 시장). bh·mom은 전 기간 계산 후 OOS 슬라이스(SMA 워밍업 확보)
+    kospi = idx_close["KOSPI"] if "KOSPI" in idx_close else next(iter(idx_close.values()))
+    bh = metrics.buy_and_hold_equity(kospi, CAPITAL)
+    bh = bh.loc[bh.index >= bench_start]
+    mom = metrics.momentum_equity(kospi, TREND_DAYS, CAPITAL)
+    mom = mom.loc[mom.index >= bench_start]
     bench = {
         "equal_weight": metrics.total_return(ew),
+        "kospi_buy_hold": metrics.total_return(bh),
+        "momentum": metrics.total_return(mom),
         "cash": 0.0,
     }
     for name, val in bench.items():
-        print(f"   벤치 {name:13s} {val:+.2%}")
+        print(f"   벤치 {name:15s} {val:+.2%}")
 
     # ── 과최적화 검정 ──
     candidates = tune.param_grid(base, GRID)
@@ -132,23 +147,89 @@ def main() -> None:
           f"DSR {dsr:.2%}  후보 {len(candidates)}개 "
           f"(obs_sr {observed_sr:.3f}·sr_std {sr_std:.3f})")
 
-    # ── 방향성 게이트(누적수익 기준) ──
+    # ── 모달 추천 파라미터(민감도 기준점) ──
+    rec = tune.recommend_params(recs, base, GRID)
+
+    # ── 견고성(10-1 ③) 실측 ──
+    # ① 민감도: 추천 파라미터 ±1칸 이웃의 OOS 누적이 급락(절벽)하지 않는지 (mat 재사용, 추가실행 0)
+    no_cliff = gate.sensitivity_no_cliff(mat, candidates, GRID, rec)
+    # ② 비용 2배 스트레스: 수수료·슬리피지·거래세 2배로 재실행 → 균등가중 벤치 초과 유지?
+    stress_tax = copy.deepcopy(tax)
+    stress_tax["brokerage"]["rate"] *= 2
+    stress_tax["slippage"]["rate"] *= 2
+    for row in stress_tax["sell_tax"]:
+        row["rate"] *= 2
+    stress_recs = tune.walkforward_tune(
+        prices, markets, train_size=TRAIN, test_size=TEST,
+        initial_capital=CAPITAL, base_params=base, grid=GRID,
+        tax_params=stress_tax, market_trend=trend,
+    )
+    stress_eq = tune.oos_equity(stress_recs, initial_capital=CAPITAL)
+    stress_ret = metrics.total_return(stress_eq) if len(stress_eq) >= 2 else -1.0
+    stress_beats = stress_ret > bench["equal_weight"]
+    print(f"\n■ 견고성  민감도절벽없음 {no_cliff}  "
+          f"비용2배 OOS {stress_ret:+.2%} (>균등 {bench['equal_weight']:+.2%}? {stress_beats})")
+
+    # ── 방향성 게이트(하드 3축, 누적수익 기준 / DSR은 보조) ──
     g = gate.directional_gate(
         strategy_score=strat["total_return"],
         benchmark_scores=bench,
-        dsr=dsr, pbo=pbo if not np.isnan(pbo) else 1.0,
-        sensitivity_no_cliff=True,       # 민감도 스트레스는 후속(전종목 단계)
-        stress_beats_benchmarks=True,
+        pbo=pbo if not np.isnan(pbo) else 1.0,
+        sensitivity_no_cliff=no_cliff,
+        stress_beats_benchmarks=stress_beats,
+        dsr=dsr,
     )
-    print(f"\n■ 게이트: {'GO ✅' if g.passed else 'NO-GO ⛔'}")
+    print(f"\n■ 게이트: {'GO ✅' if g.passed else 'NO-GO ⛔'}  "
+          f"(DSR {g.dsr:.2%} → 자본속도 '{g.dsr_tier}', 게이트 축 아님)")
     for k, v in g.checks.items():
         print(f"   {'✓' if v else '✗'} {k}")
 
-    # ── 모달 추천 파라미터 ──
-    rec = tune.recommend_params(recs, base, GRID)
+    # ── 추천 파라미터(모달) ──
     print("\n■ 추천 파라미터(모달):")
     for (s, k) in GRID:
         print(f"   {s}.{k:14s} {base[s][k]} → {rec[s][k]}")
+
+    # ── 결과 저장(재실행 없이 재확인) ──
+    result = {
+        "run_at": datetime.now().isoformat(timespec="seconds"),
+        "data": {
+            "n_stocks": len(prices),
+            "n_trading_days": len(all_dates),
+            "period": [str(all_dates[0]), str(all_dates[-1])],
+            "n_splits": len(recs),
+            "grid_combos": len(candidates),
+            "caveat_survivorship_bias": (
+                "현재 상장 종목만 — 상폐 종목 미포함. "
+                "결과는 낙관(생존편향) 방향으로 부풀려질 수 있음."
+            ),
+            "caveat_llm": "코드 경로(A안)만, LLM 미사용.",
+        },
+        "strategy_oos": strat,
+        "benchmarks": bench,
+        "overfitting": {"pbo": pbo, "dsr": dsr, "dsr_tier": g.dsr_tier},
+        "robustness": {
+            "sensitivity_no_cliff": no_cliff,
+            "stress_2x_oos_return": stress_ret,
+            "stress_beats_equal_weight": stress_beats,
+        },
+        "gate": {"passed": g.passed, "checks": g.checks},
+        "recommended_params": {f"{s}.{k}": rec[s][k] for (s, k) in GRID},
+    }
+    RESULTS_DIR.mkdir(exist_ok=True)
+    out_path = RESULTS_DIR / f"wf_{datetime.now():%Y%m%d_%H%M%S}.json"
+    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=_json_default))
+    print(f"\n결과 저장: {out_path}")
+
+
+def _json_default(o):
+    """numpy 스칼라를 JSON 직렬화 가능한 파이썬 타입으로."""
+    if isinstance(o, np.bool_):
+        return bool(o)
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    return str(o)
 
 
 if __name__ == "__main__":

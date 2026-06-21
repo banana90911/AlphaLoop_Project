@@ -67,3 +67,28 @@ def test_equal_weight_average():
     eq = metrics.equal_weight_equity(prices, capital=1.0)
     # A 2배, B 1배 → 평균 1.5
     assert abs(eq.iloc[-1] - 1.5) < 1e-9
+
+
+def test_momentum_holds_in_uptrend():
+    # 단조 상승: SMA 위 구간에서 보유 → equity 증가
+    price = pd.Series([100.0 * 1.01 ** i for i in range(20)])
+    eq = metrics.momentum_equity(price, lookback=5, capital=1.0)
+    assert eq.iloc[-1] > 1.0
+
+
+def test_momentum_flat_in_downtrend():
+    # 하락 추세: 가격 < SMA → 현금(미보유) → 손실 회피, equity 거의 보존
+    up = [100.0 * 1.01 ** i for i in range(10)]
+    down = [up[-1] * 0.97 ** i for i in range(1, 11)]
+    price = pd.Series(up + down)
+    eq = metrics.momentum_equity(price, lookback=5, capital=1.0)
+    bh = metrics.buy_and_hold_equity(price, capital=1.0)
+    # 하락 구간을 현금으로 회피 → 매수후보유보다 낙폭 작음
+    assert eq.iloc[-1] > bh.iloc[-1]
+
+
+def test_momentum_no_lookahead():
+    # 신호는 전일 기준(shift) → 첫 보유는 워밍업+1 이후, 초반 현금
+    price = pd.Series([100.0 * 1.01 ** i for i in range(20)])
+    eq = metrics.momentum_equity(price, lookback=5, capital=1.0)
+    assert eq.iloc[0] == 1.0      # 첫날은 신호 없음 → 현금

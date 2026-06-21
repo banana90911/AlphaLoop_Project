@@ -100,3 +100,17 @@ def equal_weight_equity(prices: dict[str, pd.Series], capital: float = 1.0) -> p
     if not norm:
         return pd.Series(dtype=float)
     return capital * pd.concat(norm, axis=1).mean(axis=1)
+
+
+def momentum_equity(price: pd.Series, lookback: int = 200, capital: float = 1.0) -> pd.Series:
+    """단순 모멘텀(SMA 크로스) 벤치마크 — 가격 > SMA(lookback)이면 보유, 아니면 현금.
+
+    지수 등 단일 자산에 적용. 전일 신호로 당일 보유를 결정해 룩어헤드를 차단한다
+    (`signal.shift(1)`). 워밍업 구간(SMA 결측)은 현금(0) 처리.
+    """
+    if price.empty or len(price) < 2:
+        return pd.Series(dtype=float)
+    sma = price.rolling(lookback).mean()
+    hold = (price > sma).shift(1, fill_value=False).astype(float)   # 전일 신호 → 당일 보유
+    strat_ret = price.pct_change().fillna(0.0) * hold
+    return capital * (1.0 + strat_ret).cumprod()

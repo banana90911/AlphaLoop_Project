@@ -22,9 +22,12 @@ import pandas as pd
 from agents.code_decider import Candidate
 from backtest.engine import build_features
 from config.settings import load_params
+from config.settings import get_settings
 from core.schemas import DeciderOutput, OrderAction
 from core.timeutils import now_utc
 from data.panel import latest_row
+from exec import orders
+from exec.orders import Broker
 from memory import journal
 from pipeline import screening
 from pipeline.decision import run_decision
@@ -65,6 +68,7 @@ class CycleResult:
     planned_orders: list[PlannedOrder] = field(default_factory=list)
     cycle_action: str = "proceed"
     blocked_reason: str = ""
+    trade_ids: list[str] = field(default_factory=list)   # 7단계 실송출 trades(broker 주입 시)
 
 
 def new_cycle_id(now=None) -> str:
@@ -137,6 +141,7 @@ def run_cycle(
     mode: str = "C",
     params: dict | None = None,
     source: str = "paper",
+    broker: Broker | None = None,
 ) -> CycleResult:
     """한 사이클 실행. 반환: CycleResult.
 
@@ -194,16 +199,30 @@ def run_cycle(
                 planned, cycle_action, blocked_reason = [], "halt", anomaly.reason
         # halt/skip은 결정 자체를 하지 않음(매매 중단/사이클 스킵)
 
-    journal.advance_status(conn, cycle_id, "ordering")
-    # 7단계: 주문 송출 — 드라이런(미구현, 차단). exec 붙으면 planned를 KIS로 집행.
-
-    # 8단계: 기록 — 결정 제안을 decisions에 적재(trades 적재는 주문 집행 연결 후).
+    # 8단계 일부 선행: 결정 의도를 decisions에 먼저 적재 — 송출 전에 "무엇을 하려 했는지"를
+    # 디스크에 남기고(11-2.1 idempotency), trades.decision_id FK가 이를 참조한다.
+    decision_ids: dict[str, str] = {}
     if decision is not None:
         stops = {p.code: p.stop for p in planned}
-        journal.record_decisions(
+        ids = journal.record_decisions(
             conn, cycle_id, decision.orders, stops=stops, source=source
         )
+        # record_decisions의 결정론 키: f"{cycle_id}_{code}_{action}". buy/add 계열만 매핑.
+        for o in decision.orders:
+            if o.action in (OrderAction.BUY, OrderAction.ADD):
+                decision_ids[o.code] = f"{cycle_id}_{o.code}_buy"
+
+    journal.advance_status(conn, cycle_id, "ordering")
+    # 7단계: 주문 송출. broker 주입 시 planned를 KIS로 실집행, 미주입이면 드라이런(차단).
+    trade_ids: list[str] = []
+    if broker is not None and planned:
+        order_mode = get_settings().trading_mode
+        trade_ids = orders.execute_entries(
+            conn, planned, broker=broker, cycle_id=cycle_id,
+            decision_ids=decision_ids, order_mode=order_mode, source=source,
+        )
+
     journal.advance_status(conn, cycle_id, "recorded")
     return CycleResult(
-        cycle_id, watchlist, decision, planned, cycle_action, blocked_reason
+        cycle_id, watchlist, decision, planned, cycle_action, blocked_reason, trade_ids
     )

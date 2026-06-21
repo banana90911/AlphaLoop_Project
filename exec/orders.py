@@ -1,0 +1,89 @@
+"""주문 송출·집행 — planned(신규 진입) → KIS 송출 → trades·positions 적재 (7단계).
+
+이 모듈은 *오케스트레이션*만 한다 — client_order_id 부여, 재시도 금지 정책(11-2.3),
+체결 결과의 trades·positions 적재. *KIS 통신·체결 확인·응답 정규화는 broker(Broker
+프로토콜)가 책임*진다(라이브 응답 필드가 미확정이라 파싱을 한 곳에 격리). 순수 결정론
+코드(LLM 미관여, 03-arch 3.3) — broker만 외부 I/O.
+
+주문 유형(11-2.14 정책표): 진입=11 IOC지정가. 단 KIS 모의는 IOC 미지원이라 paper는
+00 일반지정가로 보정(reference_kis_paper_no_ioc) — `if mode` 분기가 아니라 모드별
+데이터 룩업(ENTRY_ORD_DVSN). 청산(sell/trim) 집행은 exits 경로로 후속 배선.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+from core.timeutils import utc_iso
+from memory import journal
+
+# 진입 주문구분 — 모드별(11-2.14 + 모의 IOC 미지원 보정). if-분기 아닌 데이터 룩업.
+ENTRY_ORD_DVSN = {"real": "11", "paper": "00", "backtest": "00"}
+
+
+@dataclass
+class Fill:
+    """broker가 정규화한 체결 결과. broker가 송출·접수확인·파싱을 끝낸 단일 진실."""
+    filled_qty: int
+    fill_price: float | None
+    status: str                       # submitted/filled/partial/cancelled/rejected
+    broker_order_id: str | None = None
+    fee: float | None = None
+    tax: float | None = None
+
+
+class Broker(Protocol):
+    """주문 집행 채널. KISClient(실거래·모의)·FakeBroker(테스트)가 구현.
+
+    place_entry는 송출 + 접수/체결 확인 + 정규화까지 책임지고 Fill을 반환한다.
+    POST 재시도는 하지 않으며(중복주문 방지 11-2.3), 송출 실패·미접수는 status로 표현한다.
+    """
+    def place_entry(
+        self, *, code: str, qty: int, price: int, ord_dvsn: str, client_order_id: str
+    ) -> Fill: ...
+
+
+def execute_entries(
+    conn,
+    planned,
+    *,
+    broker: Broker,
+    cycle_id: str,
+    decision_ids: dict[str, str] | None = None,
+    order_mode: str = "paper",
+    source: str = "paper",
+    now: str | None = None,
+) -> list[str]:
+    """신규 진입(planned) 송출·체결 → trades·positions 적재. 반환: trade_id 목록.
+
+    planned: PlannedOrder 시퀀스(code·qty·price·stop). decision_ids: code→decision_id
+    (8단계 결정 적재 결과, trades.decision_id FK). 체결(filled_qty>0)이면 positions 갱신.
+    """
+    decision_ids = decision_ids or {}
+    ord_dvsn = ENTRY_ORD_DVSN[order_mode]
+    ts = now or utc_iso()
+    trade_ids: list[str] = []
+    for seq, o in enumerate(planned):
+        coid = f"{cycle_id}-{o.code}-buy-{seq}"
+        did = decision_ids.get(o.code)
+        order_price = int(round(o.price))
+        fill = broker.place_entry(
+            code=o.code, qty=o.qty, price=order_price,
+            ord_dvsn=ord_dvsn, client_order_id=coid,
+        )
+        journal.record_trade(
+            conn, trade_id=coid, cycle_id=cycle_id, decision_id=did,
+            client_order_id=coid, symbol=o.code, side="buy", ord_dvsn=ord_dvsn,
+            order_qty=o.qty, filled_qty=fill.filled_qty, order_price=float(order_price),
+            fill_price=fill.fill_price, fee=fill.fee, tax=fill.tax, status=fill.status,
+            source=source, ordered_at=ts,
+            filled_at=ts if fill.filled_qty > 0 else None,
+        )
+        if fill.filled_qty > 0 and fill.fill_price is not None:
+            journal.upsert_entry_position(
+                conn, cycle_id=cycle_id, symbol=o.code, add_qty=fill.filled_qty,
+                fill_price=fill.fill_price, entry_decision_id=did,
+                current_stop_price=o.stop,
+            )
+        trade_ids.append(coid)
+    return trade_ids

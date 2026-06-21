@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -295,3 +295,44 @@ class KISClient:
             "ORD_UNPR": str(price),
         }
         return self._post_order("/uapi/domestic-stock/v1/trading/order-cash", tr_id, body)
+
+    def place_entry(
+        self, *, code: str, qty: int, price: int, ord_dvsn: str, client_order_id: str
+    ) -> "Fill":
+        """신규 진입 송출 + 체결 확인을 한 번에(exec.orders.Broker 프로토콜 구현).
+
+        order-cash POST는 1회만(재시도 금지, 11-2.3). 성공·실패와 무관하게 *일별주문체결
+        조회를 단일 진실*로 삼아 체결을 확정한다(KIS 라이브 조회 = 현재 진실, 06-data §92).
+        조회 자체가 실패하면 접수 불확실(submitted)로 두고 사후 reconcile에 맡긴다.
+
+        TODO(라이브 검증): output1 필드명(odno·pdno·tot_ccld_qty·avg_prvs)과 ODNO 매칭은
+        모의 1회 송출로 실측 확정 필요(reference_kis_paper_no_ioc 계열). FakeBroker로
+        흐름은 검증되나 실응답 파싱은 미검증.
+        """
+        from exec.orders import Fill
+        odno: str | None = None
+        try:
+            resp = self.order_cash(code, qty, price, side="buy", ord_dvsn=ord_dvsn)
+            out = resp.get("output") or resp
+            odno = out.get("ODNO") or out.get("odno")
+        except KISError:
+            pass  # 접수 불확실 → 아래 조회로 판정(재시도 금지)
+        try:
+            rows = self.get_daily_orders(_today_kst())
+        except KISError:
+            return Fill(0, None, "submitted", odno)
+        match = next((r for r in rows if odno and r.get("odno") == odno), None)
+        if match is None:                                  # ODNO 미매칭 → 종목 휴리스틱(후속: 자체 메타 매칭)
+            cands = [r for r in rows if r.get("pdno") == code]
+            match = cands[-1] if cands else None
+        if match is None:
+            return Fill(0, None, "rejected" if odno is None else "submitted", odno)
+        filled = int(match.get("tot_ccld_qty") or 0)
+        avg = float(match.get("avg_prvs") or 0) or None
+        status = "filled" if filled >= qty else ("partial" if filled > 0 else "submitted")
+        return Fill(filled, avg, status, odno)
+
+
+def _today_kst() -> str:
+    """오늘 거래일(KST) 'YYYYMMDD' — 일별주문체결조회 조회일."""
+    return datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d")

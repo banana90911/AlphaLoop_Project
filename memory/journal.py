@@ -88,6 +88,90 @@ def record_decisions(
     return ids
 
 
+def record_trade(
+    conn: sqlite3.Connection,
+    *,
+    trade_id: str,
+    cycle_id: str,
+    decision_id: str | None,
+    client_order_id: str,
+    symbol: str,
+    side: str,
+    ord_dvsn: str,
+    order_qty: int,
+    filled_qty: int,
+    status: str,
+    order_price: float | None = None,
+    trigger_price: float | None = None,
+    fill_price: float | None = None,
+    fee: float | None = None,
+    tax: float | None = None,
+    slippage_est: float | None = None,
+    source: str = "paper",
+    ordered_at: str | None = None,
+    filled_at: str | None = None,
+) -> None:
+    """KIS 주문·체결 1건을 `trades`에 적재(7단계). status∈submitted/filled/partial/cancelled/rejected.
+
+    체결가·수량은 broker가 정규화한 Fill 기준(부분체결 분할적재는 후속). decision_id는
+    상주 스톱 자동체결 시 NULL 가능(06-data-model).
+    """
+    conn.execute(
+        "INSERT INTO trades(trade_id, cycle_id, decision_id, client_order_id, symbol, "
+        "side, ord_dvsn, order_qty, filled_qty, order_price, trigger_price, fill_price, "
+        "fee, tax, slippage_est, status, ordered_at, filled_at, source) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (trade_id, cycle_id, decision_id, client_order_id, symbol, side, ord_dvsn,
+         order_qty, filled_qty, order_price, trigger_price, fill_price, fee, tax,
+         slippage_est, status, ordered_at or utc_iso(), filled_at, source),
+    )
+    conn.commit()
+
+
+def upsert_entry_position(
+    conn: sqlite3.Connection,
+    *,
+    cycle_id: str,
+    symbol: str,
+    add_qty: int,
+    fill_price: float,
+    entry_decision_id: str | None,
+    current_stop_price: float | None,
+    sector: str | None = None,
+) -> str:
+    """신규/추가 진입 체결 → `positions` 생성 또는 수량·평단 갱신(7단계). 반환: position_id.
+
+    같은 종목 open 보유가 있으면 수량 합산·평단 가중평균으로 갱신(추가매수), 없으면 신규
+    생성(position_id=cycle_id_symbol). 종목→섹터 매핑 부재라 sector는 기본 NULL(후속).
+    """
+    ts = utc_iso()
+    row = conn.execute(
+        "SELECT position_id, qty, avg_price FROM positions "
+        "WHERE symbol=? AND status='open'",
+        (symbol,),
+    ).fetchone()
+    if row is not None:
+        pid, q0, p0 = row
+        new_qty = q0 + add_qty
+        new_avg = (q0 * p0 + add_qty * fill_price) / new_qty if new_qty else fill_price
+        conn.execute(
+            "UPDATE positions SET qty=?, avg_price=?, current_stop_price=?, updated_at=? "
+            "WHERE position_id=?",
+            (new_qty, new_avg, current_stop_price, ts, pid),
+        )
+    else:
+        pid = f"{cycle_id}_{symbol}"
+        conn.execute(
+            "INSERT INTO positions(position_id, symbol, qty, avg_price, sector, "
+            "entry_decision_id, current_stop_price, status, opened_at, updated_at) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
+            (pid, symbol, add_qty, fill_price, sector, entry_decision_id,
+             current_stop_price, ts, ts),
+        )
+    conn.commit()
+    return pid
+
+
 def recover_pending_cycles(conn: sqlite3.Connection) -> list[str]:
     """시작 시 미완(intent/ordering) 사이클을 failed로 마감하고 그 id 목록 반환(11-2.1).
 

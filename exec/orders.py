@@ -93,10 +93,14 @@ def execute_entries(
             filled_at=ts if fill.filled_qty > 0 else None,
         )
         trade_ids.append(coid)
-        if fill.filled_qty > 0 and fill.fill_price is not None:
+        if fill.filled_qty > 0:
+            # 체결가 미파싱(KIS avg_prvs 0/누락) 시 주문가로 폴백 — 체결된 포지션을 장부·스톱
+            # 등록에서 통째로 누락(추적 안 되는 맨몸 포지션)시키지 않는다. trades엔 broker가
+            # 보고한 원값(None)을 그대로 남기고, 비용·R 산정이 필요한 positions.avg_price만 보정.
+            entry_px = fill.fill_price if fill.fill_price is not None else float(order_price)
             journal.upsert_entry_position(
                 conn, cycle_id=cycle_id, symbol=o.code, add_qty=fill.filled_qty,
-                fill_price=fill.fill_price, entry_decision_id=did,
+                fill_price=entry_px, entry_decision_id=did,
                 current_stop_price=o.stop, initial_stop_price=o.stop,   # 진입 시 initial=current(R 고정)
                 market=market_map.get(o.code),
             )

@@ -101,6 +101,33 @@ def test_partial_fill(tmp_path):
     conn.close()
 
 
+def test_fill_without_price_falls_back_to_order_price(tmp_path):
+    """체결됐는데 체결가 미파싱(avg_prvs 0/누락)이면 주문가로 폴백 — 맨몸 포지션 방지.
+
+    KIS가 filled_qty>0은 주면서 평단을 0/누락으로 줄 때, 포지션·손절 스톱이 통째로
+    누락되면 추적 안 되는 맨몸 포지션이 된다. trades엔 원값(None)을 남기되 positions는
+    주문가로 채워 장부·스톱을 보존한다.
+    """
+    conn = _setup(tmp_path)
+    fb = FakeBroker({"A": Fill(2, None, "filled")})       # 체결 2주, 체결가 없음
+    execute_entries(conn, [PlannedOrder("A", 2, 100.0, 90.0)], broker=fb, cycle_id="CY1")
+    p = conn.execute(
+        "SELECT qty, avg_price, current_stop_price FROM positions WHERE symbol='A'"
+    ).fetchone()
+    assert p is not None and p["qty"] == 2               # 포지션이 누락되지 않음
+    assert p["avg_price"] == 100.0                        # 주문가로 폴백
+    assert p["current_stop_price"] == 90.0
+    # trades엔 broker 원값(None) 보존
+    t = conn.execute("SELECT fill_price, filled_qty FROM trades WHERE side='buy'").fetchone()
+    assert t["fill_price"] is None and t["filled_qty"] == 2
+    # 손절 스톱(22)도 체결 수량만큼 등록됨
+    assert conn.execute(
+        "SELECT order_qty FROM trades WHERE ord_dvsn='22'"
+    ).fetchone()["order_qty"] == 2
+    assert fb.stops and fb.stops[0]["qty"] == 2
+    conn.close()
+
+
 def test_add_position_weighted_avg(tmp_path):
     conn = _setup(tmp_path)
     execute_entries(

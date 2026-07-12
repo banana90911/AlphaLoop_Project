@@ -174,9 +174,9 @@ def screen_cycle(market: MarketState, acc: Account, params: dict) -> CycleDecisi
 
 def screen_order(
     acc: Account, code: str, sector: str, add_value: float,
-    status: StockStatus, params: dict, *, liquidity_ok: bool = True,
+    status: StockStatus, params: dict,
 ) -> Verdict:
-    """A.1 6~8: 개별 신규매수 주문 게이트(하드룰 → 종목상태 → 유동성). 첫 위반 단일 사유."""
+    """A.1 6~7: 개별 신규매수 주문 게이트(하드룰 → 종목상태). 첫 위반 단일 사유."""
     v = check_new_buy(acc, code, sector, add_value, params)     # 6 하드룰 한도
     if not v:
         return v
@@ -188,8 +188,6 @@ def screen_order(
         return Verdict(False, "VI 발동 중")
     if status.overheated:
         return Verdict(False, "단기과열(단일가)")
-    if not liquidity_ok:                                        # 8 유동성 한도
-        return Verdict(False, "유동성 한도(ADV) 초과")
     return Verdict(True)
 
 

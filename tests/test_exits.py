@@ -1,7 +1,9 @@
 """청산 규칙 — 우선순위·R 고정 (exec/exits, 05-risk §129)."""
 import pandas as pd
 
-from exec.exits import Position, decide_exit, execute_exits
+from exec.exits import (
+    Position, StopGapHit, StopPosition, decide_exit, detect_stop_gaps, execute_exits,
+)
 from exec.orders import Fill, execute_entries
 from memory import journal
 from memory.db import init_db
@@ -71,6 +73,45 @@ def test_hold():
     a = decide_exit(_pos(tp1_done=True, current_stop=9_900), price=9_950, atr=100, params=_P)
     # 손절 위, tp1 완료, 트레일링 new=9,950-275=9,675<9,900, 보유 1일 → hold
     assert a.action == "hold"
+
+
+# ── 손절 구멍 트리거 감지 (detect_stop_gaps — 이벤트 사이클 트리거 판정) ──
+def test_stop_gap_detected_below_stop():
+    # 갭하락으로 현재가가 손절가 아래인데 아직 보유 → 손절 구멍
+    hits = detect_stop_gaps([StopPosition("005930", 65000.0, 3)], {"005930": 60000.0})
+    assert hits == [StopGapHit("005930", 60000.0, 65000.0)]
+
+
+def test_stop_gap_at_stop_is_hit():
+    # 경계: 현재가 == 손절가도 이탈로 본다(price ≤ stop, decide_exit ②와 동일 임계)
+    hits = detect_stop_gaps([StopPosition("005930", 65000.0, 3)], {"005930": 65000.0})
+    assert len(hits) == 1
+
+
+def test_stop_gap_none_above_stop():
+    # 손절가 위(정상) → 트리거 없음
+    assert detect_stop_gaps([StopPosition("005930", 65000.0, 3)], {"005930": 70000.0}) == []
+
+
+def test_stop_gap_skips_flat_position():
+    # 이미 청산돼 잔고 0(자동 체결된 스톱 반영) → 손절 구멍 아님
+    assert detect_stop_gaps([StopPosition("005930", 65000.0, 0)], {"005930": 60000.0}) == []
+
+
+def test_stop_gap_skips_missing_or_bad_price():
+    # 현재가 결측·비정상은 건너뜀(다음 폴링 재시도) — 없는 값으로 오탐하지 않는다
+    pos = [StopPosition("005930", 65000.0, 3), StopPosition("000660", 50000.0, 2)]
+    assert detect_stop_gaps(pos, {"000660": 0.0}) == []          # 결측·0 모두 스킵
+
+
+def test_stop_gap_multi_position_filters():
+    pos = [
+        StopPosition("A", 100.0, 1),    # 90 ≤ 100 → hit
+        StopPosition("B", 100.0, 1),    # 110 > 100 → no
+        StopPosition("C", 100.0, 1),    # 결측 → skip
+    ]
+    hits = detect_stop_gaps(pos, {"A": 90.0, "B": 110.0})
+    assert [h.symbol for h in hits] == ["A"]
 
 
 # ── execute_exits 집행 통합 (FakeBroker로 송출→trades·outcomes·positions) ──

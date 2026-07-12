@@ -42,6 +42,48 @@ class Position:
 
 
 @dataclass
+class StopPosition:
+    """손절 구멍 감지 입력 — 잔고 동기화 후의 보유(종목·현재 손절가·수량)."""
+    symbol: str
+    current_stop: float
+    qty: int
+
+
+@dataclass
+class StopGapHit:
+    """손절 구멍(스톱 미체결) 감지 결과 — 이벤트 사이클 트리거 대상."""
+    symbol: str
+    price: float
+    stop: float
+
+
+def detect_stop_gaps(
+    positions: "list[StopPosition]", prices: dict[str, float]
+) -> list[StopGapHit]:
+    """현재가가 손절 트리거를 이탈했는데도 아직 청산 안 된 보유를 감지한다 — 손절 구멍 트리거(03-arch 폴링 트리거).
+
+    스톱지정가(22)가 개장 갭·급락으로 미체결로 남으면 KIS 잔고에 포지션이 그대로 남는다.
+    그 상태(현재가 ≤ 손절가인데 qty>0)를 이벤트 사이클 트리거로 삼아, 사이클의 execute_exits
+    ②(손절 도달 → 시장가)가 강제 정리하게 한다. 감시 단계 판정이라 LLM·주문을 내지 않고
+    *깨울 대상만* 반환한다 — decide_exit ②와 임계는 같지만(price ≤ stop) 역할이 다르다.
+
+    positions: 잔고 동기화(선행 게이트 A.1 1번) 후 값을 기대한다 — 그래야 밤사이 자동 체결된
+      스톱이 잔고에 반영돼 *이미 팔린 종목을 손절 구멍으로 오인*하지 않는다.
+    prices: symbol → 현재가. 결측·비정상(None·≤0)은 건너뛴다(감시는 다음 폴링에서 재시도).
+    """
+    hits: list[StopGapHit] = []
+    for p in positions:
+        if p.qty <= 0:
+            continue
+        price = prices.get(p.symbol)
+        if price is None or price <= 0:
+            continue
+        if price <= p.current_stop:
+            hits.append(StopGapHit(p.symbol, float(price), float(p.current_stop)))
+    return hits
+
+
+@dataclass
 class ExitAction:
     """청산 결정 결과. action ∈ hold·exit_full·exit_partial·raise_stop."""
     action: str

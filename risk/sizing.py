@@ -5,7 +5,7 @@
 구조: 변동성 타깃팅이 수량을 *제안*하고, 켈리·하드 한도가 *천장*을 씌운다.
 - 변동성 타깃팅: 주가·손절폭만으로 1일차부터 작동(과거 성적 불요).
 - 켈리: 관련 칸 청산거래 n ≥ N_min일 때만 천장으로 작동(그 전 휴면 = 상한 없음).
-최종 수량 = min(변동성, 켈리천장, 종목당한도, 유동성, 총노출잔여).
+최종 수량 = min(변동성, 켈리천장, 종목당한도, 총노출잔여).
 """
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def position_qty(
     extra_caps: tuple[int, ...] = (),
     params: dict | None = None,
 ) -> int:
-    """③ 최종 수량 = min(변동성, 켈리천장, extra_caps). extra_caps=종목당·유동성·총노출잔여 수량.
+    """③ 최종 수량 = min(변동성, 켈리천장, extra_caps). extra_caps=종목당·총노출잔여 수량.
 
     p·b가 주어지고 n≥N_min이면 켈리 천장이 활성, 아니면 변동성만(+extra_caps).
     """

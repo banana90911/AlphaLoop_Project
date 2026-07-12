@@ -99,5 +99,5 @@ HEALTHCHECK_URL=  DISCORD_WEBHOOK_URL=
 | KIS 스톱22·손익조회 | 모의 미지원 | 실전 검증(5.2) |
 | 네이버 과거수급 | 외국인·기관 8년+(실측) | 1회 수집·DB 적재, 개인 미제공 |
 | 네이버 상폐/과거시세 | 상폐직전까지 OHLCV(실측) | 생존편향 차단 |
-| yfinance | silent 사후수정, 백업 Stooq는 지수·금리만 | vintage 동결, ADR은 KIS 해외주식 대체(09-tech 31) |
+| yfinance | silent 사후수정, 백업 Stooq는 지수·금리만 | vintage 동결, 美개별주는 KIS 해외주식 대체(09-tech 31) |
 | FRED | 美10Y·기준금리=일별, GDP·CPI=대폭수정 | GDP·CPI 도입 시 ALFRED |

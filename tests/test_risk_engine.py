@@ -124,12 +124,6 @@ def test_screen_order_hardrule_first(params):
     assert not v and "종목당" in v.reason
 
 
-def test_screen_order_liquidity(params):
-    acc = _acc(10_000_000)
-    v = screen_order(acc, "A", "반도체", 1_000_000, StockStatus(), params, liquidity_ok=False)
-    assert not v and "유동성" in v.reason
-
-
 def test_screen_order_ok(params):
     acc = _acc(10_000_000)
     assert screen_order(acc, "A", "반도체", 1_000_000, StockStatus(), params)

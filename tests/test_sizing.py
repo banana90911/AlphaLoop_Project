@@ -69,6 +69,6 @@ def test_position_qty_kelly_dormant_uses_volatility():
 def test_position_qty_extra_caps_apply():
     qty = sizing.position_qty(
         10_000_000, 50_000, 49_000, conviction=1.0,  # 변동성 250주
-        extra_caps=(30,), params=_PARAMS,            # 종목당/유동성 한도 30주
+        extra_caps=(30,), params=_PARAMS,            # 종목당/총노출 한도 30주
     )
     assert qty == 30

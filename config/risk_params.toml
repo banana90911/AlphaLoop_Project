@@ -1,5 +1,5 @@
 # 리스크·사이징·청산 파라미터 (튜닝 손잡이). 초기값은 직관에서 출발 → 백테스트 OOS 워크포워드로 확정.
-# 조정 파라미터 7개 이하 제약(04-data 4.x). 상세 근거는 docs/05-risk-trading.md 5-2.
+# 조정 파라미터 7개 이하 제약(04-data 4.x). 상세 근거는 docs/06-sizing-portfolio.md 5-2.
 
 [limits]
 daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk 5-1 A: 실현+미실현 MTM·당일시작자본 대비)
@@ -9,9 +9,6 @@ per_name_hard_pct = 0.25     # 종목당 하드 상한(절대 차단, 유도 per
 sector_pct = 0.30            # 섹터 집중 하드 한도 (05-risk 5-1 A.1·5-1 상관 페널티)
 gross_exposure_max = 1.0     # 총노출 상한(레버리지 금지 — 05-risk A.1)
 adv_participation = 0.01     # 유동성 한도: 일평균거래대금(ADV)의 1%
-
-[circuit_breaker]
-drawdown_halt_pct = 0.20     # 고점 대비 누적 낙폭 정지(시작값, 백테스트 튜닝 — 05-risk 5-1·A.2)
 
 [anomaly]
 # 모델 이상행동 → SafeStop 임계 (05-risk A.3, 전부 튜닝 출발값)

@@ -89,14 +89,15 @@
 | 02  | [docs/02-principles.md](docs/02-principles.md)     | 핵심 설계 원칙·현실적 기대치                    |
 | 03  | [docs/03-architecture.md](docs/03-architecture.md) | 시스템 아키텍처·사이클 9단계·트리거·린 에이전트 구성·리포 구조 |
 | 04  | [docs/04-data.md](docs/04-data.md)                 | 데이터 구성(Tier)·라우팅·vintage·스크리닝       |
-| 05  | [docs/05-risk-trading.md](docs/05-risk-trading.md) | 리스크 엔진·포지션 사이징·청산·포트폴리오             |
-| 06  | [docs/06-data-model.md](docs/06-data-model.md)     | 기억·학습 데이터 모델                        |
-| 07  | [docs/07-statistics.md](docs/07-statistics.md)     | 통계·수리 기법 (설계)                       |
-| 08  | [docs/08-ui-dashboards.md](docs/08-ui-dashboards.md) | 대시보드·리포트·배포·접속 모델                  |
-| 09  | [docs/09-tech-stack.md](docs/09-tech-stack.md)     | 기술스택·라이브러리 선택·회피 근거               |
-| 10  | [docs/10-evaluation.md](docs/10-evaluation.md)     | 성과평가·벤치마크·백테스트·Go/No-Go·LLM 부품 가치 검증 |
-| 11  | [docs/11-operations.md](docs/11-operations.md)     | 비용 통제·운영 신뢰성·LLM 호출 운영             |
-| 12  | [docs/12-roadmap.md](docs/12-roadmap.md)           | 단계별 구현 로드맵·선검증 게이트·검증 경계            |
+| 05  | [docs/05-risk-engine.md](docs/05-risk-engine.md)   | 리스크 엔진·파산 방지 (하드룰·안전 정지)             |
+| 06  | [docs/06-sizing-portfolio.md](docs/06-sizing-portfolio.md) | 포지션 사이징·청산·포트폴리오             |
+| 07  | [docs/07-data-model.md](docs/07-data-model.md)     | 기억·학습 데이터 모델                        |
+| 08  | [docs/08-statistics.md](docs/08-statistics.md)     | 통계·수리 기법 (설계)                       |
+| 09  | [docs/09-ui-dashboards.md](docs/09-ui-dashboards.md) | 대시보드·리포트·배포·접속 모델                  |
+| 10  | [docs/10-tech-stack.md](docs/10-tech-stack.md)     | 기술스택·라이브러리 선택·회피 근거               |
+| 11  | [docs/11-evaluation.md](docs/11-evaluation.md)     | 성과평가·벤치마크·백테스트·Go/No-Go·LLM 부품 가치 검증 |
+| 12  | [docs/12-operations.md](docs/12-operations.md)     | 비용 통제·운영 신뢰성·LLM 호출 운영             |
+| 13  | [docs/13-roadmap.md](docs/13-roadmap.md)           | 단계별 구현 로드맵·선검증 게이트·검증 경계            |
 
 
 설계 정본은 위 `docs/` 디렉터리다.  

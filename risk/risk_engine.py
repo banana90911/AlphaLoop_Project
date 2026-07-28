@@ -31,11 +31,10 @@ class Position:
 
 @dataclass
 class Account:
-    """계좌 스냅샷. start_capital=당일 시작 자본(5-1 A 측정 기준선), peak_equity=드로다운 고점."""
+    """계좌 스냅샷. start_capital=당일 시작 자본(5-1 A 측정 기준선)."""
     start_capital: float
     cash: float
     positions: list[Position] = field(default_factory=list)
-    peak_equity: float = 0.0
 
     @property
     def equity(self) -> float:
@@ -65,24 +64,12 @@ def daily_loss_pct(acc: Account) -> float:
     return acc.equity / acc.start_capital - 1.0
 
 
-def drawdown_pct(acc: Account) -> float:
-    """고점 대비 낙폭 = 평가액/고점 − 1 (음수). 고점은 기록 고점과 현재 중 큰 값."""
-    peak = max(acc.peak_equity, acc.equity)
-    if peak <= 0:
-        return 0.0
-    return acc.equity / peak - 1.0
-
-
 def breakers_tripped(acc: Account, params: dict) -> set[str]:
-    """발동된 서킷브레이커 집합(비면 정상). 일일 손실·드로다운 (5-1 A·A.2)."""
+    """발동된 서킷브레이커 집합(비면 정상). 일일 손실 (5-1 A·A.2)."""
     lim = params["limits"]
-    cb = params.get("circuit_breaker", {})
     tripped: set[str] = set()
     if daily_loss_pct(acc) <= -lim["daily_loss_pct"]:
         tripped.add("daily_loss")
-    dd_halt = cb.get("drawdown_halt_pct")
-    if dd_halt is not None and drawdown_pct(acc) <= -dd_halt:
-        tripped.add("drawdown")
     return tripped
 
 
@@ -235,20 +222,16 @@ def detect_anomaly(proposals: list[OrderProposal], acc: Account, params: dict) -
 
 # ── A.2 재개 · 복구 절차 ────────────────────────────────────────────────
 def can_auto_resume(
-    breaker: str, *, recovered_to_half: bool = False,
-    error_rate_ok: bool = False, deadlock: bool = False,
+    breaker: str, *, error_rate_ok: bool = False,
 ) -> bool:
     """A.2: 서킷브레이커별 자동 재개 가능 여부. 시스템 신뢰성 문제(SafeStop류)는 항상 사람 개입.
 
     - daily_loss: 당일 중단·날짜 경계에서 자동 리셋(호출측이 날짜 판정) → True
-    - drawdown: 한도의 50% 아래로 자연 회복 시 자동, 단 손절 데드락이면 사람
     - api_error: 오류율 50% 아래 30분 유지 시 자동
     - 그 외(safe_stop·잔고불일치·데이터오류·모델이상): 사람 개입 필수 → False
     """
     if breaker == "daily_loss":
         return True
-    if breaker == "drawdown":
-        return recovered_to_half and not deadlock
     if breaker == "api_error":
         return error_rate_ok
     return False

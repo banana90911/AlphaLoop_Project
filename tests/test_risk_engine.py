@@ -13,7 +13,6 @@ from risk.risk_engine import (
     check_new_buy,
     daily_loss_pct,
     detect_anomaly,
-    drawdown_pct,
     safety_check,
     screen_cycle,
     screen_order,
@@ -25,9 +24,8 @@ def params():
     return load_params("risk_params")
 
 
-def _acc(cash, positions=None, start=10_000_000, peak=10_000_000):
-    return Account(start_capital=start, cash=cash,
-                   positions=positions or [], peak_equity=peak)
+def _acc(cash, positions=None, start=10_000_000):
+    return Account(start_capital=start, cash=cash, positions=positions or [])
 
 
 def test_equity_and_daily_loss():
@@ -38,12 +36,6 @@ def test_equity_and_daily_loss():
     assert daily_loss_pct(acc) == pytest.approx(-0.10)
 
 
-def test_drawdown_uses_peak():
-    acc = _acc(0, [Position("A", "S", 100, 8_000)], peak=10_000_000)  # 평가 80만?
-    # 평가액 800,000, 고점 10,000,000 → -92%
-    assert drawdown_pct(acc) == pytest.approx(0.08 / 1.0 - 1.0, abs=1e-9)
-
-
 def test_daily_loss_breaker_trips(params):
     acc = _acc(0, [Position("A", "S", 100, 95_000)])   # 평가 950만, 시작 1000만 → -5%
     assert "daily_loss" in breakers_tripped(acc, params)
@@ -52,12 +44,6 @@ def test_daily_loss_breaker_trips(params):
 def test_no_breaker_when_flat(params):
     acc = _acc(10_000_000)
     assert breakers_tripped(acc, params) == set()
-
-
-def test_drawdown_breaker_trips(params):
-    # 고점 1000만 대비 -25% (drawdown_halt_pct=0.20 초과)
-    acc = _acc(7_500_000, start=20_000_000, peak=10_000_000)
-    assert "drawdown" in breakers_tripped(acc, params)
 
 
 def test_per_name_hard_limit(params):
@@ -134,10 +120,9 @@ def test_auto_resume_daily_loss():
     assert can_auto_resume("daily_loss")
 
 
-def test_auto_resume_drawdown_needs_recovery():
-    assert can_auto_resume("drawdown", recovered_to_half=True)
-    assert not can_auto_resume("drawdown", recovered_to_half=True, deadlock=True)
-    assert not can_auto_resume("drawdown", recovered_to_half=False)
+def test_auto_resume_api_error_needs_recovery():
+    assert can_auto_resume("api_error", error_rate_ok=True)
+    assert not can_auto_resume("api_error", error_rate_ok=False)
 
 
 def test_safe_stop_needs_human():

@@ -54,17 +54,3 @@ def test_cycle_step1_runs_with_market_data(tmp_path):
     assert status == "recorded"
     assert set(res.watchlist)                      # 워치리스트 채워짐
     conn.close()
-
-
-def test_event_cycle_skips_screening(tmp_path):
-    # 이벤트 사이클은 market_data가 있어도 스크리닝을 건너뛴다(보유 방어 전용)
-    conn = init_db(str(tmp_path / "t.db"))
-    res = run_cycle(
-        conn, trigger_type="event", market_data=_universe(), holdings=("DN",)
-    )
-    status = conn.execute(
-        "SELECT status FROM cycles WHERE cycle_id=?", (res.cycle_id,)
-    ).fetchone()["status"]
-    assert status == "recorded"
-    assert res.watchlist == ["DN"]                 # 보유로 좁힘
-    conn.close()

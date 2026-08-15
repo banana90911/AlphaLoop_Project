@@ -1,4 +1,4 @@
-"""포트폴리오 배분 — 동시보유·섹터분산·교체매매·레짐노출 (risk/portfolio, 05-risk 5-2)."""
+"""포트폴리오 배분 — 동시보유·섹터분산·교체매매·레짐노출 (risk/portfolio, 06-sizing)."""
 import pytest
 
 from config.settings import load_params

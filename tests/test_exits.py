@@ -143,7 +143,7 @@ def _df(last_close: float, base: float = 70000.0, n: int = 300) -> pd.DataFrame:
 
 
 def _enter(conn, broker, cycle="CY1", price=70000.0, stop=65000.0, qty=3):
-    journal.create_cycle(conn, cycle, "scheduled")
+    journal.create_cycle(conn, cycle)
     execute_entries(
         conn, [PlannedOrder("005930", qty, price, stop)],
         broker=broker, cycle_id=cycle, order_mode="paper",
@@ -154,7 +154,7 @@ def test_execute_stop_hit_full_exit(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
     fb = _FakeBroker()
     _enter(conn, fb)
-    journal.create_cycle(conn, "CY2", "scheduled")
+    journal.create_cycle(conn, "CY2")
     tids = execute_exits(conn, {"005930": _df(60000.0)}, broker=fb,
                          cycle_id="CY2", order_mode="paper")   # 60000 < 손절 65000
     assert tids == ["CY2-005930-exit-0"]
@@ -169,13 +169,13 @@ def test_execute_stop_hit_full_exit(tmp_path):
     conn.close()
 
 
-def test_execute_llm_sell_invalidation(tmp_path):
+def test_execute_forced_sell_invalidation(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
     fb = _FakeBroker()
     _enter(conn, fb)
-    journal.create_cycle(conn, "CY2", "scheduled")
+    journal.create_cycle(conn, "CY2")
     execute_exits(conn, {"005930": _df(72000.0)}, broker=fb, cycle_id="CY2",
-                  llm_sells=["005930"], order_mode="paper")   # 손절 위지만 LLM sell
+                  forced_sells=["005930"], order_mode="paper")   # 손절 위지만 결정이 sell
     assert conn.execute("SELECT exit_reason FROM outcomes").fetchone()["exit_reason"] == "thesis_invalid"
     assert conn.execute("SELECT status FROM positions").fetchone()["status"] == "closed"
     conn.close()
@@ -185,7 +185,7 @@ def test_execute_tp1_partial(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
     fb = _FakeBroker()
     _enter(conn, fb)                                   # R=5000, +1.5R=77500
-    journal.create_cycle(conn, "CY2", "scheduled")
+    journal.create_cycle(conn, "CY2")
     execute_exits(conn, {"005930": _df(78000.0)}, broker=fb, cycle_id="CY2", order_mode="paper")
     pos = conn.execute("SELECT qty, tp1_done, current_stop_price FROM positions").fetchone()
     assert pos["qty"] < 3 and pos["tp1_done"] == 1 and pos["current_stop_price"] == 70000.0
@@ -198,7 +198,7 @@ def test_execute_hold_no_action(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
     fb = _FakeBroker()
     _enter(conn, fb)
-    journal.create_cycle(conn, "CY2", "scheduled")
+    journal.create_cycle(conn, "CY2")
     tids = execute_exits(conn, {"005930": _df(70000.0)}, broker=fb,
                          cycle_id="CY2", order_mode="paper")
     assert tids == [] and fb.exits == []

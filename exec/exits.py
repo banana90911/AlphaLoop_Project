@@ -1,4 +1,4 @@
-"""청산 규칙 — 보유별 우선순위 결정 (exec/exits, 05-risk 5-2 §129).
+"""청산 규칙 — 보유별 우선순위 결정 (exec/exits, 06-sizing §129).
 
 순수 결정 함수(백테스트·실거래 공통). 실제 KIS 스톱 정정·집행은 별도(상주 스톱·정정 API).
 매 사이클 보유 하나하나에 **우선순위 순으로 한 번에 하나만** 적용:
@@ -25,7 +25,7 @@ from core import costs
 from core.timeutils import utc_iso
 from memory import journal
 
-# 청산 주문구분 — 모드별(11-2.14: 청산=13 IOC시장가). 모의 IOC 미지원이라 01 일반시장가.
+# 청산 주문구분 — 모드별(12-ops 11-2.14: 청산=13 IOC시장가). 모의 IOC 미지원이라 01 일반시장가.
 EXIT_ORD_DVSN = {"real": "13", "paper": "01", "backtest": "01"}
 
 
@@ -64,7 +64,7 @@ def detect_stop_gaps(
 
     스톱지정가(22)가 개장 갭·급락으로 미체결로 남으면 KIS 잔고에 포지션이 그대로 남는다.
     그 상태(현재가 ≤ 손절가인데 qty>0)를 이벤트 사이클 트리거로 삼아, 사이클의 execute_exits
-    ②(손절 도달 → 시장가)가 강제 정리하게 한다. 감시 단계 판정이라 LLM·주문을 내지 않고
+    ②(손절 도달 → 시장가)가 강제 정리하게 한다. 감시 단계 판정이라 주문을 내지 않고
     *깨울 대상만* 반환한다 — decide_exit ②와 임계는 같지만(price ≤ stop) 역할이 다르다.
 
     positions: 잔고 동기화(선행 게이트 A.1 1번) 후 값을 기대한다 — 그래야 밤사이 자동 체결된
@@ -139,13 +139,13 @@ def execute_exits(
     asof: date | None = None,
     order_mode: str = "paper",
     source: str = "paper",
-    llm_sells=(),
+    forced_sells=(),
     params: dict | None = None,
     tax_params: dict | None = None,
 ) -> list[str]:
     """open 보유별로 청산 액션을 집행한다(7단계, 진입과 대칭). 반환: 청산 trade_id 목록.
 
-    LLM이 sell 결정한 종목(llm_sells)은 thesis_valid=False로 ①논지무효 경로에 태운다.
+    결정 규칙이 sell을 낸 종목(forced_sells)은 thesis_valid=False로 ①논지무효 경로에 태운다.
     raise_stop은 내부 손절만 상향(KIS 스톱 정정은 후속), exit_full/partial은 broker로
     송출하고 체결분의 실현손익을 `outcomes`에 적재(백테스트 `_close`와 동일 costs 산식).
 
@@ -156,7 +156,7 @@ def execute_exits(
     from data.panel import latest_row            # 〃 (panel→engine→exits 체인 회피)
 
     p = params or load_params("risk_params")
-    sells = set(llm_sells)
+    sells = set(forced_sells)
     rows = conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()
     trade_ids: list[str] = []
     for r in rows:

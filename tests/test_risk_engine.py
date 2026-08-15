@@ -1,4 +1,4 @@
-"""리스크 엔진 코어 — 하드 한도·서킷브레이커·안전정지 (risk/risk_engine, 05-risk 5-1·A)."""
+"""리스크 엔진 코어 — 하드 한도·서킷브레이커·안전정지 (risk/risk_engine, 05-risk A·A)."""
 import pytest
 
 from config.settings import load_params
@@ -47,23 +47,25 @@ def test_no_breaker_when_flat(params):
 
 
 def test_per_name_hard_limit(params):
-    acc = _acc(10_000_000)                       # 자본 1000만, 하드 25%=250만
-    assert check_new_buy(acc, "A", "반도체", 2_000_000, params)        # 200만 OK
-    v = check_new_buy(acc, "A", "반도체", 3_000_000, params)           # 300만 초과
+    acc = _acc(10_000_000)                       # 자본 1000만, 하드 13%=130만
+    assert check_new_buy(acc, "A", "반도체", 1_000_000, params)        # 100만 OK
+    v = check_new_buy(acc, "A", "반도체", 2_000_000, params)           # 200만 초과
     assert not v and "종목당" in v.reason
 
 
 def test_sector_limit_aggregates(params):
-    # 같은 섹터 보유 250만 + 신규 100만 = 350만 > 섹터 30%(300만)
-    acc = _acc(7_500_000, [Position("A", "반도체", 100, 25_000)])
-    v = check_new_buy(acc, "B", "반도체", 1_000_000, params)
+    # 같은 섹터 보유 200만 + 신규 120만 = 320만 > 섹터 30%(300만).
+    # 신규 120만은 종목당 13%(130만) 안이라 섹터 사유로 걸려야 한다(검사 순서: 종목당 → 섹터).
+    acc = _acc(8_000_000, [Position("A", "반도체", 100, 20_000)])
+    v = check_new_buy(acc, "B", "반도체", 1_200_000, params)
     assert not v and "섹터" in v.reason
 
 
 def test_gross_exposure_limit(params):
-    # 보유 900만 + 신규 200만 = 1100만 > 총노출 100%(자본 1000만)
-    acc = _acc(1_000_000, [Position("A", "반도체", 100, 90_000)])
-    v = check_new_buy(acc, "B", "바이오", 2_000_000, params)
+    # 보유 950만 + 신규 100만 = 1050만 > 총노출 100%(자본 1000만).
+    # 신규 100만은 종목당·섹터 한도 안이라 총노출 사유로 걸려야 한다.
+    acc = _acc(500_000, [Position("A", "반도체", 100, 95_000)])
+    v = check_new_buy(acc, "B", "바이오", 1_000_000, params)
     assert not v and "총노출" in v.reason
 
 

@@ -39,7 +39,7 @@ def test_time_weighted_recent_dominates():
 
 def test_calibrated_rate_from_db(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
-    journal.create_cycle(conn, "c1", "scheduled", None)
+    journal.create_cycle(conn, "c1")
     conn.execute(
         "INSERT INTO decisions(decision_id, cycle_id, action, regime_tag, source, decided_at) "
         "VALUES (?,?,?,?,?,?)",
@@ -50,11 +50,11 @@ def test_calibrated_rate_from_db(tmp_path):
             "INSERT INTO agent_predictions"
             "(prediction_id, decision_id, symbol, agent_role, confidence, correct, source) "
             "VALUES (?,?,?,?,?,?,?)",
-            (f"p{i}", "d1", "005930", "catalyst", 0.8, correct, "backtest"),
+            (f"p{i}", "d1", "005930", "rule_decider", 0.8, correct, "backtest"),
         )
     conn.commit()
 
-    r = calibrated_rate(conn, agent_role="catalyst")
+    r = calibrated_rate(conn, agent_role="rule_decider")
     assert r["n"] == 5
     assert r["raw_rate"] == pytest.approx(0.6)
     assert r["rate"] == pytest.approx((3 + 10 * 0.5) / (5 + 10))   # 수축
@@ -63,7 +63,7 @@ def test_calibrated_rate_from_db(tmp_path):
 
 def test_calibrated_rate_regime_filter(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
-    journal.create_cycle(conn, "c1", "scheduled", None)
+    journal.create_cycle(conn, "c1")
     conn.execute(
         "INSERT INTO decisions(decision_id, cycle_id, action, regime_tag, source, decided_at) "
         "VALUES (?,?,?,?,?,?)",
@@ -73,8 +73,8 @@ def test_calibrated_rate_regime_filter(tmp_path):
         "INSERT INTO agent_predictions"
         "(prediction_id, decision_id, symbol, agent_role, confidence, correct, source) "
         "VALUES (?,?,?,?,?,?,?)",
-        ("p0", "d1", "A", "catalyst", 0.8, 1, "backtest"),
+        ("p0", "d1", "A", "rule_decider", 0.8, 1, "backtest"),
     )
     conn.commit()
-    assert calibrated_rate(conn, agent_role="catalyst", regime="bull")["n"] == 0
-    assert calibrated_rate(conn, agent_role="catalyst", regime="bear")["n"] == 1
+    assert calibrated_rate(conn, agent_role="rule_decider", regime="bull")["n"] == 0
+    assert calibrated_rate(conn, agent_role="rule_decider", regime="bear")["n"] == 1

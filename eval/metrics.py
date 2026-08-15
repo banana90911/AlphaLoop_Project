@@ -1,7 +1,7 @@
-"""성과 지표·벤치마크 (eval/metrics, 10-1). 전부 코드.
+"""성과 지표·벤치마크 (eval/metrics, 11-eval 10-1). 전부 코드.
 
 equity 곡선(시간 오름차순)에서 누적수익·CAGR·Sharpe·Sortino·MDD·Calmar를 산출한다.
-판정은 net(거래비용·세금·LLM비 차감) equity 기준(engine이 이미 비용 반영).
+판정은 net(거래비용·세금 차감) equity 기준(engine이 이미 비용 반영).
 벤치마크 4종(매수후보유·현금·균등가중·단순모멘텀)과 비교해 결정가치를 분리한다(10-3).
 """
 from __future__ import annotations

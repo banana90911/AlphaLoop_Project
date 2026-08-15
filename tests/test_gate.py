@@ -1,4 +1,4 @@
-"""Go/No-Go 게이트 — DSR·PBO·방향성 (eval/gate, 10-1)."""
+"""Go/No-Go 게이트 — DSR·PBO·방향성 (eval/gate, 11-eval 10-1)."""
 import numpy as np
 
 from eval import gate

@@ -1,21 +1,13 @@
-"""포지션 사이징 — 변동성 타깃팅·켈리 천장·휴면 (05-risk 5-2, 10-2 ①).
+"""포지션 사이징 — 변동성 타깃팅·켈리 천장·휴면 (06-sizing, 11-eval 10-2 ①).
 
 라이브에서 켈리가 켜지길 기다릴 필요 없이 가짜 (p,b,n)으로 지금 검증한다.
 """
 from risk import sizing
 
-_W = {"w_confidence": 0.2, "w_calibration": 0.4, "w_contrarian": 0.2, "w_thesis": 0.2}
 _PARAMS = {"sizing": {
     "risk_pct_min": 0.0075, "risk_pct_max": 0.025,
     "kelly_fraction": 0.5, "kelly_min_trades": 20,
 }}
-
-
-def test_conviction_clips_to_unit():
-    assert sizing.conviction_score(1, 1, 1, 1, _W) == 1.0
-    assert sizing.conviction_score(0, 0, 0, 0, _W) == 0.0
-    # 가중합 0.2*0.5 + 0.4*1 + 0 + 0 = 0.5
-    assert abs(sizing.conviction_score(0.5, 1.0, 0, 0, _W) - 0.5) < 1e-9
 
 
 def test_risk_pct_endpoints():

@@ -1,4 +1,4 @@
-"""워크포워드 파라미터 OOS 튜닝 실행기 (10-1).
+"""워크포워드 파라미터 OOS 튜닝 실행기 (11-eval 10-1).
 
 캐시된 과거 데이터로 롤링 워크포워드 튜닝을 돌려:
   ① 구간별 IS 최고 조합 → OOS 성과(손 안 댄 구간)
@@ -105,7 +105,7 @@ def main() -> None:
           f"샤프 {strat['sharpe']:.2f}  MDD {strat['max_drawdown']:.2%}  "
           f"Calmar {strat['calmar']:.2f}")
 
-    # 벤치마크 4종(10-1): OOS 기간 net 누적수익으로 비교 — 전부 초과해야 ① 통과
+    # 벤치마크 4종(11-eval 10-1): OOS 기간 net 누적수익으로 비교 — 전부 초과해야 ① 통과
     bench_start = recs[0].split.test_start
     bench_prices = {c: df["close"] for c, df in prices.items()}
     ew = metrics.equal_weight_equity(bench_prices, CAPITAL)
@@ -151,7 +151,7 @@ def main() -> None:
     # ── 모달 추천 파라미터(민감도 기준점) ──
     rec = tune.recommend_params(recs, base, GRID)
 
-    # ── 견고성(10-1 ③) 실측 ──
+    # ── 견고성(11-eval 10-1 ③) 실측 ──
     # ① 민감도: 추천 파라미터 ±1칸 이웃의 OOS 누적이 급락(절벽)하지 않는지 (mat 재사용, 추가실행 0)
     no_cliff = gate.sensitivity_no_cliff(mat, candidates, GRID, rec)
     # ② 비용 2배 스트레스: 수수료·슬리피지·거래세 2배로 재실행 → 균등가중 벤치 초과 유지?
@@ -203,7 +203,7 @@ def main() -> None:
                 "현재 상장 종목만 — 상폐 종목 미포함. "
                 "결과는 낙관(생존편향) 방향으로 부풀려질 수 있음."
             ),
-            "caveat_llm": "코드 경로(A안)만, LLM 미사용.",
+            "caveat_decision": "결정은 코드 규칙(통계) 경로.",
         },
         "strategy_oos": strat,
         "benchmarks": bench,

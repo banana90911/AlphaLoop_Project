@@ -2,11 +2,12 @@
 # 조정 파라미터 7개 이하 제약(04-data 4.x). 상세 근거는 docs/06-sizing-portfolio.md 5-2.
 
 [limits]
-daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk 5-1 A: 실현+미실현 MTM·당일시작자본 대비)
+daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk A A: 실현+미실현 MTM·당일시작자본 대비)
 max_positions = 5            # 동시 보유 종목 수 상한
-per_name_pct = 0.13          # 종목당 유도 한도(≈13%, 5-1 A: 하한가 갭에도 일일바닥 단독 미돌파; 사이징 권장선)
-per_name_hard_pct = 0.25     # 종목당 하드 상한(절대 차단, 유도 per_name_pct와 별개 — 05-risk A.1·A.3)
-sector_pct = 0.30            # 섹터 집중 하드 한도 (05-risk 5-1 A.1·5-1 상관 페널티)
+per_name_hard_pct = 0.13     # 종목당 절대 상한 = 일일손실바닥 ÷ 가격제한폭 (4%÷30%≈13%).
+                             # 한 종목이 하한가(-30%)여도 일일 바닥(-4%)을 단독으로 못 뚫는 최대치.
+                             # 소수종목 시 자동 상향(구 per_name_pct 13% → hard 25%)은 채택하지 않음 — 05-risk A·06-sizing
+sector_pct = 0.30            # 섹터 집중 하드 한도 (05-risk A A.1·5-1 상관 페널티)
 gross_exposure_max = 1.0     # 총노출 상한(레버리지 금지 — 05-risk A.1)
 adv_participation = 0.01     # 유동성 한도: 일평균거래대금(ADV)의 1%
 
@@ -19,16 +20,12 @@ order_count_capital_base = 10_000_000  # 위 기준 자본(원): 1,000만원당 
 # 쪼그라들어 정상 첫 진입을 막는 것 방지(하한=동시보유 상한). 상세 05-risk A.3.
 
 [decision]
-# B안(code_decider) 종합점수 가중·임계 (10-3.1 B, 워크포워드 확정). C와 차이는 결정 주체뿐.
-w_screen = 0.6               # 스크리너 점수 가중
-w_catalyst = 0.4             # 촉매(뉴스) 점수 가중
-w_calibration = 0.0          # 보정신뢰 가중(calibration 미구현 → 0, 구현 후 상향)
-entry_threshold = 0.60       # 신규 진입 종합점수 임계 τ
-exit_threshold = 0.40        # 보유 논지무효 임계(촉매·점수 이 아래로 떨어지면 청산)
-dissent_min = 0.60           # C안 결정자: 반대시나리오 반영도 이 미만이면 강제 무거래(P1-2)
+# 코드 규칙 결정의 점수 임계 (워크포워드 확정). 점수는 스크리너 종합점수(0~1).
+entry_threshold = 0.60       # 신규 진입 임계 τ
+exit_threshold = 0.40        # 보유 논지무효 임계(점수가 이 아래로 떨어지면 청산)
 
 [retrieval]
-# 인출 스코어러 가중 (07 7.18·7.21, 워크포워드 확정). 초기 휴면 — lessons 0건이면 raw 매칭.
+# 인출 스코어러 가중 (08-stats 7.18·7.21, 워크포워드 확정). 초기 휴면 — lessons 0건이면 raw 매칭.
 w_regime = 0.35              # 레짐 유사도(오늘과 닮은 시장 국면)
 w_sector = 0.20             # 섹터/종목 정합
 w_setup = 0.20              # 셋업 정합
@@ -38,7 +35,7 @@ half_life_days = 180         # 최근성 반감기
 top_k = 5                    # 인출 상위 건수
 
 [portfolio]
-# 포트폴리오 배분 (05-risk 5-2, 전부 시작값 — 14장서 자금 확정 후 백테스트로 확정)
+# 포트폴리오 배분 (06-sizing, 전부 시작값 — 14장서 자금 확정 후 백테스트로 확정)
 max_per_sector = 2               # 한 섹터 동시 보유 종목 수 상한(섹터당 30% 한도와 별개)
 min_exposure = 0.2               # 레짐 최악 시 최소 총노출(나머지 현금)
 rotation_margin = 0.1            # 교체매매: 신규 엣지가 최약체보다 이만큼 더 커야 채택
@@ -47,19 +44,12 @@ position_tiers = [[30_000_000, 4], [50_000_000, 5], [100_000_000, 8]]
 position_tiers_max = 10          # 위 구간 모두 초과(1억+) 시 목표 수
 
 [sizing]
-# 변동성 타깃팅(메인) — 거래당 위험 비율. conviction 0→min, 1→max (05-risk 5-2 §119)
+# 변동성 타깃팅(메인) — 거래당 위험 비율. conviction 0→min, 1→max (06-sizing §119)
 risk_pct_min = 0.0075
 risk_pct_max = 0.025
 # 프랙셔널 켈리(자동활성 상한)
 kelly_fraction = 0.5         # 켈리 분수 배율 k (0.25~0.5)
 kelly_min_trades = 20        # 켈리 활성 최소 청산 n (그 전 휴면, 상한 없음)
-
-[conviction]
-# conviction 가중합(합 1.0). w_confidence는 LLM 자기신고라 작게 시작(05-risk 5-2 §117).
-w_confidence = 0.2           # 확신도(자기신고, 수축 안 걸림)
-w_calibration = 0.4         # 보정신뢰(calibration 뷰, 수축 적용 — 실측 적중에 무게)
-w_contrarian = 0.2          # 반대의견 반영
-w_thesis = 0.2              # 논지 품질(entry_thesis 충실도)
 
 [entry]
 stop_atr_k = 2.0            # 진입 초기 손절폭 = stop_atr_k × ATR20 (R 산정 기준, 백테스트 확정)

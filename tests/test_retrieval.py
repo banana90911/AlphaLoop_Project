@@ -1,4 +1,4 @@
-"""인출 스코어러 — 유사도·점수·요약·원시매칭 (memory/retrieval, 07 7.21·P1-6)."""
+"""인출 스코어러 — 유사도·점수·요약·원시매칭 (memory/retrieval, 08-stats 7.21·P1-6)."""
 from datetime import date
 
 import pytest
@@ -58,7 +58,7 @@ def test_summarize_stats():
 
 
 def _seed(conn, decision_id, regime, ret, reason, closed):
-    journal.create_cycle(conn, f"c_{decision_id}", "scheduled", None)
+    journal.create_cycle(conn, f"c_{decision_id}")
     conn.execute(
         "INSERT INTO decisions(decision_id, cycle_id, action, regime_tag, source, decided_at) "
         "VALUES (?,?,?,?,?,?)",

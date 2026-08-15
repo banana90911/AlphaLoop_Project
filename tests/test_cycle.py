@@ -1,4 +1,4 @@
-"""사이클 상태머신·idempotency + 5~6단계 결정·리스크 게이트 배선 (0-B·12 Phase 4)."""
+"""사이클 상태머신·idempotency + 5~6단계 결정·리스크 게이트 배선 (0-B·13-roadmap Phase 4)."""
 import copy
 
 import numpy as np
@@ -40,7 +40,7 @@ def test_cycle_reaches_recorded(tmp_path):
 
 def test_recover_marks_pending_failed(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
-    journal.create_cycle(conn, "STUCK", "scheduled")  # intent로 방치(프로세스 사망 모사)
+    journal.create_cycle(conn, "STUCK")  # intent로 방치(프로세스 사망 모사)
     recovered = journal.recover_pending_cycles(conn)
     assert recovered == ["STUCK"]
     status = conn.execute("SELECT status FROM cycles WHERE cycle_id='STUCK'").fetchone()["status"]
@@ -57,7 +57,7 @@ def test_recover_noop_when_clean(tmp_path):
 
 def test_advance_status_rejects_unknown(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
-    journal.create_cycle(conn, "C1", "scheduled")
+    journal.create_cycle(conn, "C1")
     try:
         journal.advance_status(conn, "C1", "bogus")
         raise AssertionError("unknown status가 허용됨")
@@ -66,13 +66,13 @@ def test_advance_status_rejects_unknown(tmp_path):
     conn.close()
 
 
-# ── 5~6단계 배선 (mode B + 빈 뉴스 = LLM 호출 0, 결정·게이트 결정론 검증) ──
+# ── 4~5단계 배선 (결정 규칙·게이트 결정론 검증) ──
 
 def test_decision_runs_for_scheduled_with_account(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
     # equity 1천만원: anomaly 신규주문 폭주 임계(1천만원당 5건)에 걸리지 않는 규모
     acc = Account(start_capital=10_000_000, cash=10_000_000)
-    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B")
+    res = run_cycle(conn, market_data=_universe(), account=acc)
     assert res.cycle_action == "proceed"
     assert res.decision is not None                  # 결정 단계 실행됨(드라이런)
     conn.close()
@@ -91,7 +91,7 @@ def test_circuit_breaker_blocks_new_entries(tmp_path):
     p = copy.deepcopy(load_params("risk_params"))    # 캐시 원본 오염 방지(lru_cache)
     p["decision"]["entry_threshold"] = 0.0           # 정상이면 모든 후보 buy 시도
     acc = Account(start_capital=1_000_000, cash=940_000)  # 당일 -6% → daily_loss 발동
-    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B", params=p)
+    res = run_cycle(conn, market_data=_universe(), account=acc, params=p)
     assert res.cycle_action == "new_blocked"
     assert all(
         o.action not in (OrderAction.BUY, OrderAction.ADD)
@@ -103,7 +103,7 @@ def test_circuit_breaker_blocks_new_entries(tmp_path):
 def test_balance_mismatch_halts(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
     acc = Account(start_capital=1_000_000, cash=1_000_000)
-    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B",
+    res = run_cycle(conn, market_data=_universe(), account=acc,
                     market_state=MarketState(balance_ok=False))
     assert res.cycle_action == "halt"
     assert res.decision is None                      # 잔고 불일치 → 결정 안 함
@@ -117,7 +117,7 @@ def test_sizing_produces_planned_orders(tmp_path):
     p = copy.deepcopy(load_params("risk_params"))
     p["decision"]["entry_threshold"] = 0.0           # 상승 후보 buy 시도
     acc = Account(start_capital=10_000_000, cash=10_000_000)
-    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B", params=p)
+    res = run_cycle(conn, market_data=_universe(), account=acc, params=p)
     assert res.cycle_action == "proceed"
     assert res.planned_orders                         # 집행 계획 산출됨
     for o in res.planned_orders:
@@ -133,7 +133,7 @@ def test_anomaly_gate_safe_stops(tmp_path):
     p["decision"]["entry_threshold"] = 0.0
     p["anomaly"]["single_order_pct"] = 0.001          # 어떤 주문도 이상으로 판정되게
     acc = Account(start_capital=10_000_000, cash=10_000_000)
-    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B", params=p)
+    res = run_cycle(conn, market_data=_universe(), account=acc, params=p)
     assert res.cycle_action == "halt"                 # SafeStop
     assert res.planned_orders == []                   # 집행 계획 비움
     conn.close()
@@ -146,7 +146,7 @@ def test_decisions_persisted(tmp_path):
     p = copy.deepcopy(load_params("risk_params"))
     p["decision"]["entry_threshold"] = 0.0
     acc = Account(start_capital=10_000_000, cash=10_000_000)
-    res = run_cycle(conn, market_data=_universe(), account=acc, mode="B", params=p)
+    res = run_cycle(conn, market_data=_universe(), account=acc, params=p)
     rows = conn.execute(
         "SELECT symbol, action, side, stop_loss, source FROM decisions WHERE cycle_id=?",
         (res.cycle_id,),
@@ -175,7 +175,7 @@ def test_no_decision_no_rows(tmp_path):
 
 def test_record_decisions_maps_actions_and_skips_hold(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
-    journal.create_cycle(conn, "C1", "scheduled")
+    journal.create_cycle(conn, "C1")
     orders = [
         ProposedOrder(code="A", action=OrderAction.BUY, risk_budget=0.5),
         ProposedOrder(code="B", action=OrderAction.TRIM, risk_budget=0.3),

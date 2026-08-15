@@ -1,6 +1,6 @@
-"""포지션 사이징 — 변동성 타깃팅(메인) + 프랙셔널 켈리(자동활성 상한) (05-risk 5-2).
+"""포지션 사이징 — 변동성 타깃팅(메인) + 프랙셔널 켈리(자동활성 상한) (06-sizing).
 
-결정론 코드(LLM 위임 금지). decider는 conviction 입력만 주고, 수량 환산은 여기서 한다.
+결정론 코드. 결정 단계는 conviction 입력만 주고, 수량 환산은 여기서 한다.
 
 구조: 변동성 타깃팅이 수량을 *제안*하고, 켈리·하드 한도가 *천장*을 씌운다.
 - 변동성 타깃팅: 주가·손절폭만으로 1일차부터 작동(과거 성적 불요).
@@ -18,23 +18,6 @@ _EPS = 1e-9  # 부동소수점 경계 보정(40.0이 39.999…로 잘려 1주 �
 
 def _ifloor(x: float) -> int:
     return floor(x + _EPS)
-
-
-def conviction_score(
-    confidence: float,
-    calibration: float,
-    contrarian: float,
-    thesis_quality: float,
-    weights: dict[str, float],
-) -> float:
-    """conviction 가중합 → [0,1] 클립. w_confidence는 작게(자기신고, §117)."""
-    raw = (
-        weights["w_confidence"] * confidence
-        + weights["w_calibration"] * calibration
-        + weights["w_contrarian"] * contrarian
-        + weights["w_thesis"] * thesis_quality
-    )
-    return min(max(raw, 0.0), 1.0)
 
 
 def risk_pct(conviction: float, pmin: float, pmax: float) -> float:

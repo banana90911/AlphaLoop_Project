@@ -1,4 +1,4 @@
-"""SQLite 단일 진입점 (03-arch 3.3 · 11-2.2).
+"""SQLite 단일 진입점 (03-arch 3.3 · 12-ops 11-2.2).
 
 매매 코어·회고·대시보드는 *모두* 이 `connect()`만 거쳐 같은 파일에 닿는다.
 직접 `sqlite3.connect()` 호출은 금지(ruff TID251로 강제) — 이 모듈만 예외.
@@ -17,7 +17,7 @@ BUSY_TIMEOUT_MS = 5000
 
 
 def connect(db_path: str | None = None, *, read_only: bool = False) -> sqlite3.Connection:
-    """공유 SQLite 연결. read_only=True는 대시보드 등 읽기 전용 프로세스용(8장 불변식)."""
+    """공유 SQLite 연결. read_only=True는 대시보드 등 읽기 전용 프로세스용(09-ui 8장 불변식)."""
     path = db_path or get_settings().db_path
     if read_only:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)  # noqa: TID251

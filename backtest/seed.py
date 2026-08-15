@@ -1,4 +1,4 @@
-"""학습 테이블 시드 (backtest/seed, 12 Phase 6·05-risk 5-2·7.19).
+"""학습 테이블 시드 (backtest/seed, 13-roadmap Phase 6·06-sizing·7.19).
 
 백테스트 재생 결과(거래)를 journal의 `outcomes`(source='backtest')에 선채워 학습 루프가
 *1일차부터* 작동하게 한다 — 라이브만으론 칸이 차는 데 수개월 걸린다. 켈리 입력 p·b는

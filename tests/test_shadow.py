@@ -1,4 +1,4 @@
-"""반사실 가상 손익 — 청산 시뮬·적재 (memory/shadow, 07 7.18)."""
+"""반사실 가상 손익 — 청산 시뮬·적재 (memory/shadow, 08-stats 7.18)."""
 from datetime import date, timedelta
 
 import pytest
@@ -51,7 +51,7 @@ def test_shadow_cost_reduces_return(params, tax):
 
 def test_record_shadow(params, tax, tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
-    journal.create_cycle(conn, "c1", "scheduled", None)
+    journal.create_cycle(conn, "c1")
     conn.execute(
         "INSERT INTO decisions(decision_id, cycle_id, action, source, decided_at) "
         "VALUES (?,?,?,?,?)", ("d1", "c1", "no_trade", "backtest", "2024-01-01"),

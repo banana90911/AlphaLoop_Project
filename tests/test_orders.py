@@ -31,7 +31,7 @@ class FakeBroker:
 
 def _setup(tmp_path, cycle_id="CY1"):
     conn = init_db(str(tmp_path / "t.db"))
-    journal.create_cycle(conn, cycle_id, "scheduled")
+    journal.create_cycle(conn, cycle_id)
     return conn
 
 
@@ -54,7 +54,7 @@ def test_entry_fill_records_trade_and_position(tmp_path):
     ).fetchone()
     assert p["qty"] == 3 and p["avg_price"] == 70000.0 and p["current_stop_price"] == 65000.0
     assert p["market"] == "KOSPI" and p["initial_stop_price"] == 65000.0   # 시장 매핑·R고정
-    # 손절 스톱(22)이 체결 수량만큼 등록됨(맨몸 포지션 방지 11-2.3)
+    # 손절 스톱(22)이 체결 수량만큼 등록됨(맨몸 포지션 방지 12-ops 11-2.3)
     s = conn.execute("SELECT * FROM trades WHERE trade_id='CY1-005930-stop-0'").fetchone()
     assert s["side"] == "sell" and s["ord_dvsn"] == "22" and s["order_qty"] == 3
     assert s["trigger_price"] == 65000.0 and s["filled_qty"] == 0 and s["status"] == "submitted"
@@ -134,7 +134,7 @@ def test_add_position_weighted_avg(tmp_path):
         conn, [PlannedOrder("A", 2, 100.0, 90.0)],
         broker=FakeBroker({"A": Fill(2, 100.0, "filled")}), cycle_id="CY1",
     )
-    journal.create_cycle(conn, "CY2", "scheduled")
+    journal.create_cycle(conn, "CY2")
     execute_entries(
         conn, [PlannedOrder("A", 2, 200.0, 180.0)],
         broker=FakeBroker({"A": Fill(2, 200.0, "filled")}), cycle_id="CY2",

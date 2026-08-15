@@ -1,4 +1,4 @@
-"""포트폴리오 배분 · 교체매매 · 레짐별 노출 (risk/portfolio, 05-risk 5-2).
+"""포트폴리오 배분 · 교체매매 · 레짐별 노출 (risk/portfolio, 06-sizing).
 
 종목 한 건이 아니라 *계좌 전체의 모양*을 다룬다. 세 차원:
 - 동시 보유 목표 = 자본 규모의 연속 함수(소액일수록 적게, 거래비용·정수주 제약)
@@ -6,7 +6,7 @@
 - 레짐별 총노출 = 시장 국면이 우호적이면 상한까지, 악화되면 현금↑(모멘텀 크래시 회피)
 - 교체매매 = 슬롯이 꽉 찼는데 더 나은 후보가 오면 최약체와 교체(자본을 더 나은 곳으로)
 
-전부 결정론 순수 함수(LLM 미관여). 임계는 config/risk_params.toml [portfolio](튜닝).
+전부 결정론 순수 함수. 임계는 config/risk_params.toml [portfolio](튜닝).
 """
 from __future__ import annotations
 

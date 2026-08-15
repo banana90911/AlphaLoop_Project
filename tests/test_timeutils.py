@@ -1,4 +1,4 @@
-"""시간대 정규화 (0-B 게이트, 11-2.7)."""
+"""시간대 정규화 (0-B 게이트, 12-ops 11-2.7)."""
 from core.timeutils import now_utc, session_label, to_kst
 
 

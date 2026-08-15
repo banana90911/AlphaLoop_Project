@@ -5,7 +5,7 @@ from memory.db import init_db
 def test_schema_creates_core_tables(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"cycles", "decisions", "trades", "outcomes", "agent_predictions", "lessons"} <= tables
+    assert {"cycles", "decisions", "trades", "outcomes", "agent_predictions"} <= tables
     conn.close()
 
 

@@ -1,4 +1,4 @@
-"""백테스트 재생 엔진 (backtest/engine, 11-eval 10장·05-risk). 직접 구현(zipline/vectorbt 미사용).
+"""백테스트 재생 엔진 (backtest/engine, 09-eval 9.1·05-risk). 직접 구현(zipline/vectorbt 미사용).
 
 부품 결합: indicators(피처) → screener(워치리스트) → sizing(수량) → exits(청산) → costs(비용).
 
@@ -48,7 +48,7 @@ class _Holding:
     current_stop: float
     entry_date: date
     days_held: int = 0
-    tp1_done: bool = False
+    breakeven_done: bool = False
 
 
 @dataclass
@@ -121,7 +121,7 @@ def run(
                 continue
             act = decide_exit(
                 Position(pos.entry_price, pos.initial_stop, pos.current_stop,
-                         pos.days_held, pos.tp1_done),
+                         pos.days_held, pos.breakeven_done),
                 close, atr, params=rp,
             )
             if act.action == "exit_full":
@@ -135,11 +135,13 @@ def run(
                     cash += _proceeds(close, sq, pos.market, d, tax_params)
                     result.trades.append(_close(pos, code, d, close, sq, act.reason, tax_params))
                     pos.qty -= sq
-                pos.tp1_done = True
+                pos.breakeven_done = True
                 if act.new_stop is not None:
                     pos.current_stop = act.new_stop
             elif act.action == "raise_stop" and act.new_stop is not None:
                 pos.current_stop = act.new_stop
+                if act.reason == "breakeven":
+                    pos.breakeven_done = True
             pos.days_held += 1
 
         # ── 2) 신규 진입 ──
@@ -166,7 +168,7 @@ def run(
                     # (모멘텀 전략의 절대 게이트 — 스크리너 백분위는 상대순위라 하락장도 1등이 생김)
                     if pd.isna(close) or pd.isna(atr) or atr <= 0 or pd.isna(mom) or mom <= 0:
                         continue
-                    stop = close - stop_k * atr
+                    stop = close - stop_k * atr      # 손절폭 = 2.0 × ATR (06-sizing 6.1)
                     if stop <= 0:
                         continue
                     qty = sizing.position_qty(equity_now, close, stop,

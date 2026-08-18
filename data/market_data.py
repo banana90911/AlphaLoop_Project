@@ -9,7 +9,7 @@
   실전/백테스트 캐시 혼선 방지). 같은 정규화·피처 정의를 재사용해 둘이 어긋나지 않게.
 
 OHLCV는 KIS 일봉(확정 스키마, `kis_history` 재사용)이 정본이다. 수급(투자자 순매수)은 KIS
-`inquire-investor`가 **최근 30거래일만** 주고(external-apis §3 실측) 출력 컬럼이 아직
+`inquire-investor`가 **최근 30거래일만** 주고(external-apis 실측 제약) 출력 컬럼이 아직
 *라이브 미검증*이라, 컬럼 가드로 다르면 명확히 실패시키고(조용한 오염 금지) 수급 실패는
 OHLCV를 막지 않는다(수급 없으면 스크리너가 중립 처리).
 """
@@ -23,7 +23,7 @@ from broker.kis_client import KISClient
 from data.sources import kis_history
 from data.sources.kis_history import KISHistoryError
 
-# KIS inquire-investor(FHKST01010900) 출력 컬럼 → 표준. ★라이브 검증 필요(external-apis §3).
+# KIS inquire-investor(FHKST01010900) 출력 컬럼 → 표준. ★라이브 검증 필요(external-apis 실측 제약).
 _INVESTOR_COLS = {
     "stck_bsop_date": "date",
     "orgn_ntby_qty": "inst_net",     # 기관계 순매수 수량

@@ -1,4 +1,4 @@
-"""워크포워드 파라미터 OOS 튜닝 실행기 (11-eval 10-1).
+"""워크포워드 파라미터 OOS 튜닝 실행기 (09-eval 9.1).
 
 캐시된 과거 데이터로 롤링 워크포워드 튜닝을 돌려:
   ① 구간별 IS 최고 조합 → OOS 성과(손 안 댄 구간)
@@ -37,12 +37,12 @@ TREND_DAYS = 200               # 하락장 방어: 지수 SMA200 위면 매수 �
 GRID = {
     ("entry", "score_min"):      [0.40, 0.50, 0.55],   # 1차에서 0.50(최저)만 선택 → 아래로 확장
     ("entry", "stop_atr_k"):     [2.0, 2.5, 3.0],       # 1차에서 2.5(최고) 다수 → 위로 확장
-    ("exits", "tp1_R"):          [1.5, 2.0],            # 1차에서 경계 아님(양쪽 선택)
+    ("exits", "breakeven_R"):    [1.5, 2.0],            # 본전 상향 트리거 R
     ("exits", "trail_k"):        [3.0, 3.5],            # 1차에서 3.0(최고) 다수 → 위로 확장
     ("sizing", "risk_pct_max"):  [0.015, 0.025],        # 신규: 거래당 위험 상한(MDD -52%와 직결)
     ("limits", "max_positions"): [5, 8],                # 신규: 동시 보유 종목 수(집중↔분산)
 }
-_ABBR = {"score_min": "sm", "stop_atr_k": "sk", "tp1_R": "tp",
+_ABBR = {"score_min": "sm", "stop_atr_k": "sk", "breakeven_R": "be",
          "trail_k": "tk", "risk_pct_max": "rp", "max_positions": "mp"}
 
 
@@ -105,7 +105,7 @@ def main() -> None:
           f"샤프 {strat['sharpe']:.2f}  MDD {strat['max_drawdown']:.2%}  "
           f"Calmar {strat['calmar']:.2f}")
 
-    # 벤치마크 4종(11-eval 10-1): OOS 기간 net 누적수익으로 비교 — 전부 초과해야 ① 통과
+    # 벤치마크 4종(09-eval 9.1): OOS 기간 net 누적수익으로 비교 — 전부 초과해야 ① 통과
     bench_start = recs[0].split.test_start
     bench_prices = {c: df["close"] for c, df in prices.items()}
     ew = metrics.equal_weight_equity(bench_prices, CAPITAL)
@@ -151,7 +151,7 @@ def main() -> None:
     # ── 모달 추천 파라미터(민감도 기준점) ──
     rec = tune.recommend_params(recs, base, GRID)
 
-    # ── 견고성(11-eval 10-1 ③) 실측 ──
+    # ── 견고성(09-eval 9.1 ③) 실측 ──
     # ① 민감도: 추천 파라미터 ±1칸 이웃의 OOS 누적이 급락(절벽)하지 않는지 (mat 재사용, 추가실행 0)
     no_cliff = gate.sensitivity_no_cliff(mat, candidates, GRID, rec)
     # ② 비용 2배 스트레스: 수수료·슬리피지·거래세 2배로 재실행 → 균등가중 벤치 초과 유지?

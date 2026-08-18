@@ -1,4 +1,4 @@
-"""반사실 가상 손익 — 청산 시뮬·적재 (memory/shadow, 08-stats 7.18)."""
+"""반사실 가상 손익 — 청산 시뮬·적재 (memory/shadow, 11-roadmap Phase 5)."""
 from datetime import date, timedelta
 
 import pytest

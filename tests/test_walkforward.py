@@ -1,4 +1,4 @@
-"""워크포워드 분할 — 롤링/앵커드·룩어헤드 차단 (backtest/walkforward, 11-eval 10-1)."""
+"""워크포워드 분할 — 롤링/앵커드·룩어헤드 차단 (backtest/walkforward, 09-eval 9.1)."""
 from dataclasses import FrozenInstanceError
 from datetime import date, timedelta
 

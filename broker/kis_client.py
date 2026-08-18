@@ -1,11 +1,11 @@
 """KIS(한국투자증권) Open API 클라이언트 (Phase 1).
 
 설계 불변식:
-- **모드 분기 금지**(03-arch 3.3 / 12-ops 11-2.9): `if mode == "real"` 같은 코드 분기 대신,
+- **모드 분기 금지**(03-arch 3.3 / 10-ops 10.10): `if mode == "real"` 같은 코드 분기 대신,
   모드별 차이(도메인·TR_ID·키·계좌)를 `_PROFILES` **데이터**로 두고 코드 경로는 하나다.
-- **토큰 캐싱**(12-ops 11-2.3): 24h 만료 + 발급 1분당 1회 제한(EGW00133) → 파일 캐시 재사용.
-- **주문 송출 재시도 금지**(12-ops 11-2.3): 조회만 5xx 백오프. 주문 POST는 중복위험 → 재시도 안 함.
-- 진입 주문은 IOC지정가(ORD_DVSN=11, 12-ops 11-2.8)를 기본값으로 둔다.
+- **토큰 캐싱**(10-ops 10.3): 24h 만료 + 발급 1분당 1회 제한(EGW00133) → 파일 캐시 재사용.
+- **주문 송출 재시도 금지**(10-ops 10.3): 조회만 5xx 백오프. 주문 POST는 중복위험 → 재시도 안 함.
+- 진입 주문은 IOC지정가(ORD_DVSN=11, 10-ops 10.14)를 기본값으로 둔다.
 
 시크릿은 `config.settings`에서만 읽는다(여기에 키 값 없음).
 """
@@ -173,7 +173,7 @@ class KISClient:
         raise KISError(f"{tr_id} 재시도 소진")  # 도달 불가(루프가 반환)
 
     def _post_order(self, path: str, tr_id: str, body: dict[str, str]) -> dict[str, Any]:
-        """주문 POST — 재시도 금지(중복주문 방지, 12-ops 11-2.3). 실패는 호출부가 체결조회."""
+        """주문 POST — 재시도 금지(중복주문 방지, 10-ops 10.3). 실패는 호출부가 체결조회."""
         self._throttle()
         r = requests.post(
             f"{self._p['domain']}{path}",
@@ -252,7 +252,7 @@ class KISClient:
         return body.get("output2", [])
 
     def get_daily_orders(self, date: str) -> list[dict[str, Any]]:
-        """주식일별주문체결조회(모의 지원). 송출 실패 시 접수 확인용(12-ops 11-2.3).
+        """주식일별주문체결조회(모의 지원). 송출 실패 시 접수 확인용(10-ops 10.3).
 
         date='YYYYMMDD'.
         """
@@ -282,11 +282,11 @@ class KISClient:
         self, code: str, qty: int, price: int, *, side: str, ord_dvsn: str = "11",
         cndt_pric: int | None = None,
     ) -> dict[str, Any]:
-        """현금 주문 송출. side='buy'|'sell'. ord_dvsn 기본 11(IOC지정가, 진입용 12-ops 11-2.8).
+        """현금 주문 송출. side='buy'|'sell'. ord_dvsn 기본 11(IOC지정가, 진입용 10-ops 10.14).
 
-        **재시도 금지** — KISError 시 호출부가 get_daily_orders로 접수 여부 확인(12-ops 11-2.3).
+        **재시도 금지** — KISError 시 호출부가 get_daily_orders로 접수 여부 확인(10-ops 10.3).
         시장가(01) 등 price 무의미한 유형은 ORD_UNPR='0'. 스톱지정가(22)는 cndt_pric
-        (CNDT_PRIC=트리거가)를 함께 전달하고 ORD_UNPR=발동지정가(external-apis §59).
+        (CNDT_PRIC=트리거가)를 함께 전달하고 ORD_UNPR=발동지정가(10-ops 10.14).
         """
         if side not in ("buy", "sell"):
             raise ValueError(f"side는 buy|sell: {side!r}")
@@ -308,7 +308,7 @@ class KISClient:
         client_order_id: str,
     ) -> "Fill":
         """손절 스톱지정가(22) 등록(exec.orders.Broker 프로토콜). 진입 체결 직후 호출돼
-        장간 갭 동안 손절선 도달 시 KIS가 자동 발동하게 한다(맨몸 포지션 방지, 12-ops 11-2.3).
+        장간 갭 동안 손절선 도달 시 KIS가 자동 발동하게 한다(맨몸 포지션 방지, 10-ops 10.3).
 
         대기 주문이라 즉시 체결이 아니다 — 접수 성공이면 status='submitted'(filled_qty=0),
         발동·체결은 사후 사이클의 reconcile가 일별체결조회로 확인한다(후속).
@@ -363,7 +363,7 @@ class KISClient:
     ) -> "Fill":
         """신규 진입 송출 + 체결 확인을 한 번에(exec.orders.Broker 프로토콜 구현).
 
-        order-cash POST는 1회만(재시도 금지, 12-ops 11-2.3). 성공·실패와 무관하게 *일별주문체결
+        order-cash POST는 1회만(재시도 금지, 10-ops 10.3). 성공·실패와 무관하게 *일별주문체결
         조회를 단일 진실*로 삼아 체결을 확정한다(KIS 라이브 조회 = 현재 진실, 07-model §92).
         조회 자체가 실패하면 접수 불확실(submitted)로 두고 사후 reconcile에 맡긴다.
 

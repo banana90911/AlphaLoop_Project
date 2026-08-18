@@ -1,4 +1,4 @@
-"""exec/orders.py — 신규 진입 송출·체결 적재(7단계). FakeBroker로 흐름 검증."""
+"""exec/orders.py — 신규 진입 송출·체결 적재(5~6단계). FakeBroker로 흐름 검증."""
 from __future__ import annotations
 
 from exec.orders import ENTRY_ORD_DVSN, Fill, execute_entries
@@ -54,7 +54,7 @@ def test_entry_fill_records_trade_and_position(tmp_path):
     ).fetchone()
     assert p["qty"] == 3 and p["avg_price"] == 70000.0 and p["current_stop_price"] == 65000.0
     assert p["market"] == "KOSPI" and p["initial_stop_price"] == 65000.0   # 시장 매핑·R고정
-    # 손절 스톱(22)이 체결 수량만큼 등록됨(맨몸 포지션 방지 12-ops 11-2.3)
+    # 손절 스톱(22)이 체결 수량만큼 등록됨(맨몸 포지션 방지 10-ops 10.3)
     s = conn.execute("SELECT * FROM trades WHERE trade_id='CY1-005930-stop-0'").fetchone()
     assert s["side"] == "sell" and s["ord_dvsn"] == "22" and s["order_qty"] == 3
     assert s["trigger_price"] == 65000.0 and s["filled_qty"] == 0 and s["status"] == "submitted"

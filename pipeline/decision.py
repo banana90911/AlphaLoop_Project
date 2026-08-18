@@ -1,4 +1,4 @@
-"""결정 — 코드 규칙(통계) 단일 경로 (pipeline/decision, 03-arch 4단계).
+"""결정 — 코드 규칙(통계) 단일 경로 (pipeline/decision, 03-arch 3단계).
 
 스크리너 종합점수 임계로만 결정하는 결정론 규칙이다. 초기 구축 단계에서는 결정 주체가
 코드 하나뿐이라 모드 분기가 없다 — 뉴스·촉매 판단이나 LLM 결정자는 두지 않는다.
@@ -48,5 +48,5 @@ def run_decision(
     *,
     params: dict,
 ) -> DeciderOutput:
-    """사이클 결정 진입점(trading_cycle 4단계). 현재는 규칙 결정 한 경로."""
+    """사이클 결정 진입점(trading_cycle 3단계). 현재는 규칙 결정 한 경로."""
     return decide(candidates, set(holdings), params)

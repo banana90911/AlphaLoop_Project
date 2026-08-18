@@ -1,4 +1,4 @@
-"""인출 스코어러 — 유사도·점수·요약·원시매칭 (memory/retrieval, 08-stats 7.21·P1-6)."""
+"""인출 스코어러 — 유사도·점수·요약·원시매칭 (memory/retrieval — 사이클 단계 폐지로 정리 대상, 11-roadmap Phase 5)."""
 from datetime import date
 
 import pytest

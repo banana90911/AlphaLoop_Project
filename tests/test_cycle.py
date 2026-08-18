@@ -1,4 +1,4 @@
-"""사이클 상태머신·idempotency + 5~6단계 결정·리스크 게이트 배선 (0-B·13-roadmap Phase 4)."""
+"""사이클 상태머신·idempotency + 3~4단계 결정·리스크 게이트 배선 (0-B·13-roadmap Phase 4)."""
 import copy
 
 import numpy as np
@@ -66,7 +66,7 @@ def test_advance_status_rejects_unknown(tmp_path):
     conn.close()
 
 
-# ── 4~5단계 배선 (결정 규칙·게이트 결정론 검증) ──
+# ── 3~4단계 배선 (결정 규칙·게이트 결정론 검증) ──
 
 def test_decision_runs_for_scheduled_with_account(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))
@@ -110,7 +110,7 @@ def test_balance_mismatch_halts(tmp_path):
     conn.close()
 
 
-# ── 6단계 후반: sizing 환산 + 이상행동 게이트(드라이런 집행 계획) ──
+# ── 4단계 후반: sizing 환산 + 이상행동 게이트(드라이런 집행 계획) ──
 
 def test_sizing_produces_planned_orders(tmp_path):
     conn = init_db(str(tmp_path / "t.db"))

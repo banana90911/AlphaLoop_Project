@@ -1,8 +1,8 @@
-"""사이클·결정 적재·조회 (07-model 6장 객체). 0-B는 `cycles` 상태머신, Phase 4는 `decisions` 적재.
+"""사이클·결정 적재·조회 (07-model 7장 객체). 0-B는 `cycles` 상태머신, Phase 4는 `decisions` 적재.
 
 trades·outcomes·predictions 적재는 후속(주문 집행·체결·학습 연결 시).
 idempotency: 사이클은 `intent`→`ordering`→`recorded` 상태머신을 따르며,
-미완(`intent`/`ordering`)으로 남은 사이클은 시작 시 복구한다(12-ops 11-2.1).
+미완(`intent`/`ordering`)으로 남은 사이클은 시작 시 복구한다(10-ops 10.1).
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def record_decisions(
     source: str = "paper",
     decided_at: str | None = None,
 ) -> list[str]:
-    """결정 제안(buy/add/sell/trim)을 `decisions`에 적재 (7단계 기록). 반환: decision_id 목록.
+    """결정 제안(buy/add/sell/trim)을 `decisions`에 적재 (6단계 기록). 반환: decision_id 목록.
 
     hold는 주문이 없어 건너뛴다. buy 계열의 stop_loss는 stops(code→손절가, 집행 계획)에서
     채운다. decision_id는 cycle_id+종목+action 결정론 키(사이클 내 유일)로 재현 가능하게.
@@ -105,7 +105,7 @@ def record_trade(
     ordered_at: str | None = None,
     filled_at: str | None = None,
 ) -> None:
-    """KIS 주문·체결 1건을 `trades`에 적재(7단계). status∈submitted/filled/partial/cancelled/rejected.
+    """KIS 주문·체결 1건을 `trades`에 적재(6단계). status∈submitted/filled/partial/cancelled/rejected.
 
     체결가·수량은 broker가 정규화한 Fill 기준(부분체결 분할적재는 후속). decision_id는
     상주 스톱 자동체결 시 NULL 가능(07-model).
@@ -136,7 +136,7 @@ def upsert_entry_position(
     entry_date: str | None = None,
     sector: str | None = None,
 ) -> str:
-    """신규/추가 진입 체결 → `positions` 생성 또는 수량·평단 갱신(7단계). 반환: position_id.
+    """신규/추가 진입 체결 → `positions` 생성 또는 수량·평단 갱신(6단계). 반환: position_id.
 
     같은 종목 open 보유가 있으면 수량 합산·평단 가중평균으로 갱신(추가매수), 없으면 신규
     생성(position_id=cycle_id_symbol). 추가매수 시 R 기준(initial_stop·entry_date)은 첫
@@ -161,7 +161,7 @@ def upsert_entry_position(
         pid = f"{cycle_id}_{symbol}"
         conn.execute(
             "INSERT INTO positions(position_id, symbol, qty, avg_price, sector, market, "
-            "entry_decision_id, initial_stop_price, current_stop_price, tp1_done, "
+            "entry_decision_id, initial_stop_price, current_stop_price, breakeven_done, "
             "entry_date, status, opened_at, updated_at) "
             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'open', ?, ?)",
             (pid, symbol, add_qty, fill_price, sector, market, entry_decision_id,
@@ -187,21 +187,20 @@ def reduce_position(
     *,
     sell_qty: int,
     new_stop: float | None = None,
-    mark_tp1: bool = False,
 ) -> None:
-    """부분 청산 — 수량 차감 + (선택) 손절 본전 상향·tp1 완료 표시(exits ③)."""
+    """부분 체결 뒤처리 — 체결분만 수량 차감(+선택 손절 갱신). 부분 익절은 설계에 없다."""
     row = conn.execute(
-        "SELECT qty, current_stop_price, tp1_done FROM positions WHERE position_id=?",
+        "SELECT qty, current_stop_price FROM positions WHERE position_id=?",
         (position_id,),
     ).fetchone()
     if row is None:
         return
     conn.execute(
-        "UPDATE positions SET qty=?, current_stop_price=?, tp1_done=?, updated_at=? "
+        "UPDATE positions SET qty=?, current_stop_price=?, updated_at=? "
         "WHERE position_id=?",
         (max(0, row["qty"] - sell_qty),
          new_stop if new_stop is not None else row["current_stop_price"],
-         1 if mark_tp1 else row["tp1_done"], utc_iso(), position_id),
+         utc_iso(), position_id),
     )
     conn.commit()
 
@@ -251,7 +250,7 @@ def record_outcome(
 
 
 def recover_pending_cycles(conn: sqlite3.Connection) -> list[str]:
-    """시작 시 미완(intent/ordering) 사이클을 failed로 마감하고 그 id 목록 반환(12-ops 11-2.1).
+    """시작 시 미완(intent/ordering) 사이클을 failed로 마감하고 그 id 목록 반환(10-ops 10.1).
 
     프로세스가 사이클 도중 죽어도 다음 실행이 깨끗한 상태에서 시작하게 한다.
     """

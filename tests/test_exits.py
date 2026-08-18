@@ -2,14 +2,19 @@
 import pandas as pd
 
 from exec.exits import (
-    Position, StopGapHit, StopPosition, decide_exit, detect_stop_gaps, execute_exits,
+    Position,
+    StopGapHit,
+    StopPosition,
+    decide_exit,
+    detect_stop_gaps,
+    execute_exits,
 )
 from exec.orders import Fill, execute_entries
 from memory import journal
 from memory.db import init_db
 from pipeline.trading_cycle import PlannedOrder
 
-_P = {"exits": {"tp1_R": 1.5, "tp1_frac": 0.4, "trail_k": 2.75,
+_P = {"exits": {"breakeven_R": 1.5, "trail_k": 2.75,
                 "max_hold_days": 20, "min_progress_R": 0.5}}
 
 
@@ -35,23 +40,29 @@ def test_stop_hit():
     assert a.action == "exit_full" and a.reason == "stop_hit"
 
 
-def test_tp1_partial_and_breakeven():
-    # R=1000, +1.5R=11,500 도달 → 부분익절 + 손절 본전(10,000)
+def test_breakeven_raises_stop_no_partial_sell():
+    # R=1000, +1.5R=11,500 도달 → 부분 매도 없이 손절만 본전(10,000)으로
     a = decide_exit(_pos(), price=11_500, atr=200, params=_P)
-    assert a.action == "exit_partial"
-    assert a.fraction == 0.4
+    assert a.action == "raise_stop" and a.reason == "breakeven"
     assert a.new_stop == 10_000
 
 
-def test_tp1_skipped_if_done():
-    # 이미 tp1 완료 → tp1 건너뛰고 트레일링으로
-    a = decide_exit(_pos(tp1_done=True, current_stop=10_000), price=11_500, atr=200, params=_P)
-    assert a.action == "raise_stop"
+def test_breakeven_skipped_if_done():
+    # 이미 본전 상향 완료 → 트레일링으로 넘어간다
+    a = decide_exit(_pos(breakeven_done=True, current_stop=10_000),
+                    price=11_500, atr=200, params=_P)
+    assert a.action == "raise_stop" and a.reason == "trail"
+
+
+def test_breakeven_never_lowers_stop():
+    # 트레일링이 이미 본전 위(10,500)면 본전 상향이 손절을 내리지 않는다
+    a = decide_exit(_pos(current_stop=10_500), price=11_500, atr=200, params=_P)
+    assert a.new_stop == 10_500
 
 
 def test_trailing_raises_stop():
     # price 12,000, trail 2.75*200=550 → new_stop 11,450 > current 9,000
-    a = decide_exit(_pos(tp1_done=True), price=12_000, atr=200, params=_P)
+    a = decide_exit(_pos(breakeven_done=True), price=12_000, atr=200, params=_P)
     assert a.action == "raise_stop"
     assert a.new_stop == 12_000 - 2.75 * 200
 
@@ -65,13 +76,14 @@ def test_time_exit_when_stale():
 
 def test_no_time_exit_if_trending():
     # 보유 21일이어도 +0.5R 넘었으면 시간청산 면제(여기선 트레일링이 잡음)
-    a = decide_exit(_pos(days_held=21, tp1_done=True), price=11_000, atr=100, params=_P)
+    a = decide_exit(_pos(days_held=21, breakeven_done=True), price=11_000, atr=100, params=_P)
     assert a.action != "exit_full"
 
 
 def test_hold():
-    a = decide_exit(_pos(tp1_done=True, current_stop=9_900), price=9_950, atr=100, params=_P)
-    # 손절 위, tp1 완료, 트레일링 new=9,950-275=9,675<9,900, 보유 1일 → hold
+    a = decide_exit(_pos(breakeven_done=True, current_stop=9_900),
+                    price=9_950, atr=100, params=_P)
+    # 손절 위, 본전 상향 완료, 트레일링 new=9,950-275=9,675<9,900, 보유 1일 → hold
     assert a.action == "hold"
 
 
@@ -181,16 +193,19 @@ def test_execute_forced_sell_invalidation(tmp_path):
     conn.close()
 
 
-def test_execute_tp1_partial(tmp_path):
+def test_execute_breakeven_raises_stop_only(tmp_path):
+    """+1.5R 도달 — 매도 없이 손절만 본전으로. 부분 익절은 설계에 없다."""
     conn = init_db(str(tmp_path / "t.db"))
     fb = _FakeBroker()
     _enter(conn, fb)                                   # R=5000, +1.5R=77500
     journal.create_cycle(conn, "CY2")
     execute_exits(conn, {"005930": _df(78000.0)}, broker=fb, cycle_id="CY2", order_mode="paper")
-    pos = conn.execute("SELECT qty, tp1_done, current_stop_price FROM positions").fetchone()
-    assert pos["qty"] < 3 and pos["tp1_done"] == 1 and pos["current_stop_price"] == 70000.0
-    o = conn.execute("SELECT exit_reason, net_pnl FROM outcomes").fetchone()
-    assert o["exit_reason"] == "tp1" and o["net_pnl"] > 0
+    pos = conn.execute(
+        "SELECT qty, current_stop_price FROM positions"
+    ).fetchone()
+    assert pos["qty"] == 3                              # 수량 그대로(매도 없음)
+    assert pos["current_stop_price"] == 70000.0         # 본전으로 상향
+    assert conn.execute("SELECT COUNT(*) c FROM outcomes").fetchone()["c"] == 0
     conn.close()
 
 

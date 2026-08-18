@@ -1,4 +1,4 @@
-"""워크포워드 파라미터 튜닝 (backtest/tune, 11-eval 10-1).
+"""워크포워드 파라미터 튜닝 (backtest/tune, 09-eval 9.1).
 
 과최적화 방지의 본체: 파라미터를 **train(IS)에서만** 고르고 **test(OOS, 손 안 댄 구간)
 에서만** 평가한다. 롤링 분할마다 IS 최고 조합을 뽑아 그 조합을 OOS에 적용, OOS 수익만
@@ -29,7 +29,7 @@ from eval import metrics
 _GRID: dict[tuple[str, str], list[float]] = {
     ("entry", "score_min"): [0.50, 0.55, 0.60],
     ("entry", "stop_atr_k"): [1.5, 2.0, 2.5],
-    ("exits", "tp1_R"): [1.5, 2.0],
+    ("exits", "breakeven_R"): [1.5, 2.0],
     ("exits", "trail_k"): [2.5, 3.0],
 }
 

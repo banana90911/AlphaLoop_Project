@@ -1,7 +1,7 @@
 """KIS 과거 시계열 수집 — 일봉·공매도를 구간 페이지네이션으로 5~10년치 (data 레이어).
 
 `broker.kis_client`의 단건 조회(한 호출 최대 ~100건)를 감싸, end→start로 구간을 이동하며
-누적한다(external-apis §3). 표준 컬럼으로 정규화하고, KIS 응답 컬럼이 기대와 다르면
+누적한다(external-apis 실측 제약). 표준 컬럼으로 정규화하고, KIS 응답 컬럼이 기대와 다르면
 `KISHistoryError`로 명확히 실패한다.
 
 백테스트 입력 데이터 전용 — 저장은 `data.cache`(parquet)가 담당한다.

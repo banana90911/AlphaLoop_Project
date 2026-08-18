@@ -4,9 +4,6 @@
 [limits]
 daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk A A: 실현+미실현 MTM·당일시작자본 대비)
 max_positions = 5            # 동시 보유 종목 수 상한
-per_name_hard_pct = 0.13     # 종목당 절대 상한 = 일일손실바닥 ÷ 가격제한폭 (4%÷30%≈13%).
-                             # 한 종목이 하한가(-30%)여도 일일 바닥(-4%)을 단독으로 못 뚫는 최대치.
-                             # 소수종목 시 자동 상향(구 per_name_pct 13% → hard 25%)은 채택하지 않음 — 05-risk A·06-sizing
 sector_pct = 0.30            # 섹터 집중 하드 한도 (05-risk A A.1·5-1 상관 페널티)
 gross_exposure_max = 1.0     # 총노출 상한(레버리지 금지 — 05-risk A.1)
 adv_participation = 0.01     # 유동성 한도: 일평균거래대금(ADV)의 1%
@@ -25,7 +22,8 @@ entry_threshold = 0.60       # 신규 진입 임계 τ
 exit_threshold = 0.40        # 보유 논지무효 임계(점수가 이 아래로 떨어지면 청산)
 
 [retrieval]
-# 인출 스코어러 가중 (08-stats 7.18·7.21, 워크포워드 확정). 초기 휴면 — lessons 0건이면 raw 매칭.
+# 인출 스코어러 가중 — 미사용(정리 대상). 사이클에서 기억 검색 단계를 없애고 과거 성과를
+# 켈리 입력 집계로 흡수했다(03-arch 3-2 · 11-roadmap Phase 5). 현재 참조처는 테스트뿐.
 w_regime = 0.35              # 레짐 유사도(오늘과 닮은 시장 국면)
 w_sector = 0.20             # 섹터/종목 정합
 w_setup = 0.20              # 셋업 정합
@@ -57,8 +55,8 @@ score_min = 0.55           # 신규 진입 최소 스크리너 점수(0~1) — �
 # 워밍업은 momentum(60일) NaN으로 자동 처리(그 전엔 진입 안 함), 별도 일수 파라미터 불요
 
 [exits]
-tp1_R = 1.5                  # 1차 익절 R 배수 (시작값, 05-risk §98 — 1.5R·2R·3×ATR20 비교 확정)
-tp1_frac = 0.4              # 1차 익절 비율 (1/3~1/2)
+breakeven_R = 1.5          # 이 R 배수 첫 도달 시 부분 청산 + 잔여 손절 본전 상향 (06-sizing 6.2)
+partial_frac = 0.4         # +breakeven_R 도달 시 청산 비율
 trail_k = 2.75             # ATR20 트레일링 배수 (2.5~3.0)
 max_hold_days = 20         # 최대 보유 거래일
 min_progress_R = 0.5       # 시간청산 면제 기준 진행 R

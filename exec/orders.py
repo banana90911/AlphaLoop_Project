@@ -1,11 +1,11 @@
-"""주문 송출·집행 — planned(신규 진입) → KIS 송출 → trades·positions 적재 (7단계).
+"""주문 송출·집행 — planned(신규 진입) → KIS 송출 → trades·positions 적재 (5~6단계).
 
-이 모듈은 *오케스트레이션*만 한다 — client_order_id 부여, 재시도 금지 정책(12-ops 11-2.3),
+이 모듈은 *오케스트레이션*만 한다 — client_order_id 부여, 재시도 금지 정책(10-ops 10.3),
 체결 결과의 trades·positions 적재. *KIS 통신·체결 확인·응답 정규화는 broker(Broker
 프로토콜)가 책임*진다(라이브 응답 필드가 미확정이라 파싱을 한 곳에 격리). 순수 결정론
 코드(03-arch 3.3) — broker만 외부 I/O.
 
-주문 유형(12-ops 11-2.14 정책표): 진입=11 IOC지정가. 단 KIS 모의는 IOC 미지원이라 paper는
+주문 유형(10-ops 10.14 정책표): 진입=11 IOC지정가. 단 KIS 모의는 IOC 미지원이라 paper는
 00 일반지정가로 보정(reference_kis_paper_no_ioc) — `if mode` 분기가 아니라 모드별
 데이터 룩업(ENTRY_ORD_DVSN). 청산(sell/trim) 집행은 exits 경로로 후속 배선.
 """
@@ -17,9 +17,9 @@ from typing import Protocol
 from core.timeutils import utc_iso
 from memory import journal
 
-# 진입 주문구분 — 모드별(12-ops 11-2.14 + 모의 IOC 미지원 보정). if-분기 아닌 데이터 룩업.
+# 진입 주문구분 — 모드별(10-ops 10.14 + 모의 IOC 미지원 보정). if-분기 아닌 데이터 룩업.
 ENTRY_ORD_DVSN = {"real": "11", "paper": "00", "backtest": "00"}
-STOP_ORD_DVSN = "22"   # 손절 스톱지정가(12-ops 11-2.14). 트리거 도달 시 KIS 자동 발동.
+STOP_ORD_DVSN = "22"   # 손절 스톱지정가(10-ops 10.14). 트리거 도달 시 KIS 자동 발동.
 
 
 @dataclass
@@ -37,7 +37,7 @@ class Broker(Protocol):
     """주문 집행 채널. KISClient(실거래·모의)·FakeBroker(테스트)가 구현.
 
     place_entry는 송출 + 접수/체결 확인 + 정규화까지 책임지고 Fill을 반환한다.
-    POST 재시도는 하지 않으며(중복주문 방지 12-ops 11-2.3), 송출 실패·미접수는 status로 표현한다.
+    POST 재시도는 하지 않으며(중복주문 방지 10-ops 10.3), 송출 실패·미접수는 status로 표현한다.
     """
     def place_entry(
         self, *, code: str, qty: int, price: int, ord_dvsn: str, client_order_id: str
@@ -104,7 +104,7 @@ def execute_entries(
                 current_stop_price=o.stop, initial_stop_price=o.stop,   # 진입 시 initial=current(R 고정)
                 market=market_map.get(o.code),
             )
-            # 손절 스톱 KIS 등록 — 체결 즉시 등록해 장간 갭 맨몸 포지션을 막는다(12-ops 11-2.3).
+            # 손절 스톱 KIS 등록 — 체결 즉시 등록해 장간 갭 맨몸 포지션을 막는다(10-ops 10.3).
             trade_ids.append(
                 _register_stop(conn, o, fill.filled_qty, cycle_id, seq, did, source, ts, broker)
             )

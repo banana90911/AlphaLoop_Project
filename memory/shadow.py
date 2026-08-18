@@ -1,4 +1,4 @@
-"""반사실(거부·무거래) 가상 손익 (memory/shadow, 08-stats 7.18).
+"""반사실(거부·무거래) 가상 손익 (memory/shadow, 11-roadmap Phase 5).
 
 "안 산 종목이 그 후 어떻게 됐나"를 *동일 청산룰(exec/exits)·동일 비용모델*로 재생해
 가상 손익을 남긴다. 결정의 기회비용을 사후 측정하는 학습 신호 — 단 **추정치**라 라벨을
@@ -34,12 +34,10 @@ def simulate_shadow(
         if act.action == "exit_full":
             exit_price, reason, exit_date, held = close, act.reason, d, pos.days_held
             break
-        if act.action == "exit_partial":
-            pos.tp1_done = True
-            if act.new_stop is not None:
-                pos.current_stop = act.new_stop
-        elif act.action == "raise_stop" and act.new_stop is not None:
+        if act.action == "raise_stop" and act.new_stop is not None:
             pos.current_stop = act.new_stop
+            if act.reason == "breakeven":
+                pos.breakeven_done = True
         pos.days_held += 1
         exit_price, exit_date, held = close, d, pos.days_held
     gross = exit_price / entry - 1.0 if entry else 0.0

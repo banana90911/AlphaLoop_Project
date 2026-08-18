@@ -1,4 +1,4 @@
-"""성과 지표·벤치마크 (eval/metrics, 11-eval 10-1)."""
+"""성과 지표·벤치마크 (eval/metrics, 09-eval 9.1)."""
 import pandas as pd
 
 from eval import metrics

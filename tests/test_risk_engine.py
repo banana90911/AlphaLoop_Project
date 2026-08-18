@@ -46,24 +46,21 @@ def test_no_breaker_when_flat(params):
     assert breakers_tripped(acc, params) == set()
 
 
-def test_per_name_hard_limit(params):
-    acc = _acc(10_000_000)                       # 자본 1000만, 하드 13%=130만
-    assert check_new_buy(acc, "A", "반도체", 1_000_000, params)        # 100만 OK
-    v = check_new_buy(acc, "A", "반도체", 2_000_000, params)           # 200만 초과
-    assert not v and "종목당" in v.reason
+def test_no_per_name_limit(params):
+    """종목당 한도는 두지 않는다(05-risk 5.1) — 총노출 안이면 한 종목에 얼마든 담긴다."""
+    acc = _acc(10_000_000)
+    assert check_new_buy(acc, "A", "반도체", 1_000_000, params)
+    assert check_new_buy(acc, "A", "반도체", 5_000_000, params)        # 자본의 50%도 통과
 
 
-def test_sector_limit_aggregates(params):
-    # 같은 섹터 보유 200만 + 신규 120만 = 320만 > 섹터 30%(300만).
-    # 신규 120만은 종목당 13%(130만) 안이라 섹터 사유로 걸려야 한다(검사 순서: 종목당 → 섹터).
+def test_no_sector_limit(params):
+    """섹터 한도도 두지 않는다(03-arch 3-2 — 종목→업종 소스 부재)."""
     acc = _acc(8_000_000, [Position("A", "반도체", 100, 20_000)])
-    v = check_new_buy(acc, "B", "반도체", 1_200_000, params)
-    assert not v and "섹터" in v.reason
+    assert check_new_buy(acc, "B", "반도체", 1_200_000, params)
 
 
 def test_gross_exposure_limit(params):
-    # 보유 950만 + 신규 100만 = 1050만 > 총노출 100%(자본 1000만).
-    # 신규 100만은 종목당·섹터 한도 안이라 총노출 사유로 걸려야 한다.
+    # 보유 950만 + 신규 100만 = 1050만 > 총노출 100%(자본 1000만) → 총노출 사유.
     acc = _acc(500_000, [Position("A", "반도체", 100, 95_000)])
     v = check_new_buy(acc, "B", "바이오", 1_000_000, params)
     assert not v and "총노출" in v.reason
@@ -106,10 +103,10 @@ def test_screen_order_blocks_suspended(params):
 
 
 def test_screen_order_hardrule_first(params):
-    # 하드룰(종목당) 위반이 종목상태보다 먼저 잡힘
+    # 하드룰(총노출) 위반이 종목상태보다 먼저 잡힘
     acc = _acc(10_000_000)
-    v = screen_order(acc, "A", "반도체", 3_000_000, StockStatus(vi=True), params)
-    assert not v and "종목당" in v.reason
+    v = screen_order(acc, "A", "반도체", 11_000_000, StockStatus(vi=True), params)
+    assert not v and "총노출" in v.reason
 
 
 def test_screen_order_ok(params):

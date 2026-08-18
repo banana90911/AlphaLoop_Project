@@ -1,4 +1,4 @@
-"""보정 통계 — 수축·Wilson·시간가중 (memory/calibration, 08-stats 7.5·7.6·7.15·7.18).
+"""보정 통계 — 수축·Wilson·시간가중 (memory/calibration, reference/statistics 수축·7.6·7.15·7.18).
 
 `calibration` 뷰의 raw 집계(맞은수·표본수)에 *작은/오래된 표본에서 함부로 단정 않는*
 보정을 입혀 칸별 신뢰 적중률을 낸다. 이 값이 사이징 켈리 p(06-sizing)·conviction

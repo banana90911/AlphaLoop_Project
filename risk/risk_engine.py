@@ -7,8 +7,8 @@
 본 모듈은 5-1 A의 **하드 한도·서킷브레이커·안전 정지**를 담는다(검사 순서 A.1·재개 A.2·
 이상행동 A.3는 후속 단계). 한도값은 config/risk_params.toml(그 시점 값으로 과거 재현).
 
-종목당 한도는 하나다 — `per_name_hard_pct`(=13% = 일일손실바닥 4% ÷ 가격제한폭 30%).
-한 종목이 하한가여도 일일 바닥을 단독으로 못 뚫는 최대치이며, 여기서 절대 차단한다(A.1·A.3).
+종목당·섹터 한도는 두지 않는다(05-risk 5.1·03-arch 3-2) — 집중 위험은 총노출 상한으로만
+누른다. 섹터는 종목→업종 소스가 없어 점수로도 한도로도 쓰지 않는다.
 """
 from __future__ import annotations
 
@@ -87,12 +87,6 @@ def check_new_buy(
     if add_value <= 0:
         return Verdict(False, "매수 금액 0 이하")
     eps = 1e-6
-    name_cap = lim["per_name_hard_pct"] * eq
-    if acc.position_value(code) + add_value > name_cap + eps:
-        return Verdict(False, f"종목당 한도 초과(>{lim['per_name_hard_pct']:.0%})")
-    sec_cap = lim["sector_pct"] * eq
-    if acc.sector_value(sector) + add_value > sec_cap + eps:
-        return Verdict(False, f"섹터 한도 초과(>{lim['sector_pct']:.0%})")
     held = sum(p.value for p in acc.positions)
     if held + add_value > lim["gross_exposure_max"] * eq + eps:
         return Verdict(False, f"총노출 한도 초과(>{lim['gross_exposure_max']:.0%})")

@@ -7,8 +7,7 @@
   이상행동 게이트(`detect_anomaly`) + 종목당 하드룰로 *집행 계획*(PlannedOrder)을 짠다.
 
 드라이런 경계: broker 미주입이면 실주문 송출을 *하지 않는다*(집행 계획까지만).
-섹터 한도(`screen_order`)는 종목→섹터 매핑이 아직 없어 보류(백테스트 engine도 미적용),
-보유 동적관리(trim/sell)의 청산 집행(`exits`)·decisions 상세 적재도 다음 증분이다.
+보유 동적관리(trim/sell)의 청산 집행(`exits`)·decisions 상세 적재는 다음 증분이다.
 """
 from __future__ import annotations
 
@@ -18,10 +17,10 @@ from datetime import date
 
 import pandas as pd
 
-from backtest.engine import build_features
 from config.settings import get_settings, load_params
 from core.schemas import DeciderOutput, OrderAction
 from core.timeutils import now_utc
+from data.features import build_features
 from data.panel import latest_row
 from data.sources import universe
 from exec import exits, orders
@@ -34,6 +33,7 @@ from risk.risk_engine import (
     Account,
     MarketState,
     OrderProposal,
+    check_new_buy,
     detect_anomaly,
     screen_cycle,
 )
@@ -87,16 +87,26 @@ def _plan_entries(
     params: dict,
     asof: date | None,
 ) -> list[PlannedOrder]:
-    """신규(buy) 제안 → 수량 환산 집행 계획. 백테스트 engine 진입과 같은 패턴(룩어헤드 차단).
+    """신규(buy) 제안 → 수량 환산 집행 계획 (06-sizing 6.1). 룩어헤드 차단은 백테스트와 동일.
 
-    각 종목 asof 최신 close·ATR로 stop=close−stop_atr_k·ATR을 세우고, sizing이 변동성
-    타깃팅 수량을 낸다(종목당 한도는 두지 않는다 — 05-risk 5.1). conviction=결정자 risk_budget.
+    각 종목 asof 최신 close·ATR로 stop=close−stop_atr_k·ATR을 세우고, sizing이 수량을 낸다
+    (기본은 동일가중 = 자본÷목표 보유 수÷주가). 손절폭은 수량이 아니라 손절가·R을 정한다.
+
+    진입은 **빈 슬롯만큼만** 채운다(목표 보유 수 − 현재 보유). decision.orders는 점수
+    내림차순이라 앞에서부터 담으면 점수 높은 순이 된다. 각 건은 총노출 하드룰(05-risk A.1 6)을
+    통과해야 하고, 자본이 모자라면 그 종목은 건너뛴다.
+
     워밍업 미완(ATR/close 결측)·stop≤0·qty≤0은 무진입(백테스트와 동일 게이트).
+    미적용: 유동성 한도(ADV 참여 1%) — 운영 피처에 20일 평균 거래대금이 아직 없다.
     """
     e = params["entry"]
     equity = account.equity
+    slots = int(params["limits"]["max_positions"]) - len(account.positions)
+    committed = 0.0                                        # 이번 사이클 누적 매수액
     planned: list[PlannedOrder] = []
     for o in decision.orders:
+        if slots <= 0:
+            break
         if o.action not in (OrderAction.BUY, OrderAction.ADD):
             continue                                       # 신규/추가만(보유관리는 후속 exits)
         df = market_data.get(o.code)
@@ -117,6 +127,12 @@ def _plan_entries(
         )
         if qty <= 0:
             continue
+        value = float(close) * qty
+        # 총노출 하드룰 — 이번 사이클에 이미 잡아둔 금액까지 반영해 검사
+        if not check_new_buy(account, o.code, committed + value, params):
+            continue
+        committed += value
+        slots -= 1
         planned.append(PlannedOrder(o.code, qty, float(close), float(stop), o.thesis))
     return planned
 
@@ -127,7 +143,6 @@ def run_cycle(
     market_data: dict[str, pd.DataFrame] | None = None,
     holdings: tuple[str, ...] = (),
     asof: date | None = None,
-    min_value_traded: float | None = None,
     account: Account | None = None,
     market_state: MarketState | None = None,
     params: dict | None = None,
@@ -148,8 +163,7 @@ def run_cycle(
     wl: pd.DataFrame | None = None
     if market_data:
         wl = screening.select_watchlist(
-            market_data, holdings=holdings, asof=asof,
-            min_value_traded=min_value_traded, params=params,
+            market_data, holdings=holdings, asof=asof, params=params,
         )
         watchlist = list(wl.index)
     else:

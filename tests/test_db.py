@@ -3,9 +3,16 @@ from memory.db import init_db
 
 
 def test_schema_creates_core_tables(tmp_path):
+    """07-model 표 카탈로그 17개가 전부 생성된다."""
     conn = init_db(str(tmp_path / "t.db"))
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"cycles", "decisions", "trades", "outcomes", "agent_predictions"} <= tables
+    assert {
+        "Symbols", "SymbolStates", "DailyBars", "DailyFlows", "CorporateActions",
+        "MarketIndices", "IngestRuns",
+        "Cycles", "AccountSnapshots", "DailyScores", "CycleScores", "Decisions", "RiskChecks",
+        "Orders", "Positions", "Outcomes",
+        "SafeStopEvents",
+    } <= tables
     conn.close()
 
 
@@ -20,10 +27,3 @@ def test_schema_is_idempotent(tmp_path):
     db = str(tmp_path / "t.db")
     init_db(db).close()
     init_db(db).close()  # 재적용해도 에러 없어야(IF NOT EXISTS)
-
-
-def test_calibration_view_exists(tmp_path):
-    conn = init_db(str(tmp_path / "t.db"))
-    views = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")}
-    assert "calibration" in views
-    conn.close()

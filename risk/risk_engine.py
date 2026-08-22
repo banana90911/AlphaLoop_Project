@@ -7,8 +7,8 @@
 본 모듈은 5-1 A의 **하드 한도·서킷브레이커·안전 정지**를 담는다(검사 순서 A.1·재개 A.2·
 이상행동 A.3는 후속 단계). 한도값은 config/risk_params.toml(그 시점 값으로 과거 재현).
 
-종목당·섹터 한도는 두지 않는다(05-risk 5.1·03-arch 3-2) — 집중 위험은 총노출 상한으로만
-누른다. 섹터는 종목→업종 소스가 없어 점수로도 한도로도 쓰지 않는다.
+종목당 한도는 두지 않는다(05-risk 5.1) — 한 종목의 크기는 동일가중 사이징이 1/N로 고정하고,
+전체 집중은 총노출 상한이 누른다. 섹터는 종목→업종 소스가 없어 점수로도 한도로도 쓰지 않는다.
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 class Position:
     """보유 종목 스냅샷. last_price=MTM(시가평가) 단가."""
     code: str
-    sector: str
     qty: int
     last_price: float
     market: str = "KOSPI"
@@ -42,9 +41,6 @@ class Account:
 
     def position_value(self, code: str) -> float:
         return sum(p.value for p in self.positions if p.code == code)
-
-    def sector_value(self, sector: str) -> float:
-        return sum(p.value for p in self.positions if p.sector == sector)
 
 
 @dataclass
@@ -73,10 +69,8 @@ def breakers_tripped(acc: Account, params: dict) -> set[str]:
     return tripped
 
 
-def check_new_buy(
-    acc: Account, code: str, sector: str, add_value: float, params: dict
-) -> Verdict:
-    """신규/추가 매수 add_value(원)가 하드 한도(종목당·섹터·총노출)를 넘는지 (A.1 6번).
+def check_new_buy(acc: Account, code: str, add_value: float, params: dict) -> Verdict:
+    """신규/추가 매수 add_value(원)가 총노출 하드 한도를 넘는지 (A.1 6번).
 
     *덜 회복 가능한 것 먼저* 순서로 검사해 첫 위반 하나로 판정(단일 사유 기록).
     """
@@ -154,11 +148,10 @@ def screen_cycle(market: MarketState, acc: Account, params: dict) -> CycleDecisi
 
 
 def screen_order(
-    acc: Account, code: str, sector: str, add_value: float,
-    status: StockStatus, params: dict,
+    acc: Account, code: str, add_value: float, status: StockStatus, params: dict,
 ) -> Verdict:
     """A.1 6~7: 개별 신규매수 주문 게이트(하드룰 → 종목상태). 첫 위반 단일 사유."""
-    v = check_new_buy(acc, code, sector, add_value, params)     # 6 하드룰 한도
+    v = check_new_buy(acc, code, add_value, params)             # 6 하드룰 한도
     if not v:
         return v
     if status.limit_lock:                                       # 7 종목 상태

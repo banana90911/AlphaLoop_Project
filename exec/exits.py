@@ -5,12 +5,13 @@
 
   ① 논지무효(invalidation_price 돌파 또는 thesis 무효) → 전량 청산
   ② 손절 도달 → 전량 청산
-  ③ +breakeven_R(기본 1.5R) 첫 도달 → partial_frac 부분 청산 + 잔여 손절 본전 상향
+  ③ +breakeven_R(기본 1.5R) 첫 도달 → 손절 본전 상향 (partial_frac>0이면 그만큼 부분 청산.
+    기본값은 0 — 부분 익절은 "이익은 길게"와 어긋나 두지 않는다, 06-sizing 6.2)
   ④ ATR 트레일링: new_stop = max(old_stop, price − trail_k·ATR20)
   ⑤ 보유일 > max_hold_days · 진행 < +min_progress_R · ④로 손절을 더 못 올림 → 전량 청산
 
 ⑤가 ④ 뒤인 것이 규칙의 일부다 — 손절을 계속 올릴 수 있으면(=오르는 중이면) 시간청산이
-걸리지 않는다. 순서를 바꿔 시간청산을 앞에 두면 느리게 오르는 승자를 잘라낸다(09-eval 9.5.6).
+걸리지 않는다. 순서를 바꿔 시간청산을 앞에 두면 느리게 오르는 승자를 잘라낸다.
 R = |진입가 − 최초손절가| 로 **영구 고정**(부분 청산·트레일링으로 손절이 바뀌어도 불변).
 롱 포지션 기준.
 """
@@ -109,7 +110,7 @@ def decide_exit(pos: Position, price: float, atr: float, *, params: dict | None 
     if price <= pos.current_stop:
         return ExitAction("exit_full", "stop_hit")
 
-    # ③ +breakeven_R 첫 도달 → 부분 청산 + 잔여 손절 본전 상향
+    # ③ +breakeven_R 첫 도달 → 손절 본전 상향(partial_frac>0이면 그만큼 부분 청산)
     if (
         not pos.breakeven_done
         and risk > 0
@@ -161,8 +162,8 @@ def execute_exits(
     한계: 라이브 잔고 동기화(선행 게이트 A.1 1번)는 미배선이라 내부 `positions`를 진실로
     본다 — 자동 체결된 KIS 스톱과의 이중주문 방지(§129)는 잔고 동기화 연결 후 완성.
     """
-    from backtest.engine import build_features  # 지연 import(engine↔exits 순환 회피)
-    from data.panel import latest_row  # 〃 (panel→engine→exits 체인 회피)
+    from data.features import build_features  # 지연 import(features↔exits 순환 회피)
+    from data.panel import latest_row
 
     p = params or load_params("risk_params")
     sells = set(forced_sells)

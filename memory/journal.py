@@ -234,7 +234,7 @@ def record_outcome(
 ) -> None:
     """청산 실현손익 1건을 `outcomes`에 적재(부분·전량 청산 공통). net_pnl은 비용 차감 후.
 
-    KPI·학습(calibration·shadow)의 1차 자료 — 산식은 백테스트 `engine._close`와 동일하게
+    KPI·보정통계의 1차 자료 — 산식은 백테스트 `spec_engine`의 청산 처리와 동일하게
     `core.costs.trade_cost` 기반(07-model §306 모드 무관 동일 경로).
     """
     conn.execute(

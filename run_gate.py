@@ -1,20 +1,21 @@
-"""Go/No-Go 게이트 실행기 — 동결 기본값 연속 백테스트 1회 (09-eval 9.2·9.5.5 결정 ③).
+"""Go/No-Go 게이트 실행기 — 동결 기본값 연속 백테스트 1회 (09-eval 9.2·9.6.5).
 
-그리드 튜닝을 기각했으므로(9.5.5 결정 ①) 파라미터를 고르지 않는다. `config/risk_params.toml`
-기본값을 그대로 검증기간에 **연속 보유**로 1회 실행하고 하드 3조건으로 판정한다.
+그리드 튜닝을 기각했으므로(9.6.5) 파라미터를 고르지 않는다.
+`config/risk_params.toml` 기본값을 그대로 검증기간에 **연속 보유**로 1회 실행하고 하드
+3조건으로 판정한다.
 
   ① 벤치마크 4종 전부 초과 — 코스피 매수후보유·단순 모멘텀·현금·균등가중 워치리스트
-  ② PBO — 그리드를 탐색하지 않으므로 판정 대상 아님(9.5.5)
+  ② PBO — 그리드를 탐색하지 않으므로 판정 대상 아님(9.6.5)
   ③ 견고성 — 파라미터 ±20% 재실행이 기준선(기본값의 50%, `drop_tol=0.5`) 위 + 비용 2배에서
      균등가중 초과
 
-워크포워드(`run_tune.py`)와 다른 점: 63일마다 자본을 초기화하는 콜드스타트가 없다.
-그 초기화가 장기보유 모멘텀을 분기마다 토막내 −210%p를 만든 계측 결함이었다(9.5.5).
+엔진은 설계 정합 정본(`backtest/spec_engine`)을 쓴다 — 구 `engine.py`는 설계 위반 14건으로
+폐기 대상이다(9.6.3). 하락장 필터(regime)는 설계에 없으므로 주입하지 않는다(04-data 지수 행).
 
 사용: PYTHONPATH=. .venv/bin/python run_gate.py [--partial 0.4]
 
-`--partial FRAC`은 +breakeven_R 도달 시 FRAC만큼 부분 청산하는 변형을 돌린다 —
-설계에는 없는 구성이라 **비교 측정 전용**이다(09-eval 9.5.6).
+`--partial FRAC`은 +breakeven_R 도달 시 FRAC만큼 부분 청산하는 변형을 돌린다 — 부분 익절은
+설계에서 제거했으므로(06-sizing 6.2) **비교 측정 전용**이다.
 """
 from __future__ import annotations
 
@@ -24,26 +25,24 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 
-from backtest import engine, loader, regime
+from backtest import loader, spec_engine as engine
 from config.settings import load_params
 from data import cache
 from eval import metrics
 
 RESULTS_DIR = Path("tune_results")
 CAPITAL = 10_000_000.0
-GATE_START = date(2023, 1, 1)     # 검증 시작(9.5.5 실행과 동일 구간)
-TREND_DAYS = 200                  # 하락장 방어: 지수 SMA200
+GATE_START = date(2023, 1, 1)     # 검증 시작(9.6.4~9.6.5 실행과 동일 구간)
+TREND_DAYS = 200                  # 벤치마크용 단순 모멘텀 지수 SMA (전략 입력 아님)
 DROP_TOL = 0.5                    # 견고성: 기본값 대비 이 비율 아래로 꺾이면 절벽
 SENSITIVITY = 0.20                # ±20%
 
 # ±20%를 흔들 파라미터 — 조정 가능한 손잡이 목록(9.3: 7개 이하로 고정)
 KNOBS: list[tuple[str, str, str]] = [
-    ("entry", "score_min", "float"),
     ("entry", "stop_atr_k", "float"),
     ("exits", "breakeven_R", "float"),
     ("exits", "trail_k", "float"),
     ("exits", "max_hold_days", "int"),
-    ("sizing", "risk_pct_max", "float"),
     ("limits", "max_positions", "int"),
 ]
 
@@ -88,7 +87,7 @@ def main() -> None:
     codes = uni["code"].tolist()
     markets_map = dict(zip(uni["code"], uni["market"], strict=True))
     prices, markets = loader.load_prices(codes, markets_map)
-    feats = {c: engine.build_features(df) for c, df in prices.items()}
+    feats = {c: engine.build_spec_features(df) for c, df in prices.items()}
     all_dates = sorted({d for df in prices.values() for d in df.index})
     end = all_dates[-1]
 
@@ -97,7 +96,6 @@ def main() -> None:
         df = cache.load(f"index_{mk}")
         if df is not None:
             idx_close[mk] = df.set_index("date").sort_index()["close"]
-    trend = regime.market_trend(idx_close, TREND_DAYS) if idx_close else None
 
     frac = float(base["exits"].get("partial_frac", 0.0))
     variant = f"부분익절 {frac:.0%}" if frac > 0 else "부분익절 없음"
@@ -107,7 +105,7 @@ def main() -> None:
     def run(params: dict, tax_params: dict) -> engine.BacktestResult:
         return engine.run(prices, markets, start=GATE_START, end=end,
                           initial_capital=CAPITAL, params=params,
-                          tax_params=tax_params, feats=feats, market_trend=trend)
+                          tax_params=tax_params, feats=feats, entry_timing="last")
 
     # ── 기본값 연속 실행 ──
     res = run(base, tax)
@@ -118,7 +116,7 @@ def main() -> None:
     print(f"■ 전략  누적 {base_ret:+.2%}  샤프 {strat['sharpe']:.2f}  "
           f"MDD {strat['max_drawdown']:.2%}  거래 {len(res.trades)}건")
 
-    # ── ① 벤치마크 4종 (run_tune과 같은 정의) ──
+    # ── ① 벤치마크 4종 (09-eval 9.1 정의) ──
     bench_prices = {c: df["close"] for c, df in prices.items()}
     ew = metrics.equal_weight_equity(bench_prices, CAPITAL)
     kospi = idx_close["KOSPI"] if "KOSPI" in idx_close else next(iter(idx_close.values()))

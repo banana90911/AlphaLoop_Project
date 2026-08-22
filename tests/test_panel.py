@@ -22,7 +22,7 @@ def test_panel_has_screen_columns():
     prices = {"A": _series(120, 1000, 10), "B": _series(120, 2000, -5)}
     pnl = panel.build_panel(prices)
     assert set(pnl.index) == {"A", "B"}
-    for col in ("momentum", "lowvol", "alignment", "value_traded"):
+    for col in ("momentum", "lowvol", "value", "adv20", "close", "atr"):
         assert col in pnl.columns
 
 
@@ -54,7 +54,7 @@ def test_asof_takes_latest_row_at_or_before():
     asof = df.index[80]                       # 중간 거래일
     pnl = panel.build_panel({"A": df}, asof=asof)
     # asof 시점 close = 1000 + 10*80
-    assert pnl.loc["A", "value_traded"] == (1000 + 10 * 80) * 1_000_000.0
+    assert pnl.loc["A", "close"] == 1000 + 10 * 80
 
 
 def test_supply_column_present_when_flow_given():
@@ -62,5 +62,6 @@ def test_supply_column_present_when_flow_given():
     df["foreign_net"] = 5000.0
     df["inst_net"] = 3000.0
     pnl = panel.build_panel({"A": df})
-    assert "supply" in pnl.columns
-    assert pnl.loc["A", "supply"] > 0
+    # 수급은 20일 누적만 점수에 쓴다(04-data 4.2 · 09-eval 9.5.6)
+    assert "supply20" in pnl.columns
+    assert pnl.loc["A", "supply20"] > 0

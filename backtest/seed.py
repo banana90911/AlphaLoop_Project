@@ -1,4 +1,4 @@
-"""학습 테이블 시드 (backtest/seed, 13-roadmap Phase 6·06-sizing·7.19).
+"""학습 테이블 시드 (backtest/seed, 06-sizing 6.1·07-model).
 
 백테스트 재생 결과(거래)를 journal의 `outcomes`(source='backtest')에 선채워 학습 루프가
 *1일차부터* 작동하게 한다 — 라이브만으론 칸이 차는 데 수개월 걸린다. 켈리 입력 p·b는
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from backtest.engine import ClosedTrade
+from backtest.spec_engine import ClosedTrade
 
 
 def kelly_pb(trades: list[ClosedTrade]) -> tuple[float, float] | None:

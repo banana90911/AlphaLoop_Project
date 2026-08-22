@@ -29,7 +29,7 @@ def _acc(cash, positions=None, start=10_000_000):
 
 
 def test_equity_and_daily_loss():
-    acc = _acc(5_000_000, [Position("005930", "반도체", 100, 50_000)])
+    acc = _acc(5_000_000, [Position("005930", 100, 50_000)])
     assert acc.equity == 10_000_000              # 현금 500만 + 주식 500만
     assert daily_loss_pct(acc) == 0.0
     acc.positions[0].last_price = 40_000         # 주식 400만 → 평가 900만
@@ -37,7 +37,7 @@ def test_equity_and_daily_loss():
 
 
 def test_daily_loss_breaker_trips(params):
-    acc = _acc(0, [Position("A", "S", 100, 95_000)])   # 평가 950만, 시작 1000만 → -5%
+    acc = _acc(0, [Position("A", 100, 95_000)])   # 평가 950만, 시작 1000만 → -5%
     assert "daily_loss" in breakers_tripped(acc, params)
 
 
@@ -49,20 +49,20 @@ def test_no_breaker_when_flat(params):
 def test_no_per_name_limit(params):
     """종목당 한도는 두지 않는다(05-risk 5.1) — 총노출 안이면 한 종목에 얼마든 담긴다."""
     acc = _acc(10_000_000)
-    assert check_new_buy(acc, "A", "반도체", 1_000_000, params)
-    assert check_new_buy(acc, "A", "반도체", 5_000_000, params)        # 자본의 50%도 통과
+    assert check_new_buy(acc, "A", 1_000_000, params)
+    assert check_new_buy(acc, "A", 5_000_000, params)        # 자본의 50%도 통과
 
 
-def test_no_sector_limit(params):
+def test_no_concentration_limit_beyond_gross(params):
     """섹터 한도도 두지 않는다(03-arch 3-2 — 종목→업종 소스 부재)."""
-    acc = _acc(8_000_000, [Position("A", "반도체", 100, 20_000)])
-    assert check_new_buy(acc, "B", "반도체", 1_200_000, params)
+    acc = _acc(8_000_000, [Position("A", 100, 20_000)])
+    assert check_new_buy(acc, "B", 1_200_000, params)
 
 
 def test_gross_exposure_limit(params):
     # 보유 950만 + 신규 100만 = 1050만 > 총노출 100%(자본 1000만) → 총노출 사유.
-    acc = _acc(500_000, [Position("A", "반도체", 100, 95_000)])
-    v = check_new_buy(acc, "B", "바이오", 1_000_000, params)
+    acc = _acc(500_000, [Position("A", 100, 95_000)])
+    v = check_new_buy(acc, "B", 1_000_000, params)
     assert not v and "총노출" in v.reason
 
 
@@ -91,27 +91,27 @@ def test_screen_cycle_skip_on_market_halt(params):
 
 
 def test_screen_cycle_new_blocked_on_breaker(params):
-    acc = _acc(0, [Position("A", "S", 100, 95_000)])    # -5% 일일손실
+    acc = _acc(0, [Position("A", 100, 95_000)])    # -5% 일일손실
     d = screen_cycle(MarketState(), acc, params)
     assert d.action == "new_blocked" and "daily_loss" in d.reason
 
 
 def test_screen_order_blocks_suspended(params):
     acc = _acc(10_000_000)
-    v = screen_order(acc, "A", "반도체", 1_000_000, StockStatus(suspended=True), params)
+    v = screen_order(acc, "A", 1_000_000, StockStatus(suspended=True), params)
     assert not v and "거래정지" in v.reason
 
 
 def test_screen_order_hardrule_first(params):
     # 하드룰(총노출) 위반이 종목상태보다 먼저 잡힘
     acc = _acc(10_000_000)
-    v = screen_order(acc, "A", "반도체", 11_000_000, StockStatus(vi=True), params)
+    v = screen_order(acc, "A", 11_000_000, StockStatus(vi=True), params)
     assert not v and "총노출" in v.reason
 
 
 def test_screen_order_ok(params):
     acc = _acc(10_000_000)
-    assert screen_order(acc, "A", "반도체", 1_000_000, StockStatus(), params)
+    assert screen_order(acc, "A", 1_000_000, StockStatus(), params)
 
 
 # ── A.2 재개 ──
@@ -144,8 +144,10 @@ def test_anomaly_single_order_too_big(params):
 
 
 def test_anomaly_order_flood(params):
-    acc = _acc(10_000_000)                            # 1000만 → 5건 한도
-    props = [OrderProposal(f"S{i}", "buy", 500_000) for i in range(6)]
+    # 실효 임계 = max(max_positions, 비례식) — 동시보유 상한을 넘는 건수가 폭주
+    acc = _acc(10_000_000)
+    mp = params["limits"]["max_positions"]
+    props = [OrderProposal(f"S{i}", "buy", 100_000) for i in range(mp + 1)]
     v = detect_anomaly(props, acc, params)
     assert not v and "폭주" in v.reason
 

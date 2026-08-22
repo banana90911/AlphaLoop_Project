@@ -1,16 +1,17 @@
-"""보정 통계 — 수축·Wilson·시간가중 (memory/calibration, reference/statistics 수축·7.6·7.15·7.18).
+"""보정 통계 — 수축·Wilson·시간가중 (memory/calibration, 06-sizing 6.1).
 
-`calibration` 뷰의 raw 집계(맞은수·표본수)에 *작은/오래된 표본에서 함부로 단정 않는*
-보정을 입혀 칸별 신뢰 적중률을 낸다. 이 값이 사이징 켈리 p(06-sizing)·conviction
-보정신뢰(w2)·결정 입력으로 흐른다. 전부 코드(SQL/numpy) — 비용 0.
+승률처럼 *표본이 적으면 못 믿을* 비율을 다룰 때 쓰는 순수 계산 도구다. 사이징의 켈리
+승률 p(변동성 타깃팅 대안 경로)와 성과 진단이 이 값을 입력으로 받는다.
 
 핵심: *점추정만 주면 과반응*하므로 수축 적중률과 함께 표본수·Wilson 구간(흐릿함)을 같이
-낸다(7.6). 표본이 적으면 prior(0.5)로 끌려가고(7.5), 오래되면 가중이 준다(7.15).
+낸다. 표본이 적으면 prior(0.5)로 끌려가고, 오래되면 가중이 준다.
+
+집계 원천은 `Outcomes` 표다 — 진입 시 점수·레짐이 그 표에 박혀 있어 보정통계 전용 표를
+따로 두지 않는다(07-model). 집계 질의는 아직 배선되지 않았다.
 """
 from __future__ import annotations
 
 import math
-import sqlite3
 
 import numpy as np
 
@@ -42,31 +43,3 @@ def time_weighted_rate(
     if weights.sum() <= 0:
         return 0.5
     return float(np.average(np.asarray(outcomes, dtype=float), weights=weights))
-
-
-def calibrated_rate(
-    conn: sqlite3.Connection, *, agent_role: str, regime: str | None = None,
-    confidence_bucket: int | None = None, prior: float = 0.5, strength: float = 10.0,
-) -> dict:
-    """`calibration` 뷰에서 칸 raw 합산 → 수축 적중률·표본수·Wilson 구간.
-
-    regime·confidence_bucket이 None이면 그 축을 무시(가장 굵은 칸부터 채운다, 7.18).
-    """
-    q = ["SELECT COALESCE(SUM(correct_count), 0), COALESCE(SUM(n), 0)",
-         "FROM calibration WHERE agent_role = ?"]
-    args: list = [agent_role]
-    if regime is not None:
-        q.append("AND regime = ?")
-        args.append(regime)
-    if confidence_bucket is not None:
-        q.append("AND confidence_bucket = ?")
-        args.append(confidence_bucket)
-    correct, n = conn.execute(" ".join(q), args).fetchone()
-    lo, hi = wilson_interval(correct, n)
-    return {
-        "rate": shrink(correct, n, prior=prior, strength=strength),
-        "n": int(n),
-        "ci_low": lo,
-        "ci_high": hi,
-        "raw_rate": (correct / n if n else None),
-    }

@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from backtest.engine import ClosedTrade
+from backtest.spec_engine import ClosedTrade
 from backtest.seed import kelly_pb, seed_outcomes
 from memory.db import init_db
 

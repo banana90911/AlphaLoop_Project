@@ -1,4 +1,4 @@
-"""거래비용·세금·슬리피지 — 날짜별 세율·매수/매도 비대칭 (core/costs, 10-1)."""
+"""거래비용·세금·슬리피지 — 날짜별 세율·매수/매도 비대칭 (core/costs, 09-eval 9.1)."""
 from datetime import date
 
 import pytest

@@ -42,22 +42,17 @@ def test_screen_top_n_and_holdings():
     assert "C" not in wl.index
 
 
-def test_liquidity_filter_excludes_illiquid():
-    panel = pd.DataFrame({
-        "momentum": [0.5, 0.4, 0.3],
-        "value_traded": [1e9, 1e6, 1e9],   # B는 거래대금 미달
-    }, index=["A", "B", "C"])
+def test_eligible_filter_excludes_screened_out():
+    # 제외 필터 판정은 data.features.eligible이 하고, screener는 그 집합만 줄세운다
+    panel = pd.DataFrame({"momentum": [0.5, 0.4, 0.3]}, index=["A", "B", "C"])
     wl = screener.screen(panel, weights={"w_momentum": 1.0}, top_n=5,
-                         min_value_traded=1e8)
+                         eligible=pd.Index(["A", "C"]))     # B는 필터 탈락
     assert "B" not in wl.index
     assert "A" in wl.index and "C" in wl.index
 
 
-def test_liquidity_filter_exempts_holdings():
-    panel = pd.DataFrame({
-        "momentum": [0.5, 0.4],
-        "value_traded": [1e9, 1e6],        # B 미달이나 보유라 면제
-    }, index=["A", "B"])
+def test_holdings_included_even_if_filtered_out():
+    panel = pd.DataFrame({"momentum": [0.5, 0.4]}, index=["A", "B"])
     wl = screener.screen(panel, weights={"w_momentum": 1.0}, top_n=5,
-                         holdings=("B",), min_value_traded=1e8)
-    assert "B" in wl.index
+                         holdings=("B",), eligible=pd.Index(["A"]))
+    assert "B" in wl.index                                  # 보유는 청산 판단 대상

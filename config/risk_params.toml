@@ -1,44 +1,51 @@
 # 리스크·사이징·청산 파라미터 (튜닝 손잡이). 초기값은 직관에서 출발 → 백테스트 OOS 워크포워드로 확정.
-# 조정 파라미터 7개 이하 제약(04-data 4.x). 상세 근거는 docs/05-risk-trading.md 5-2.
+# 조정 파라미터 7개 이하 제약(04-data 4.x). 상세 근거는 docs/06-sizing-portfolio.md 5-2.
 
 [limits]
-daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk 5-1 A: 실현+미실현 MTM·당일시작자본 대비)
-max_positions = 5            # 동시 보유 종목 수 상한
-per_name_pct = 0.13          # 종목당 유도 한도(≈13%, 5-1 A: 하한가 갭에도 일일바닥 단독 미돌파)
+daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk A A: 실현+미실현 MTM·당일시작자본 대비)
+max_positions = 20           # 동시 보유 종목 수 = 동일가중 사이징의 목표 보유 수 (06-sizing 6.1)
+gross_exposure_max = 1.0     # 총노출 상한(레버리지 금지 — 05-risk A.1)
 adv_participation = 0.01     # 유동성 한도: 일평균거래대금(ADV)의 1%
 
-[sizing]
-# 변동성 타깃팅(메인) — 거래당 위험 비율. conviction 0→min, 1→max (05-risk 5-2 §119)
-risk_pct_min = 0.0075
-risk_pct_max = 0.025
-# 프랙셔널 켈리(자동활성 상한)
-kelly_fraction = 0.5         # 켈리 분수 배율 k (0.25~0.5)
-kelly_min_trades = 20        # 켈리 활성 최소 청산 n (그 전 휴면, 상한 없음)
+[anomaly]
+# 모델 이상행동 → SafeStop 임계 (05-risk A.3, 전부 튜닝 출발값)
+single_order_pct = 0.30          # 단일 주문 노출이 자본의 이 비율 초과 시 SafeStop
+max_new_orders_per_capital = 5   # 신규 진입 주문 수 임계(기준 자본액당)
+order_count_capital_base = 10_000_000  # 위 기준 자본(원): 1,000만원당 5건
+# 실효 임계 = max(limits.max_positions, 위 비례식). 소액에서 비례식이 1건 미만으로
+# 쪼그라들어 정상 첫 진입을 막는 것 방지(하한=동시보유 상한). 상세 05-risk A.3.
 
-[conviction]
-# conviction 가중합(합 1.0). w_confidence는 LLM 자기신고라 작게 시작(05-risk 5-2 §117).
-w_confidence = 0.2           # 확신도(자기신고, 수축 안 걸림)
-w_calibration = 0.4         # 보정신뢰(calibration 뷰, 수축 적용 — 실측 적중에 무게)
-w_contrarian = 0.2          # 반대의견 반영
-w_thesis = 0.2              # 논지 품질(entry_thesis 충실도)
+[decision]
+# 코드 규칙 결정의 점수 임계 (워크포워드 확정). 점수는 스크리너 종합점수(0~1).
+entry_threshold = 0.60       # 신규 진입 임계 τ
+exit_threshold = 0.40        # 보유 논지무효 임계(점수가 이 아래로 떨어지면 청산)
+
+[sizing]
+method = "equal_weight"      # equal_weight(기본) | volatility_target — 06-sizing 6.1
+# 아래 값들은 method="volatility_target"일 때만 쓰인다(동일가중은 켈리 천장 미적용)
+risk_pct_min = 0.0075        # 거래당 위험 비율. conviction 0→min, 1→max
+risk_pct_max = 0.025
+kelly_fraction = 0.5         # 프랙셔널 켈리 분수 배율 k (0.25~0.5)
+kelly_min_trades = 20        # 켈리 활성 최소 청산 n (그 전 휴면 = 상한 없음)
 
 [entry]
-stop_atr_k = 2.0            # 진입 초기 손절폭 = stop_atr_k × ATR20 (R 산정 기준, 백테스트 확정)
-score_min = 0.55           # 신규 진입 최소 스크리너 점수(0~1) — 약한 후보 무거래
-# 워밍업은 momentum(60일) NaN으로 자동 처리(그 전엔 진입 안 함), 별도 일수 파라미터 불요
+stop_atr_k = 2.0            # 진입 초기 손절폭 = stop_atr_k × ATR20 (R 산정 기준)
+# 진입 점수 임계는 [decision] entry_threshold 하나로 정한다(중복 손잡이를 두지 않는다)
+# 워밍업은 12-1 모멘텀(252일) NaN으로 자동 처리(그 전엔 진입 안 함), 별도 일수 파라미터 불요
 
 [exits]
-tp1_R = 1.5                  # 1차 익절 R 배수 (시작값, 05-risk §98 — 1.5R·2R·3×ATR20 비교 확정)
-tp1_frac = 0.4              # 1차 익절 비율 (1/3~1/2)
+breakeven_R = 1.5          # 이 R 배수 첫 도달 시 손절을 본전으로 상향 (06-sizing 6.2)
+partial_frac = 0.0         # +breakeven_R 도달 시 청산 비율(0=부분청산 없이 본전 상향만)
 trail_k = 2.75             # ATR20 트레일링 배수 (2.5~3.0)
 max_hold_days = 20         # 최대 보유 거래일
 min_progress_R = 0.5       # 시간청산 면제 기준 진행 R
 
 [screener]
-# 스크리닝 가중치(합 1.0) — 시작값, 백테스트로 확정 (04-data 4.x)
-w_momentum = 0.35
-w_supply = 0.25
-w_lowvol = 0.15
-w_alignment = 0.10
-w_value = 0.15
+# 스크리닝 가중치 — 04-data 4.2. 합이 0.90이고 점수 산출 시 1.0으로 재정규화된다.
+# 값은 탐색하지 않는다(그리드 튜닝 기각 — 09-eval 9.5). 항목별 예측력만 검정해 고정.
+w_momentum = 0.35            # 12-1 모멘텀
+w_supply = 0.25              # 외국인·기관 20일 누적 순매수
+w_value = 0.15               # 거래대금 증가(5일평균 ÷ 60일평균)
+w_lowvol = 0.15              # 60일 실현변동성 — 낮을수록 가점
+# w_alignment 제거 — 정배열은 5년 중 4년 예측 방향이 반대였다(09-eval 9.5)
 top_n = 40                   # 워치리스트 상위 N + 보유 전부

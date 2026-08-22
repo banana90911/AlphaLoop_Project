@@ -1,6 +1,6 @@
 """네이버 금융 스크래핑 — 백테스트용 과거 시세·수급 (data 레이어).
 
-공식 API 아님. 공개 웹페이지(HTML 표)를 파싱한다(external-apis §4).
+공식 API 아님. 공개 웹페이지(HTML 표)를 파싱한다(external-apis 실측 제약 — 네이버 금융).
 - 과거/상폐 시세: item/sise_day → date·open·high·low·close·volume
 - 과거 수급(외국인·기관): item/frgn → date·close·volume·inst_net·foreign_net
 

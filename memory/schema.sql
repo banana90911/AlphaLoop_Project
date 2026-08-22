@@ -1,239 +1,315 @@
--- ALphaLoop SQLite 스키마 — 06-data-model.md 객체 카탈로그의 구현(단일 소스).
--- 공통 규칙: PK=*_id(TEXT, 발급자 책임) / 시각=TEXT ISO8601 UTC(KST는 표시 단계) /
---           가격·손익·비율=REAL / 수량·토큰·카운트=INTEGER / bool=INTEGER(0,1).
--- source 라벨(backtest/paper/live)은 학습·체결 계열에만(06 공통규칙 ②).
--- 테이블별 schema_version 컬럼·forward/backward 마이그레이션은 11-2.11 도입 시 추가(현재 user_version으로 관리).
+-- ALphaLoop SQLite 스키마 — docs/07-data-model.md 표 카탈로그의 구현(단일 소스).
+--
+-- 공통 규칙(07-model):
+--   · 시각은 TEXT ISO8601 UTC / 거래일(tradeDate)은 KST 기준 YYYY-MM-DD
+--   · 가격·손익·비율 REAL, 수량·건수 INTEGER, 참/거짓 INTEGER(0,1)
+--   · 백테스트 결과는 DB에 넣지 않는다(tune_results/ 파일). 모의·실전은 mode 열로 구분
+--   · 조회 속도용 인덱스는 걸지 않는다 — 실제로 느려진 뒤 추가. 유일성은 전부 기본키가 담당
+--
+-- 표 17개: 시장 데이터 7 · 판단 6 · 집행 3 · 감사 1 (07-model 표 카탈로그와 1:1)
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
--- ── 운영(복구·감사·비용) ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS trigger_events (
-    trigger_id      TEXT PRIMARY KEY,
-    detected_at     TEXT NOT NULL,
-    subtype         TEXT NOT NULL CHECK(subtype IN ('dart','price_move','vi','circuit_breaker')),
-    symbol          TEXT,
-    detail          TEXT,
-    reference_price REAL,
-    fired           INTEGER NOT NULL CHECK(fired IN (0,1)),
-    skip_reason     TEXT
+-- ════════════════════════════════════════════════════════════
+-- 6.1 시장 데이터 — 장 시작 전 일일 배치가 적재(전 종목 대상)
+-- ════════════════════════════════════════════════════════════
+
+-- 종목 명부. KIS 종목마스터(.mst) 파일 2개를 받아 통째로 덮어쓴다.
+CREATE TABLE IF NOT EXISTS Symbols (
+    symbolId           TEXT PRIMARY KEY,          -- 종목코드(6자리)
+    name               TEXT NOT NULL,
+    market             TEXT NOT NULL CHECK(market IN ('KOSPI','KOSDAQ')),
+    securityType       TEXT NOT NULL CHECK(securityType IN ('common','preferred','spac','reit','etf','etn')),
+    listedDate         TEXT,                      -- 상장 경과일 제외 필터
+    delistedDate       TEXT,                      -- NULL이면 상장 중
+    dartCorpCode       TEXT,                      -- DART 회사코드(기업행위 조회)
+    lastUpdateDateTime TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS cycles (
-    cycle_id         TEXT PRIMARY KEY,
-    status           TEXT NOT NULL CHECK(status IN ('intent','ordering','recorded','failed')),
-    trigger_type     TEXT NOT NULL CHECK(trigger_type IN ('scheduled','event')),
-    trigger_event_id TEXT REFERENCES trigger_events(trigger_id),
-    started_at       TEXT NOT NULL,
-    finished_at      TEXT,
-    failed_agents    TEXT
+-- 날짜별 매매 제약 지정 상태. 같은 마스터 파일에서 뽑되 딱지가 붙은 종목만 적재하고,
+-- 표에 없으면 정상으로 본다. 날짜별로 쌓는 이유는 백테스트의 룩어헤드 차단(07-model 6.1).
+CREATE TABLE IF NOT EXISTS SymbolStates (
+    symbolId          TEXT NOT NULL REFERENCES Symbols(symbolId),
+    tradeDate         TEXT NOT NULL,
+    isHalted          INTEGER NOT NULL DEFAULT 0 CHECK(isHalted IN (0,1)),
+    isAdmin           INTEGER NOT NULL DEFAULT 0 CHECK(isAdmin IN (0,1)),
+    isWarning         INTEGER NOT NULL DEFAULT 0 CHECK(isWarning IN (0,1)),
+    isOverheated      INTEGER NOT NULL DEFAULT 0 CHECK(isOverheated IN (0,1)),
+    collectedDateTime TEXT NOT NULL,
+    PRIMARY KEY (symbolId, tradeDate)
 );
 
-CREATE TABLE IF NOT EXISTS safe_stop_events (
-    event_id       TEXT PRIMARY KEY,
-    occurred_at    TEXT NOT NULL,
-    cause          TEXT NOT NULL,
-    auto_or_manual TEXT NOT NULL CHECK(auto_or_manual IN ('auto','manual')),
-    released_at    TEXT,
-    released_by    TEXT,
-    release_reason TEXT,
-    cycle_id       TEXT REFERENCES cycles(cycle_id)
+-- 전 종목 일봉. 매일 어제 확정분 한 줄씩 추가(종목당 1호출).
+CREATE TABLE IF NOT EXISTS DailyBars (
+    symbolId         TEXT NOT NULL REFERENCES Symbols(symbolId),
+    tradeDate        TEXT NOT NULL,
+    open             REAL,
+    high             REAL,                        -- ATR 계산
+    low              REAL,                        -- ATR 계산
+    close            REAL NOT NULL,               -- 점수 4개 항목의 입력
+    volume           INTEGER,
+    value            REAL,                        -- 거래대금
+    adjustmentFactor REAL NOT NULL DEFAULT 1.0,   -- 누적 보정 배수(원본 복원용)
+    isAdjusted       INTEGER NOT NULL DEFAULT 0 CHECK(isAdjusted IN (0,1)),
+    PRIMARY KEY (symbolId, tradeDate)
 );
 
--- ── 의사결정(positions가 FK로 참조하므로 먼저) ──────────────────
-CREATE TABLE IF NOT EXISTS decisions (
-    decision_id      TEXT PRIMARY KEY,
-    cycle_id         TEXT NOT NULL REFERENCES cycles(cycle_id),
-    symbol           TEXT,
-    action           TEXT NOT NULL CHECK(action IN ('buy','sell','trim','trail','exit','no_trade')),
-    side             TEXT CHECK(side IN ('buy','sell')),
-    qty_risk_budget  REAL,
-    rationale        TEXT,
-    entry_thesis     TEXT,          -- JSON: catalyst·invalidation_price·rr_ratio·net_edge_after_cost
-    stop_loss        REAL,
-    take_profit      REAL,
-    exit_plan        TEXT,
-    confidence       REAL,
-    dissent_addressed TEXT,
-    no_trade_reason  TEXT,
-    context_snapshot TEXT,          -- Warm 진입 시 NULL로 압축
-    regime_tag       TEXT,
-    session_label    TEXT CHECK(session_label IN ('morning','afternoon')),
-    source           TEXT NOT NULL CHECK(source IN ('backtest','paper','live')),
-    decided_at       TEXT NOT NULL
+-- 외국인·기관 순매수. KIS inquire-investor(최근 30거래일)로 어제분 적재.
+CREATE TABLE IF NOT EXISTS DailyFlows (
+    symbolId          TEXT NOT NULL REFERENCES Symbols(symbolId),
+    tradeDate         TEXT NOT NULL,
+    foreignNet        REAL,
+    institutionNet    REAL,
+    isFinal           INTEGER NOT NULL DEFAULT 0 CHECK(isFinal IN (0,1)),  -- 잠정치는 0
+    collectedDateTime TEXT NOT NULL,
+    PRIMARY KEY (symbolId, tradeDate)
 );
 
--- ── 보유·체결·결과(사실) ────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS positions (
-    position_id        TEXT PRIMARY KEY,
-    symbol             TEXT NOT NULL,
-    qty                INTEGER NOT NULL,
-    avg_price          REAL NOT NULL,
-    sector             TEXT,
-    entry_decision_id  TEXT REFERENCES decisions(decision_id),
-    current_stop_price REAL,
-    status             TEXT NOT NULL CHECK(status IN ('open','closed')),
-    opened_at          TEXT NOT NULL,
-    updated_at         TEXT
+-- 권리락 등 기업행위. DART 정형 API(fricDecsn·crDecsn·piicDecsn)에서 기준일·배수를 받는다.
+-- 배당락은 정형 API가 없어 현재 미수집(04-data 4.1).
+CREATE TABLE IF NOT EXISTS CorporateActions (
+    actionId          TEXT PRIMARY KEY,
+    symbolId          TEXT NOT NULL REFERENCES Symbols(symbolId),
+    exDate            TEXT NOT NULL,             -- 신주배정기준일·감자기준일
+    actionType        TEXT NOT NULL CHECK(actionType IN ('bonus','rights','reduction','split','merger','dividend')),
+    priceFactor       REAL,                      -- 손절선 조정 비율
+    detail            TEXT,                      -- 배정비율·감자비율 원자료
+    source            TEXT NOT NULL,
+    collectedDateTime TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS frozen_positions (
-    frozen_id        TEXT PRIMARY KEY,
-    position_id      TEXT REFERENCES positions(position_id),
-    symbol           TEXT NOT NULL,
-    frozen_at        TEXT NOT NULL,
-    last_valid_price REAL NOT NULL,
-    halt_reason      TEXT NOT NULL,
-    released_at      TEXT
+-- 코스피·코스닥 지수. 벤치마크 비교(11장 게이트)의 유일한 근거이자 레짐 라벨의 원천.
+-- 레짐은 결정 입력으로 쓰지 않고 사후 분류 축으로만 쓴다(04-data).
+CREATE TABLE IF NOT EXISTS MarketIndices (
+    indexCode         TEXT NOT NULL CHECK(indexCode IN ('KOSPI','KOSDAQ')),
+    tradeDate         TEXT NOT NULL,
+    close             REAL NOT NULL,
+    sma200            REAL,
+    regime            TEXT CHECK(regime IN ('uptrend','downtrend')),
+    collectedDateTime TEXT NOT NULL,
+    PRIMARY KEY (indexCode, tradeDate)
 );
 
-CREATE TABLE IF NOT EXISTS trades (
-    trade_id        TEXT PRIMARY KEY,
-    cycle_id        TEXT REFERENCES cycles(cycle_id),
-    decision_id     TEXT REFERENCES decisions(decision_id),  -- 상주 스톱 자동체결은 NULL
-    client_order_id TEXT NOT NULL,                            -- idempotency 키
-    symbol          TEXT NOT NULL,
-    side            TEXT NOT NULL CHECK(side IN ('buy','sell')),
-    ord_dvsn        TEXT NOT NULL,                            -- 00 지정가·22 스톱지정가 등(API 명세)
-    order_qty       INTEGER NOT NULL,
-    filled_qty      INTEGER NOT NULL DEFAULT 0,
-    order_price     REAL,                                     -- ORD_UNPR
-    trigger_price   REAL,                                     -- CNDT_PRIC(스톱)
-    fill_price      REAL,
-    fee             REAL,
-    tax             REAL,
-    slippage_est    REAL,
-    status          TEXT NOT NULL CHECK(status IN ('submitted','filled','partial','cancelled','rejected')),
-    ordered_at      TEXT NOT NULL,
-    filled_at       TEXT,
-    source          TEXT NOT NULL CHECK(source IN ('backtest','paper','live'))
+-- 배치 실행 1회의 결과. 5단계 데이터 신선도 검사의 판정 근거이자 재실행 시 이어받기 기준.
+CREATE TABLE IF NOT EXISTS IngestRuns (
+    runId            TEXT PRIMARY KEY,
+    targetTable      TEXT NOT NULL,
+    source           TEXT NOT NULL,
+    rangeStartDate   TEXT,
+    rangeEndDate     TEXT,
+    status           TEXT NOT NULL CHECK(status IN ('ok','partial','failed')),
+    targetCount      INTEGER,
+    successCount     INTEGER,
+    rowsWritten      INTEGER,
+    errorMessage     TEXT,
+    startedDateTime  TEXT NOT NULL,
+    finishedDateTime TEXT
 );
 
-CREATE TABLE IF NOT EXISTS outcomes (
-    outcome_id        TEXT PRIMARY KEY,
-    position_id       TEXT REFERENCES positions(position_id),
-    entry_decision_id TEXT REFERENCES decisions(decision_id),
-    symbol            TEXT NOT NULL,
-    entry_price       REAL,
-    exit_price        REAL,
-    qty               INTEGER,
-    holding_days      INTEGER,
-    gross_pnl         REAL,
-    net_pnl           REAL,
-    return_pct        REAL,
-    exit_reason       TEXT,
-    closed_at         TEXT NOT NULL,
-    source            TEXT NOT NULL CHECK(source IN ('backtest','paper','live'))
+-- ════════════════════════════════════════════════════════════
+-- 6.2 판단 — 사이클이 계산한 것
+-- ════════════════════════════════════════════════════════════
+
+-- 사이클 1회의 실행 기록. status가 중복 주문 방지의 근거(12-ops 11-2.1) —
+-- ordering에서 죽었으면 KIS 주문 조회로 실제 송출 여부를 먼저 확인한다.
+CREATE TABLE IF NOT EXISTS Cycles (
+    cycleId          TEXT PRIMARY KEY,           -- 시각 기반 발급. 모든 산출물의 부모 키
+    tradeDate        TEXT NOT NULL,
+    status           TEXT NOT NULL CHECK(status IN ('intent','scoring','deciding','ordering','recorded','failed','skipped')),
+    skipReason       TEXT,
+    failedStep       INTEGER,
+    mode             TEXT NOT NULL,
+    startedDateTime  TEXT NOT NULL,
+    finishedDateTime TEXT
 );
 
--- ── LLM 감사 ────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS llm_calls (
-    call_id               TEXT PRIMARY KEY,
-    cycle_id              TEXT REFERENCES cycles(cycle_id),
-    agent_role            TEXT NOT NULL,   -- catalyst/decider (+reflection 향후), enum 확장 가능
-    model_id              TEXT,
-    model_version         TEXT,
-    request_payload       TEXT,
-    response_payload      TEXT,
-    input_tokens          INTEGER,
-    output_tokens         INTEGER,
-    cache_creation_tokens INTEGER,
-    cache_read_tokens     INTEGER,
-    cost_usd              REAL,
-    cost_krw              REAL,
-    latency_ms            INTEGER,
-    retry_count           INTEGER DEFAULT 0,
-    parse_status          TEXT CHECK(parse_status IN ('ok','repaired','retried','failed')),
-    called_at             TEXT NOT NULL
+-- 사이클 시점의 계좌 총액. 4단계 사이징의 분모이며, 시계열이라야 낙폭을 잴 수 있어 쌓는다.
+CREATE TABLE IF NOT EXISTS AccountSnapshots (
+    snapshotId       TEXT PRIMARY KEY,
+    cycleId          TEXT NOT NULL REFERENCES Cycles(cycleId),
+    tradeDate        TEXT NOT NULL,
+    amount           REAL NOT NULL,              -- 예수금
+    positionValue    REAL NOT NULL,              -- 보유 평가금액(거래정지 종목은 동결가)
+    totalAsset       REAL NOT NULL,
+    dayStartAsset    REAL,                       -- 일일 −4% 판정의 분모(5.1)
+    dayReturnPercent REAL,
+    recordedDateTime TEXT NOT NULL
 );
 
--- ── 학습(정성·정량) ─────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS agent_predictions (
-    prediction_id            TEXT PRIMARY KEY,
-    cycle_id                 TEXT REFERENCES cycles(cycle_id),
-    decision_id              TEXT REFERENCES decisions(decision_id),
-    symbol                   TEXT NOT NULL,
-    agent_role               TEXT NOT NULL,   -- catalyst(뉴스)/decider, enum 확장 가능
-    view                     TEXT CHECK(view IN ('bullish','bearish','neutral')),
-    confidence               REAL,
-    key_signals              TEXT,            -- JSON 배열(출처 라벨 포함)
-    key_risks                TEXT,
-    rationale                TEXT,            -- Warm 진입 시 50자 축약
-    model_version            TEXT,            -- 의도적 복제(모델별 보정 재현)
-    correct                  INTEGER CHECK(correct IN (0,1)),
-    tentative                INTEGER CHECK(tentative IN (0,1)),
-    attribution_score        REAL,
-    realized_pnl_attribution REAL,
-    source                   TEXT NOT NULL CHECK(source IN ('backtest','paper','live'))
+-- 하루 1회 산출하는 전 종목 점수. 원시값과 백분위를 함께 저장해야
+-- 나중에 가중치를 바꿔 재계산할 수 있다(백분위는 그날 통과 집합에 의존).
+CREATE TABLE IF NOT EXISTS DailyScores (
+    tradeDate               TEXT NOT NULL,
+    symbolId                TEXT NOT NULL REFERENCES Symbols(symbolId),
+    passedFilter            INTEGER NOT NULL CHECK(passedFilter IN (0,1)),  -- 백분위 모집단 기준
+    filterReason            TEXT,
+    momentum                REAL,                -- 12-1 모멘텀 원시값
+    flowNet5Day             REAL,
+    flowNet20Day            REAL,
+    valueRatio              REAL,                -- 거래대금 5일/60일
+    isTrendAligned          INTEGER CHECK(isTrendAligned IN (0,1)),
+    volatility              REAL,                -- 60일 실현변동성
+    momentumPercentile      REAL,                -- 가중치 0.35
+    flowPercentile          REAL,                -- 0.25
+    valuePercentile         REAL,                -- 0.15
+    trendPercentile         REAL,                -- 0.10
+    lowVolatilityPercentile REAL,                -- 0.15
+    totalScore              REAL,
+    rank                    INTEGER,             -- 1단계 상위 N 컷의 기준
+    computedDateTime        TEXT NOT NULL,
+    PRIMARY KEY (tradeDate, symbolId)
 );
 
-CREATE TABLE IF NOT EXISTS lessons (
-    lesson_id     TEXT PRIMARY KEY,
-    text          TEXT NOT NULL,
-    setup_tag     TEXT,
-    regime_tag    TEXT,           -- 자체 복제(교훈은 사이클보다 오래 산다)
-    sample_n      INTEGER,
-    confidence    REAL,
-    expiry        TEXT,           -- 기본 24개월
-    applied_count INTEGER DEFAULT 0,
-    helped_score  REAL DEFAULT 0,
-    active        INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
-    created_at    TEXT NOT NULL
+-- 워치리스트 종목의 사이클 시점 값. 이 표가 곧 워치리스트다(별도 표 없음).
+CREATE TABLE IF NOT EXISTS CycleScores (
+    cycleId             TEXT NOT NULL REFERENCES Cycles(cycleId),
+    symbolId            TEXT NOT NULL REFERENCES Symbols(symbolId),
+    inclusion           TEXT NOT NULL CHECK(inclusion IN ('topRank','surge','holding')),
+    baseScore           REAL,                    -- DailyScores의 전일 기준 점수
+    trendPercentileLive REAL,                    -- 장중 갱신되는 두 항목
+    flowPercentileLive  REAL,
+    totalScore          REAL,                    -- 진입·무효 임계 판정의 값
+    lastPrice           REAL,
+    buyQuantity         INTEGER,                 -- 매수 1호가 잔량(점하한가 판정)
+    sellQuantity        INTEGER,                 -- 매도 1호가 잔량(점상한가 판정)
+    atr                 REAL,
+    stopWidth           REAL,                    -- max(2.5 × ATR, 현재가 × 5%)
+    isTradable          INTEGER CHECK(isTradable IN (0,1)),
+    blockReason         TEXT CHECK(blockReason IN ('limitUp','limitDown','halted','vi','overheated')),
+    scoredDateTime      TEXT NOT NULL,
+    PRIMARY KEY (cycleId, symbolId)
 );
 
-CREATE TABLE IF NOT EXISTS shadow_outcomes (
-    shadow_id          TEXT PRIMARY KEY,
-    decision_id        TEXT REFERENCES decisions(decision_id),
-    symbol             TEXT NOT NULL,
-    reject_reason      TEXT,
-    entry              REAL,
-    stop               REAL,
-    target             REAL,
-    virtual_exit_price REAL,
-    virtual_pnl        REAL,
-    size_sim_applied   INTEGER CHECK(size_sim_applied IN (0,1)),
-    regime_tag         TEXT,
-    created_at         TEXT NOT NULL,
-    source             TEXT NOT NULL CHECK(source IN ('backtest','paper','live'))
+-- 4단계가 낸 제안 주문. 5단계 게이트가 거부·축소할 수 있으므로 확정이 아니다.
+-- 점수 미달 무거래는 남기지 않는다(CycleScores로 유추 가능) — costExceedsEdge만 남긴다.
+CREATE TABLE IF NOT EXISTS Decisions (
+    decisionId      TEXT PRIMARY KEY,
+    cycleId         TEXT NOT NULL REFERENCES Cycles(cycleId),
+    symbolId        TEXT NOT NULL REFERENCES Symbols(symbolId),
+    action          TEXT NOT NULL CHECK(action IN ('buy','exitAll','raiseStop','noTrade')),
+    reason          TEXT NOT NULL CHECK(reason IN ('entryThreshold','thesisInvalid','stopHit','timeExit','breakeven','trail','costExceedsEdge')),
+    score           REAL,
+    threshold       REAL,
+    entryPrice      REAL,
+    stopPrice       REAL,                        -- 무효화선
+    riskPerShare    REAL,                        -- R. 청산까지 고정
+    winRate         REAL,                        -- 켈리 입력(초기엔 NULL — 위험비율 1% 상한 고정)
+    payoffRatio     REAL,
+    riskPercent     REAL,                        -- min(1%, 0.25 × 켈리분수)
+    quantity        INTEGER,
+    rewardRiskRatio REAL,
+    estimatedCost   REAL,
+    netEdge         REAL,                        -- 음수면 무거래
+    regime          TEXT,                        -- MarketIndices에서 복사한 라벨
+    decidedDateTime TEXT NOT NULL
 );
 
--- ── 집계(장기 보존) ─────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS calibration_cold (   -- Cold(2~5년) raw 삭제 후 월별 집계
-    period        TEXT NOT NULL,                 -- 연월
-    agent_role    TEXT NOT NULL,
-    regime        TEXT,
-    correct_count INTEGER NOT NULL,
-    n             INTEGER NOT NULL,
-    PRIMARY KEY (period, agent_role, regime)
+-- 5단계 게이트 판정. 여러 규칙이 동시에 걸려도 가장 먼저 걸린 하나만 사유로 남긴다(5.2).
+CREATE TABLE IF NOT EXISTS RiskChecks (
+    checkId         TEXT PRIMARY KEY,
+    cycleId         TEXT NOT NULL REFERENCES Cycles(cycleId),
+    decisionId      TEXT REFERENCES Decisions(decisionId),  -- 사이클 단위 검사(1~4번)는 NULL
+    checkOrder      INTEGER NOT NULL,            -- 5.2 검사 순서 = 심각도
+    checkName       TEXT NOT NULL CHECK(checkName IN ('balanceSync','marketHalt','dataFreshness','circuitBreaker','schema','hardLimit','symbolState')),
+    result          TEXT NOT NULL CHECK(result IN ('pass','reject','reduce','skipCycle','safeStop')),
+    reason          TEXT,
+    limitValue      REAL,                        -- 한도와 실측을 나란히 두면 초과폭 집계가 된다
+    actualValue     REAL,
+    checkedDateTime TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS shadow_summary (      -- shadow 1년 경과 raw 삭제 후 연도·레짐 집계
-    period          TEXT NOT NULL,               -- 연도
-    regime          TEXT,
-    reject_rate     REAL,
-    avg_virtual_pnl REAL,
-    PRIMARY KEY (period, regime)
+-- ════════════════════════════════════════════════════════════
+-- 6.3 집행
+-- ════════════════════════════════════════════════════════════
+
+-- KIS에 보낸 주문. 기본키가 clientOrderId인 것이 중복 주문 방지의 핵심 —
+-- 같은 의도면 재시작 후에도 같은 값이 나와 두 번째 삽입이 거부된다.
+CREATE TABLE IF NOT EXISTS Orders (
+    clientOrderId    TEXT PRIMARY KEY,           -- {cycleId}-{symbolId}-{side}-{seq}
+    cycleId          TEXT REFERENCES Cycles(cycleId),      -- 상주 스톱 자동 체결은 NULL
+    decisionId       TEXT REFERENCES Decisions(decisionId),
+    kisOrderNo       TEXT,                       -- 정정·취소에 필요
+    symbolId         TEXT NOT NULL REFERENCES Symbols(symbolId),
+    side             TEXT NOT NULL CHECK(side IN ('buy','sell')),
+    purpose          TEXT NOT NULL CHECK(purpose IN ('entry','stop','stopAmend','exit')),
+    orderType        TEXT NOT NULL,              -- 00 지정가 · 11 IOC · 22 스톱지정가
+    orderQuantity    INTEGER NOT NULL,
+    orderPrice       REAL,
+    triggerPrice     REAL,                       -- stop·stopAmend만
+    filledQuantity   INTEGER NOT NULL DEFAULT 0,
+    averageFillPrice REAL,
+    fee              REAL,
+    tax              REAL,
+    slippageEstimate REAL,
+    status           TEXT NOT NULL CHECK(status IN ('submitted','partial','filled','cancelled','rejected')),
+    orderedDateTime  TEXT NOT NULL,
+    filledDateTime   TEXT,
+    mode             TEXT NOT NULL               -- cycleId가 NULL일 수 있어 따로 둔다
 );
 
--- ── 보정 집계 뷰(저장 아님 — 쿼리 시 집계). 미가중 raw 집계.
---    시간가중·수축(shrunk_rate)·Wilson 신뢰구간은 memory/calibration.py(코드)에서 산출.
-CREATE VIEW IF NOT EXISTS calibration AS
-SELECT
-    ap.agent_role,
-    d.regime_tag                      AS regime,
-    CAST(ap.confidence * 10 AS INTEGER) AS confidence_bucket,
-    SUM(ap.correct)                   AS correct_count,
-    COUNT(*)                          AS n
-FROM agent_predictions ap
-JOIN decisions d ON ap.decision_id = d.decision_id
-WHERE ap.correct IS NOT NULL
-GROUP BY ap.agent_role, d.regime_tag, confidence_bucket;
+-- 보유 상태. 15개 표 중 유일하게 덮어쓰는 표(변경 이력은 Orders로 되짚는다).
+-- KIS 실잔고와 대조하는 우리 측 기록이자 진입 결정↔청산 결과를 잇는 다리.
+CREATE TABLE IF NOT EXISTS Positions (
+    positionId        TEXT PRIMARY KEY,
+    symbolId          TEXT NOT NULL REFERENCES Symbols(symbolId),
+    market            TEXT,                      -- 청산 비용 산정 기준
+    quantity          INTEGER NOT NULL,
+    averagePrice      REAL NOT NULL,
+    entryDecisionId   TEXT REFERENCES Decisions(decisionId),
+    entryDate         TEXT,                      -- 보유일수·시간 기반 청산 기준
+    initialStopPrice  REAL,                      -- R 고정 기준. 청산까지 불변
+    currentStopPrice  REAL,                      -- 트레일링·본전 상향으로 변동
+    riskPerShare      REAL,
+    isBreakevenDone   INTEGER NOT NULL DEFAULT 0 CHECK(isBreakevenDone IN (0,1)),
+    activeStopOrderId TEXT REFERENCES Orders(clientOrderId),  -- 비면 손절 없이 방치된 포지션
+    status            TEXT NOT NULL CHECK(status IN ('open','closed','frozen')),
+    frozenDateTime    TEXT,
+    frozenPrice       REAL,                      -- 정지 직전 가격(자본곡선 왜곡 방지)
+    frozenReason      TEXT,
+    openedDateTime    TEXT NOT NULL,
+    updatedDateTime   TEXT
+);
 
--- ── 인덱스(조회 패턴) ───────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_decisions_cycle   ON decisions(cycle_id);
-CREATE INDEX IF NOT EXISTS idx_trades_cycle      ON trades(cycle_id);
-CREATE INDEX IF NOT EXISTS idx_trades_symbol     ON trades(symbol);
-CREATE INDEX IF NOT EXISTS idx_outcomes_position ON outcomes(position_id);
-CREATE INDEX IF NOT EXISTS idx_predictions_decision ON agent_predictions(decision_id);
-CREATE INDEX IF NOT EXISTS idx_positions_status  ON positions(status);
-CREATE INDEX IF NOT EXISTS idx_lessons_active    ON lessons(active);
-CREATE INDEX IF NOT EXISTS idx_llm_calls_cycle   ON llm_calls(cycle_id);
+-- 청산 실현손익. 진입 시 점수·레짐을 함께 박아두므로 보정통계 전용 표가 필요 없다.
+CREATE TABLE IF NOT EXISTS Outcomes (
+    outcomeId        TEXT PRIMARY KEY,
+    positionId       TEXT REFERENCES Positions(positionId),
+    entryDecisionId  TEXT REFERENCES Decisions(decisionId),
+    exitDecisionId   TEXT REFERENCES Decisions(decisionId),  -- 상주 스톱 자동 체결은 NULL
+    symbolId         TEXT NOT NULL REFERENCES Symbols(symbolId),
+    entryPrice       REAL,
+    exitPrice        REAL,
+    quantity         INTEGER,
+    entryDate        TEXT,
+    exitDate         TEXT,
+    holdingDays      INTEGER,
+    grossProfitLoss  REAL,
+    fee              REAL,
+    tax              REAL,
+    netProfitLoss    REAL,                       -- 성과 집계는 이 값만 쓴다
+    returnPercent    REAL,
+    rMultiple        REAL,                       -- 손익 ÷ (R × 수량)
+    exitReason       TEXT CHECK(exitReason IN ('stopHit','timeExit','thesisInvalid','trail')),
+    entryScore       REAL,                       -- 학습의 원천 ↓
+    entryScoreBucket INTEGER,                    -- 보정통계의 집계 축
+    entryRegime      TEXT,
+    closedDateTime   TEXT NOT NULL,
+    mode             TEXT NOT NULL
+);
+
+-- ════════════════════════════════════════════════════════════
+-- 6.4 감사
+-- ════════════════════════════════════════════════════════════
+
+-- 매매 전체 정지의 발생·해제. releasedDateTime이 비어 있으면 지금 정지 중이라는 뜻이고,
+-- 사이클 시작 시 이 상태를 조회해 신규 주문을 차단한다(보유 청산은 계속 돈다).
+CREATE TABLE IF NOT EXISTS SafeStopEvents (
+    eventId          TEXT PRIMARY KEY,
+    cycleId          TEXT REFERENCES Cycles(cycleId),
+    occurredDateTime TEXT NOT NULL,
+    cause            TEXT NOT NULL,
+    trigger          TEXT NOT NULL CHECK(trigger IN ('auto','manual')),
+    releasedDateTime TEXT,
+    releasedBy       TEXT,                       -- 잔고 불일치·데이터 오류는 사람 개입 필수(5.3)
+    releaseReason    TEXT
+);

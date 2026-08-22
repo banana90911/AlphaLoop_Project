@@ -1,7 +1,9 @@
-"""시장 지수 과거 시세 (data/sources/index_history). 하락장 방어(레짐) 판단용.
+"""시장 지수 과거 시세 (data/sources/index_history). 벤치마크 비교·레짐 라벨 적재용.
+
+레짐은 결정 입력이 아니다 — 사후 분류 축으로만 쓴다(04-data 지수 행).
 
 코스피·코스닥 지수는 KIS/네이버 대신 yfinance로 받는다(지수는 yfinance가 단순·안정).
-시장 추세 필터(backtest/regime)의 입력 — 지수가 추세 위일 때만 신규 진입을 허용한다.
+벤치마크(코스피 매수후보유·단순 모멘텀)의 입력 — 09-eval 9.1 벤치마크 4종.
 워밍업(이동평균) 확보를 위해 종목보다 앞선 시작일로 받는 것을 권장한다.
 """
 from __future__ import annotations

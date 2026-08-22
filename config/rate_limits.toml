@@ -1,4 +1,4 @@
-# KIS·Anthropic 호출 한도 (모드별). 실측 반영 — 상세 docs/reference/external-apis.md.
+# KIS 호출 한도 (모드별). 실측 반영 — 상세 docs/reference/external-apis.md.
 
 [kis.real]
 per_second = 20              # 공식 실전 초당 ~20건 (안전 운용은 80% = 16)
@@ -11,7 +11,7 @@ min_interval_sec = 0.6
 [kis.quote_loop]
 min_interval_sec = 0.6       # 일봉 등 대량 조회 루프 간격(실측 기준)
 
-[anthropic]
-# 티어별 RPM/TPM은 계정 티어에 따름. 호출 어댑터에서 백오프(11-3.1).
+[retry]
+# 외부 API 공통 재시도(지수 백오프) — 현재 사용처는 KIS 어댑터.
 max_retries = 3
 backoff_base_sec = 1.0

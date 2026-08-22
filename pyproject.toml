@@ -1,12 +1,11 @@
 [project]
 name = "alphaloop"
 version = "0.1.0"
-description = "한국 주식 모멘텀+수급 스윙 자동매매 (1인·린 LLM)"
+description = "한국 주식 모멘텀+수급 스윙 자동매매 (1인·코드 규칙)"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "anthropic>=0.40",
     "requests>=2.31",
     "python-dotenv>=1.0",
     "pandas>=2.2",
@@ -18,7 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 data = ["yfinance>=0.2", "lxml>=5.0", "pyarrow>=16.0"]  # 글로벌 시세 / 네이버 HTML 파싱 / parquet 캐시
 backtest = ["scipy>=1.13"]                              # Deflated Sharpe·PBO 등 과최적화 검정
-dashboard = ["streamlit>=1.30", "plotly>=5.20"] # 읽기 전용 대시보드
+dashboard = ["fastapi>=0.111", "uvicorn>=0.30"]         # 읽기 전용 대시보드 API (프론트는 파이썬 의존성 아님 — 08-dashboard 8.3)
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
 
 # ── 가드레일 (불변식 기계 강제 — 03-arch 3.3) ──────────────────
@@ -29,12 +28,12 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "TID"]
 
-# 직접 sqlite3.connect 금지 → memory/db.py의 connect()만 (11-2.2)
+# 직접 sqlite3.connect 금지 → memory/db.py의 connect()만 (10-ops 10.2)
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"sqlite3.connect".msg = "memory/db.py connect()만 사용 (직접 연결 금지 — 03-arch 3.3 / 11-2.2)"
+"sqlite3.connect".msg = "memory/db.py connect()만 사용 (직접 연결 금지 — 03-arch 3.3 / 10-ops 10.2)"
 
 # 'if 실전' 모드 분기 금지(broker·config 외), 시간대 naive datetime 금지 등은
-# CI grep 룰로 별도 강제(11-2.7·11-2.9). ruff로 표현 불가한 규칙은 tests/test_guardrails.py.
+# CI grep 룰로 별도 강제(10-ops 10.8·10.10). ruff로 표현 불가한 규칙은 tests/test_guardrails.py.
 
 [tool.mypy]
 python_version = "3.12"

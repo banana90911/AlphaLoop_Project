@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import io
 import zipfile
+from functools import lru_cache
+from pathlib import Path
 
 import pandas as pd
 import requests
 
+_CACHE = Path(__file__).resolve().parent.parent / "cache" / "universe.parquet"
 _BASE = "https://new.real.download.dws.co.kr/common/master"
 # 시장별 (마스터 URL, 행 끝 고정폭 길이). 끝 길이는 시장마다 다름(splitlines 후 실측값).
 _MST = {
@@ -71,3 +74,15 @@ def fetch_universe(*, common_only: bool = True) -> pd.DataFrame:
     if common_only:
         df = filter_common(df)
     return df.drop_duplicates("code").sort_values("code").reset_index(drop=True)
+
+
+@lru_cache(maxsize=1)
+def load_market_map() -> dict[str, str]:
+    """종목코드 → 시장(KOSPI/KOSDAQ) 룩업. 거래세율·비용 산식(positions.market)용.
+
+    캐시 parquet(`data/cache/universe.parquet`)을 우선 읽고, 없으면 마스터를 내려받는다.
+    마스터 다운로드는 *공개 파일 읽기*(주문 송출 아님)라 비용·위험이 없다. 업종(섹터)은
+    마스터의 지수업종분류가 지수 미편입 종목에 기본값이 몰려 부적합 → 별도 소스 필요(미결).
+    """
+    df = pd.read_parquet(_CACHE) if _CACHE.exists() else fetch_universe()
+    return dict(zip(df["code"], df["market"]))

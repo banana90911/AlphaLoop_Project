@@ -4,7 +4,6 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from memory.db import init_db
 from pipeline import screening
 from pipeline.trading_cycle import run_cycle
 
@@ -45,12 +44,10 @@ def test_empty_prices_returns_empty():
     assert wl.empty
 
 
-def test_cycle_step1_runs_with_market_data(tmp_path):
-    conn = init_db(str(tmp_path / "t.db"))
+def test_cycle_step1_runs_with_market_data(conn):
     res = run_cycle(conn, market_data=_universe())
     status = conn.execute(
-        "SELECT status FROM cycles WHERE cycle_id=?", (res.cycle_id,)
-    ).fetchone()["status"]
+        'SELECT "Status" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
+    ).fetchone()["Status"]
     assert status == "recorded"
     assert set(res.watchlist)                      # 워치리스트 채워짐
-    conn.close()

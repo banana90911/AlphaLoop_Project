@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 KST = timezone(timedelta(hours=9))
 
@@ -15,8 +15,13 @@ def now_utc() -> datetime:
 
 
 def utc_iso() -> str:
-    """UTC ISO8601 문자열(SQLite 저장용)."""
+    """UTC ISO8601 문자열(로그·파일명용). DB의 timestamptz 컬럼에는 datetime을 그대로 넣는다."""
     return now_utc().isoformat()
+
+
+def kst_today() -> date:
+    """KST 기준 오늘 날짜 — 일별 집계의 거래일(TradeDate)은 이 값이 기준이다(07-model)."""
+    return to_kst(now_utc()).date()
 
 
 def to_kst(dt: datetime) -> datetime:

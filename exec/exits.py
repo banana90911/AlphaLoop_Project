@@ -24,11 +24,20 @@ import pandas as pd
 
 from config.settings import load_params
 from core import costs
-from core.timeutils import utc_iso
+from core.timeutils import kst_today, now_utc
 from memory import journal
 
 # 청산 주문구분 — 모드별(10-ops 10.14: 청산=13 IOC시장가). 모의 IOC 미지원이라 01 일반시장가.
 EXIT_ORD_DVSN = {"real": "13", "paper": "01", "backtest": "01"}
+
+# 청산 사유 — 내부 표기(snake) → Outcomes.ExitReason 값(07-model CHECK 제약).
+EXIT_REASONS = {
+    "thesis_invalid": "thesisInvalid",
+    "stop_hit": "stopHit",
+    "time_exit": "timeExit",
+    "breakeven": "breakeven",
+    "trail": "trail",
+}
 
 
 @dataclass
@@ -148,18 +157,18 @@ def execute_exits(
     cycle_id: str,
     asof: date | None = None,
     order_mode: str = "paper",
-    source: str = "paper",
+    mode: str = "paper",
     forced_sells=(),
     params: dict | None = None,
     tax_params: dict | None = None,
 ) -> list[str]:
-    """open 보유별로 청산 액션을 집행한다(5~6단계, 진입과 대칭). 반환: 청산 trade_id 목록.
+    """open 보유별로 청산 액션을 집행한다(5~6단계, 진입과 대칭). 반환: 청산 ClientOrderId 목록.
 
     결정 규칙이 sell을 낸 종목(forced_sells)은 thesis_valid=False로 ①논지무효 경로에 태운다.
     raise_stop은 내부 손절만 상향(KIS 스톱 정정은 후속), exit_full은 broker로 송출하고
-    체결분의 실현손익을 `outcomes`에 적재(백테스트 `_close`와 동일 costs 산식).
+    체결분의 실현손익을 `Outcomes`에 적재(백테스트 `_close`와 동일 costs 산식).
 
-    한계: 라이브 잔고 동기화(선행 게이트 A.1 1번)는 미배선이라 내부 `positions`를 진실로
+    한계: 라이브 잔고 동기화(선행 게이트 A.1 1번)는 미배선이라 내부 `Positions`를 진실로
     본다 — 자동 체결된 KIS 스톱과의 이중주문 방지(§129)는 잔고 동기화 연결 후 완성.
     """
     from data.features import build_features  # 지연 import(features↔exits 순환 회피)
@@ -167,12 +176,14 @@ def execute_exits(
 
     p = params or load_params("risk_params")
     sells = set(forced_sells)
-    rows = conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()
-    trade_ids: list[str] = []
+    rows = conn.execute(
+        'SELECT * FROM "Positions" WHERE "Status" = \'open\''
+    ).fetchall()
+    order_ids: list[str] = []
     for r in rows:
-        if r["qty"] <= 0:
+        if r["Quantity"] <= 0:
             continue
-        df = market_data.get(r["symbol"])
+        df = market_data.get(r["SymbolId"])
         if df is None or df.empty:
             continue
         frow = latest_row(build_features(df), asof)
@@ -182,91 +193,101 @@ def execute_exits(
         if pd.isna(price) or pd.isna(atr):
             continue
         pos = Position(
-            entry_price=r["avg_price"],
-            initial_stop=r["initial_stop_price"]
-            if r["initial_stop_price"] is not None else r["current_stop_price"],
-            current_stop=r["current_stop_price"],
-            days_held=_days_held(r["entry_date"], asof),
-            breakeven_done=bool(r["breakeven_done"]),
-            thesis_valid=r["symbol"] not in sells,
+            entry_price=r["AveragePrice"],
+            initial_stop=r["InitialStopPrice"]
+            if r["InitialStopPrice"] is not None else r["CurrentStopPrice"],
+            current_stop=r["CurrentStopPrice"],
+            days_held=_days_held(r["EntryDate"], asof),
+            breakeven_done=bool(r["IsBreakevenDone"]),
+            thesis_valid=r["SymbolId"] not in sells,
         )
         act = decide_exit(pos, float(price), float(atr), params=p)
         if act.action == "hold":
             continue
         if act.action == "raise_stop":
-            journal.update_stop(conn, r["position_id"], act.new_stop)
+            # 본전 상향이면 완료 표시까지 남긴다 — 안 남기면 다음 사이클에 ③이 또 걸린다.
+            journal.update_stop(
+                conn, r["PositionId"], act.new_stop,
+                breakeven_done=True if act.reason == "breakeven" else None,
+            )
             continue
         sell_qty = (
-            r["qty"] if act.action == "exit_full"
-            else min(r["qty"], max(1, int(r["qty"] * act.fraction)))
+            r["Quantity"] if act.action == "exit_full"
+            else min(r["Quantity"], max(1, int(r["Quantity"] * act.fraction)))
         )
-        trade_ids.append(
+        order_ids.append(
             _settle_exit(conn, broker, r, sell_qty, float(price), act,
-                         cycle_id, asof, order_mode, source, tax_params)
+                         cycle_id, asof, order_mode, mode, tax_params)
         )
-    return trade_ids
+    return order_ids
 
 
 def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, asof,
-                 order_mode, source, tax_params) -> str:
-    """청산 1건 송출 → trades 적재 + (체결 시) outcomes 적재·positions 갱신."""
-    code = r["symbol"]
+                 order_mode, mode, tax_params) -> str:
+    """청산 1건 송출 → Orders 적재 + (체결 시) Outcomes 적재·Positions 갱신."""
+    code = r["SymbolId"]
     coid = f"{cycle_id}-{code}-exit-0"
     fill = broker.place_exit(
         code=code, qty=sell_qty, ord_dvsn=EXIT_ORD_DVSN[order_mode], client_order_id=coid,
     )
     filled = fill.filled_qty
     exit_price = fill.fill_price if fill.fill_price is not None else price
-    journal.record_trade(
-        conn, trade_id=coid, cycle_id=cycle_id, decision_id=r["entry_decision_id"],
-        client_order_id=coid, symbol=code, side="sell", ord_dvsn=EXIT_ORD_DVSN[order_mode],
-        order_qty=sell_qty, filled_qty=filled, order_price=0.0,
-        fill_price=fill.fill_price, status=fill.status, source=source,
-        filled_at=utc_iso() if filled > 0 else None,
+    journal.record_order(
+        conn, client_order_id=coid, cycle_id=cycle_id, decision_id=r["EntryDecisionId"],
+        symbol_id=code, side="sell", purpose="exit", order_type=EXIT_ORD_DVSN[order_mode],
+        order_quantity=sell_qty, filled_quantity=filled, order_price=0.0,
+        average_fill_price=fill.fill_price, kis_order_no=fill.broker_order_id,
+        status=fill.status, mode=mode,
+        filled_at=now_utc() if filled > 0 else None,
     )
     if filled <= 0:                                   # 미체결 → 포지션 유지(에스컬레이션은 후속)
         return coid
-    entry = r["avg_price"]
-    mkt = r["market"] or "KOSPI"                       # 종목→시장 매핑 부재 시 기본(TODO)
-    end = asof or date.today()
-    buy_cost = costs.trade_cost(
-        entry, filled, "buy", mkt, _as_date(r["entry_date"], end), params=tax_params
-    )["total"]
-    sell_cost = costs.trade_cost(exit_price, filled, "sell", mkt, end, params=tax_params)["total"]
+    entry = float(r["AveragePrice"])
+    mkt = r["Market"] or "KOSPI"                       # 종목→시장 매핑 부재 시 기본(TODO)
+    end = asof or kst_today()
+    entry_date = _as_date(r["EntryDate"], end)
+    buy_cost = costs.trade_cost(entry, filled, "buy", mkt, entry_date, params=tax_params)
+    sell_cost = costs.trade_cost(exit_price, filled, "sell", mkt, end, params=tax_params)
     gross = (exit_price - entry) * filled
-    net = gross - buy_cost - sell_cost
+    net = gross - buy_cost["total"] - sell_cost["total"]
+    risk = r["InitialStopPrice"]
+    r_per_share = entry - float(risk) if risk is not None else None
     journal.record_outcome(
-        conn, outcome_id=f"{coid}-out", position_id=r["position_id"],
-        entry_decision_id=r["entry_decision_id"], symbol=code, entry_price=entry,
-        exit_price=exit_price, qty=filled, holding_days=_days_held(r["entry_date"], asof),
-        gross_pnl=gross, net_pnl=net,
-        return_pct=net / (entry * filled) if entry * filled else 0.0,
-        exit_reason=act.reason, source=source,
+        conn, outcome_id=f"{coid}-out", position_id=r["PositionId"],
+        entry_decision_id=r["EntryDecisionId"], symbol_id=code, entry_price=entry,
+        exit_price=exit_price, quantity=filled,
+        entry_date=entry_date, exit_date=end,
+        holding_days=_days_held(r["EntryDate"], asof),
+        gross_profit_loss=gross, net_profit_loss=net,
+        fee=buy_cost["commission"] + sell_cost["commission"], tax=sell_cost["tax"],
+        return_percent=net / (entry * filled) if entry * filled else 0.0,
+        r_multiple=net / (r_per_share * filled) if r_per_share else None,
+        exit_kind="full" if act.action == "exit_full" else "partial",
+        exit_reason=EXIT_REASONS[act.reason], mode=mode,
     )
-    if act.action == "exit_full" or filled >= r["qty"]:
-        journal.close_position(conn, r["position_id"])
+    if act.action == "exit_full" or filled >= r["Quantity"]:
+        journal.close_position(conn, r["PositionId"])
     else:
         journal.reduce_position(
-            conn, r["position_id"], sell_qty=filled,
-            new_stop=act.new_stop,
+            conn, r["PositionId"], sell_quantity=filled, new_stop=act.new_stop,
         )
     return coid
 
 
-def _days_held(entry_date: str | None, asof: date | None) -> int:
-    if not entry_date:
+def _days_held(entry_date: date | None, asof: date | None) -> int:
+    ed = _as_date(entry_date, None)
+    if ed is None:
         return 0
-    try:
-        ed = date.fromisoformat(entry_date[:10])
-    except ValueError:
-        return 0
-    return max(0, ((asof or date.today()) - ed).days)
+    return max(0, ((asof or kst_today()) - ed).days)
 
 
-def _as_date(entry_date: str | None, fallback: date) -> date:
+def _as_date(entry_date, fallback):
+    """EntryDate는 date 컬럼이라 보통 date로 온다 — 문자열이 섞여 와도 견디게 둔다."""
+    if isinstance(entry_date, date):
+        return entry_date
     if entry_date:
         try:
-            return date.fromisoformat(entry_date[:10])
+            return date.fromisoformat(str(entry_date)[:10])
         except ValueError:
             pass
     return fallback

@@ -1,21 +1,22 @@
-"""매매 사이클 6단계 오케스트레이션 (03-arch 3.1).
+"""매매 사이클 7단계 오케스트레이션 (03-arch 3.1).
 
-상태머신(`intent`→`ordering`→`recorded`)을 축으로, 부품이 준비된 단계부터 채운다.
+상태머신(`intent`→`scoring`→`deciding`→`ordering`→`recorded`)을 축으로, 부품이 준비된
+단계부터 채운다.
 - 1단계(후보 선별): `market_data`가 주어지면 작동, 없으면 빈 사이클(상태머신만).
 - 3단계(결정): `account`까지 주어지면 결정 규칙을 *드라이런*으로 돌린다.
 - 4단계(리스크): 사이클 게이트(`screen_cycle`) → 신규(buy)별 수량 환산(`sizing`) +
   이상행동 게이트(`detect_anomaly`) + 종목당 하드룰로 *집행 계획*(PlannedOrder)을 짠다.
 
 드라이런 경계: broker 미주입이면 실주문 송출을 *하지 않는다*(집행 계획까지만).
-보유 동적관리(trim/sell)의 청산 집행(`exits`)·decisions 상세 적재는 다음 증분이다.
+보유 동적관리(sell)의 청산 집행(`exits`)·Decisions 상세 적재는 다음 증분이다.
 """
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
 
 import pandas as pd
+import psycopg
 
 from config.settings import get_settings, load_params
 from core.schemas import DeciderOutput, OrderAction
@@ -55,7 +56,7 @@ class PlannedOrder:
 
 @dataclass
 class CycleResult:
-    """사이클 산출. cycle_id는 07-model cycles 키, 나머지는 드라이런 결정·집행 계획.
+    """사이클 산출. cycle_id는 07-model Cycles 키, 나머지는 드라이런 결정·집행 계획.
 
     cycle_action ∈ {proceed, new_blocked, skip, halt}(screen_cycle·detect_anomaly).
     decision/planned_orders는 account가 주어진 정기 사이클에서만 채워진다.
@@ -66,11 +67,11 @@ class CycleResult:
     planned_orders: list[PlannedOrder] = field(default_factory=list)
     cycle_action: str = "proceed"
     blocked_reason: str = ""
-    trade_ids: list[str] = field(default_factory=list)   # 6단계 실송출 trades(broker 주입 시)
+    order_ids: list[str] = field(default_factory=list)   # 실송출 Orders(broker 주입 시)
 
 
 def new_cycle_id(now=None) -> str:
-    """timestamp 기반 cycle_id 발급(07-model cycles)."""
+    """timestamp 기반 CycleId 발급(07-model Cycles)."""
     return (now or now_utc()).strftime("%Y%m%dT%H%M%S%fZ")
 
 
@@ -138,7 +139,7 @@ def _plan_entries(
 
 
 def run_cycle(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     *,
     market_data: dict[str, pd.DataFrame] | None = None,
     holdings: tuple[str, ...] = (),
@@ -146,7 +147,7 @@ def run_cycle(
     account: Account | None = None,
     market_state: MarketState | None = None,
     params: dict | None = None,
-    source: str = "paper",
+    mode: str | None = None,
     broker: Broker | None = None,
 ) -> CycleResult:
     """한 사이클 실행. 반환: CycleResult.
@@ -157,7 +158,8 @@ def run_cycle(
     워치리스트가 만들어진 경우만(빈 사이클은 결정 None).
     """
     cycle_id = new_cycle_id()
-    journal.create_cycle(conn, cycle_id)
+    run_mode = mode or get_settings().trading_mode
+    journal.create_cycle(conn, cycle_id, mode=run_mode)
 
     # 1단계: 후보 선별 → 워치리스트 (wl은 score 보존 — 3단계 Candidate 입력)
     wl: pd.DataFrame | None = None
@@ -168,6 +170,7 @@ def run_cycle(
         watchlist = list(wl.index)
     else:
         watchlist = list(holdings)                       # 빈 사이클(데이터 미주입)
+    journal.advance_status(conn, cycle_id, "scoring")
 
     # 2단계 데이터는 호출측이 market_data로 주입(운영=data.market_data.fetch_prices).
     # 과거 성과는 별도 단계가 아니라 사이징 켈리 입력으로 들어간다(03-arch 3-2 · 06-sizing 6.1).
@@ -179,6 +182,7 @@ def run_cycle(
 
     # 3~4단계: 결정 + 사이클 리스크 게이트 (정기 + market_data + account 일 때만, 드라이런)
     if account is not None and wl is not None and not wl.empty:
+        journal.advance_status(conn, cycle_id, "deciding")
         p = params or load_params("risk_params")
         verdict = screen_cycle(market_state or MarketState(), account, p)   # 4단계 사이클 게이트
         cycle_action, blocked_reason = verdict.action, verdict.reason
@@ -197,15 +201,20 @@ def run_cycle(
                 planned, cycle_action, blocked_reason = [], "halt", anomaly.reason
         # halt/skip은 결정 자체를 하지 않음(매매 중단/사이클 스킵)
 
-    # 6단계 일부 선행: 결정 의도를 decisions에 먼저 적재 — 송출 전에 "무엇을 하려 했는지"를
-    # 디스크에 남기고(10-ops 10.1 idempotency), trades.decision_id FK가 이를 참조한다.
+    # 기록 일부 선행: 결정 의도를 Decisions에 먼저 적재 — 송출 전에 "무엇을 하려 했는지"를
+    # 디스크에 남기고(10-ops 10.1 idempotency), Orders.DecisionId FK가 이를 참조한다.
     decision_ids: dict[str, str] = {}
     if decision is not None:
-        stops = {p.code: p.stop for p in planned}
-        ids = journal.record_decisions(
-            conn, cycle_id, decision.orders, stops=stops, source=source
+        d = (params or load_params("risk_params"))["decision"]
+        limits = (params or load_params("risk_params"))["limits"]
+        journal.record_decisions(
+            conn, cycle_id, decision.orders,
+            plans={o.code: o for o in planned},
+            entry_threshold=d.get("entry_threshold"),
+            exit_threshold=d.get("exit_threshold"),
+            target_positions=int(limits["max_positions"]),
         )
-        # record_decisions의 결정론 키: f"{cycle_id}_{code}_{action}". buy/add 계열만 매핑.
+        # record_decisions의 결정론 키: f"{cycle_id}_{code}_{Action}". buy/add 계열만 매핑.
         for o in decision.orders:
             if o.action in (OrderAction.BUY, OrderAction.ADD):
                 decision_ids[o.code] = f"{cycle_id}_{o.code}_buy"
@@ -213,26 +222,25 @@ def run_cycle(
     journal.advance_status(conn, cycle_id, "ordering")
     # 5단계: 주문 송출. broker 주입 시 KIS 실집행(보유 청산으로 자금 회수 → 신규 진입,
     # 백테스트 engine 순서와 정합), 미주입이면 드라이런(차단).
-    trade_ids: list[str] = []
+    order_ids: list[str] = []
     if broker is not None:
-        order_mode = get_settings().trading_mode
         if market_data:                                  # 보유 청산(decide_exit + 결정 sell)
             forced_sells = (
                 [o.code for o in decision.orders if o.action == OrderAction.SELL]
                 if decision is not None else []
             )
-            trade_ids += exits.execute_exits(
+            order_ids += exits.execute_exits(
                 conn, market_data, broker=broker, cycle_id=cycle_id, asof=asof,
-                order_mode=order_mode, source=source, forced_sells=forced_sells,
+                order_mode=run_mode, mode=run_mode, forced_sells=forced_sells,
             )
         if planned:                                      # 신규 진입
-            trade_ids += orders.execute_entries(
+            order_ids += orders.execute_entries(
                 conn, planned, broker=broker, cycle_id=cycle_id,
                 decision_ids=decision_ids, market_map=universe.load_market_map(),
-                order_mode=order_mode, source=source,
+                order_mode=run_mode, mode=run_mode,
             )
 
     journal.advance_status(conn, cycle_id, "recorded")
     return CycleResult(
-        cycle_id, watchlist, decision, planned, cycle_action, blocked_reason, trade_ids
+        cycle_id, watchlist, decision, planned, cycle_action, blocked_reason, order_ids
     )

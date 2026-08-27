@@ -4,7 +4,7 @@
 어느 쪽이 나은지 판정한다. 워치리스트는 양쪽 모두 *전일 확정 일봉* 기준이고, 차이는
 사이클 시점 가격 프록시(시가 vs 종가)뿐이다.
 
-사용: PYTHONPATH=. .venv/bin/python run_cycle_compare.py [--limit N] [--start YYYY-MM-DD]
+사용: PYTHONPATH=. .venv/bin/python -m analysis.cycle_time_compare [--limit N] [--start YYYY-MM-DD]
 """
 from __future__ import annotations
 

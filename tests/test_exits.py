@@ -11,7 +11,6 @@ from exec.exits import (
 )
 from exec.orders import Fill, execute_entries
 from memory import journal
-from memory.db import init_db
 from pipeline.trading_cycle import PlannedOrder
 
 _P = {"exits": {"breakeven_R": 1.5, "trail_k": 2.75,
@@ -126,7 +125,7 @@ def test_stop_gap_multi_position_filters():
     assert [h.symbol for h in hits] == ["A"]
 
 
-# ── execute_exits 집행 통합 (FakeBroker로 송출→trades·outcomes·positions) ──
+# ── execute_exits 집행 통합 (FakeBroker로 송출→Orders·Outcomes·Positions) ──
 class _FakeBroker:
     def __init__(self, exit_fills=None):
         self.exit_fills = exit_fills or {}
@@ -154,6 +153,10 @@ def _df(last_close: float, base: float = 70000.0, n: int = 300) -> pd.DataFrame:
     )
 
 
+def _count(conn, table: str) -> int:
+    return conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
+
+
 def _enter(conn, broker, cycle="CY1", price=70000.0, stop=65000.0, qty=3):
     journal.create_cycle(conn, cycle)
     execute_entries(
@@ -162,61 +165,66 @@ def _enter(conn, broker, cycle="CY1", price=70000.0, stop=65000.0, qty=3):
     )
 
 
-def test_execute_stop_hit_full_exit(tmp_path):
-    conn = init_db(str(tmp_path / "t.db"))
+def test_execute_stop_hit_full_exit(conn):
     fb = _FakeBroker()
     _enter(conn, fb)
     journal.create_cycle(conn, "CY2")
-    tids = execute_exits(conn, {"005930": _df(60000.0)}, broker=fb,
-                         cycle_id="CY2", order_mode="paper")   # 60000 < 손절 65000
-    assert tids == ["CY2-005930-exit-0"]
-    o = conn.execute("SELECT * FROM outcomes WHERE symbol='005930'").fetchone()
-    assert o["qty"] == 3 and o["exit_reason"] == "stop_hit" and o["net_pnl"] < 0
-    pos = conn.execute("SELECT status, qty FROM positions").fetchone()
-    assert pos["status"] == "closed" and pos["qty"] == 0
-    t = conn.execute(
-        "SELECT side, ord_dvsn FROM trades WHERE trade_id='CY2-005930-exit-0'"
+    order_ids = execute_exits(conn, {"005930": _df(60000.0)}, broker=fb,
+                              cycle_id="CY2", order_mode="paper")  # 60000 < 손절 65000
+    assert order_ids == ["CY2-005930-exit-0"]
+    o = conn.execute(
+        'SELECT * FROM "Outcomes" WHERE "SymbolId"=\'005930\''
     ).fetchone()
-    assert t["side"] == "sell" and t["ord_dvsn"] == "01"   # paper 시장가 보정
-    conn.close()
+    assert o["Quantity"] == 3 and o["ExitReason"] == "stopHit"   # 07-model CHECK 값
+    assert o["NetProfitLoss"] < 0 and o["ExitKind"] == "full"
+    assert o["RMultiple"] < 0                                    # 손절이니 −1R 근처
+    pos = conn.execute('SELECT "Status", "Quantity" FROM "Positions"').fetchone()
+    assert pos["Status"] == "closed" and pos["Quantity"] == 0
+    t = conn.execute(
+        'SELECT "Side", "OrderType", "Purpose" FROM "Orders" '
+        'WHERE "ClientOrderId"=\'CY2-005930-exit-0\''
+    ).fetchone()
+    assert t["Side"] == "sell" and t["OrderType"] == "01"   # paper 시장가 보정
+    assert t["Purpose"] == "exit"
 
 
-def test_execute_forced_sell_invalidation(tmp_path):
-    conn = init_db(str(tmp_path / "t.db"))
+def test_execute_forced_sell_invalidation(conn):
     fb = _FakeBroker()
     _enter(conn, fb)
     journal.create_cycle(conn, "CY2")
     execute_exits(conn, {"005930": _df(72000.0)}, broker=fb, cycle_id="CY2",
                   forced_sells=["005930"], order_mode="paper")   # 손절 위지만 결정이 sell
-    assert conn.execute("SELECT exit_reason FROM outcomes").fetchone()["exit_reason"] == "thesis_invalid"
-    assert conn.execute("SELECT status FROM positions").fetchone()["status"] == "closed"
-    conn.close()
+    assert conn.execute(
+        'SELECT "ExitReason" FROM "Outcomes"'
+    ).fetchone()["ExitReason"] == "thesisInvalid"
+    assert conn.execute(
+        'SELECT "Status" FROM "Positions"'
+    ).fetchone()["Status"] == "closed"
 
 
-def test_execute_breakeven_raises_stop_only(tmp_path):
+def test_execute_breakeven_raises_stop_only(conn):
     """+1.5R 도달 — 매도 없이 손절만 본전으로. 부분 익절은 설계에 없다."""
-    conn = init_db(str(tmp_path / "t.db"))
     fb = _FakeBroker()
     _enter(conn, fb)                                   # R=5000, +1.5R=77500
     journal.create_cycle(conn, "CY2")
     execute_exits(conn, {"005930": _df(78000.0)}, broker=fb, cycle_id="CY2", order_mode="paper")
     pos = conn.execute(
-        "SELECT qty, current_stop_price FROM positions"
+        'SELECT "Quantity", "CurrentStopPrice", "IsBreakevenDone" FROM "Positions"'
     ).fetchone()
-    assert pos["qty"] == 3                              # 수량 그대로(매도 없음)
-    assert pos["current_stop_price"] == 70000.0         # 본전으로 상향
-    assert conn.execute("SELECT COUNT(*) c FROM outcomes").fetchone()["c"] == 0
-    conn.close()
+    assert pos["Quantity"] == 3                         # 수량 그대로(매도 없음)
+    assert pos["CurrentStopPrice"] == 70000.0           # 본전으로 상향
+    assert pos["IsBreakevenDone"] is True               # 다음 사이클에 ③이 또 걸리지 않게
+    assert _count(conn, '"Outcomes"') == 0
 
 
-def test_execute_hold_no_action(tmp_path):
-    conn = init_db(str(tmp_path / "t.db"))
+def test_execute_hold_no_action(conn):
     fb = _FakeBroker()
     _enter(conn, fb)
     journal.create_cycle(conn, "CY2")
-    tids = execute_exits(conn, {"005930": _df(70000.0)}, broker=fb,
-                         cycle_id="CY2", order_mode="paper")
-    assert tids == [] and fb.exits == []
-    assert conn.execute("SELECT COUNT(*) c FROM outcomes").fetchone()["c"] == 0
-    assert conn.execute("SELECT status FROM positions").fetchone()["status"] == "open"
-    conn.close()
+    order_ids = execute_exits(conn, {"005930": _df(70000.0)}, broker=fb,
+                              cycle_id="CY2", order_mode="paper")
+    assert order_ids == [] and fb.exits == []
+    assert _count(conn, '"Outcomes"') == 0
+    assert conn.execute(
+        'SELECT "Status" FROM "Positions"'
+    ).fetchone()["Status"] == "open"

@@ -21,11 +21,11 @@ def main() -> None:
     if recovered:
         print(f"미완 사이클 복구(failed): {recovered}")
 
-    cycle_id = run_cycle(conn)
+    res = run_cycle(conn)
     status = conn.execute(
-        "SELECT status FROM cycles WHERE cycle_id=?", (cycle_id,)
-    ).fetchone()["status"]
-    print(f"사이클 {cycle_id} → {status}")
+        'SELECT "Status" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
+    ).fetchone()["Status"]
+    print(f"사이클 {res.cycle_id} → {status}")
     conn.close()
 
 

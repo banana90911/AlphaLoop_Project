@@ -1,11 +1,14 @@
-"""학습 시드 — 켈리 p·b·outcomes 적재 (backtest/seed, 5-2·Phase6)."""
+"""백테스트 거래 결과 → 켈리 p·b (backtest/seed).
+
+DB 적재는 검증하지 않는다 — 백테스트 결과는 DB에 넣지 않는 것이 설계다(07-model 공통
+규칙). 여기 남은 것은 순수 계산뿐이라 DB 서버 없이도 돈다.
+"""
 from datetime import date
 
 import pytest
 
+from backtest.seed import kelly_pb
 from backtest.spec_engine import ClosedTrade
-from backtest.seed import kelly_pb, seed_outcomes
-from memory.db import init_db
 
 
 def _t(code, entry, exit_, pnl, d0=date(2024, 1, 2), d1=date(2024, 1, 20)):
@@ -23,26 +26,3 @@ def test_kelly_pb_basic():
 def test_kelly_pb_none_when_no_losses():
     assert kelly_pb([_t("A", 100, 110, 100)]) is None     # 손실 표본 없음
     assert kelly_pb([]) is None
-
-
-def test_seed_outcomes_inserts(tmp_path):
-    conn = init_db(str(tmp_path / "t.db"))
-    trades = [_t("005930", 100, 110, 100), _t("000660", 100, 90, -100)]
-    n = seed_outcomes(conn, trades, source="backtest")
-    conn.commit()
-    assert n == 2
-    rows = conn.execute(
-        "SELECT symbol, return_pct, source FROM outcomes ORDER BY symbol"
-    ).fetchall()
-    assert rows[0][0] == "000660" and rows[0][2] == "backtest"
-    assert rows[1][1] == pytest.approx(0.10)              # 005930 +10%
-
-
-def test_seed_feeds_calibration_kelly_chain(tmp_path):
-    # 시드한 outcomes로 켈리 p·b가 산출되는 전체 흐름(학습 1일차 활성)
-    conn = init_db(str(tmp_path / "t.db"))
-    trades = [_t("A", 100, 110, 100), _t("B", 100, 120, 200), _t("C", 100, 90, -100)]
-    seed_outcomes(conn, trades)
-    conn.commit()
-    assert conn.execute("SELECT COUNT(*) FROM outcomes WHERE source='backtest'").fetchone()[0] == 3
-    assert kelly_pb(trades) is not None

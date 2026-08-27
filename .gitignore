@@ -22,8 +22,6 @@ ENV/
 
 # ── 데이터·DB (로컬 산출물) ──────────────────────
 *.db
-*.sqlite
-*.sqlite3
 data/cache/        # 백테스트 데이터 캐시(코드 아님) — data/ 소스 패키지는 추적
 *.parquet
 logs/

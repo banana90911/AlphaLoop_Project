@@ -42,8 +42,11 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
     # ── 모드 (모의/실전 전환은 이 플래그 하나로, 03-arch 3.3 / 10-ops 10.10) ──
     trading_mode: str = "paper"  # "paper" | "real"
-    # ── 경로(호스트 비의존, 03-arch 3.3) ──
-    db_path: str = "journal.sqlite"
+    # ── DB 접속(호스트 비의존, 03-arch 3.3) ──
+    # 접속 계정은 둘 — 매매 코어용(읽기·쓰기)과 대시보드용(SELECT만, 07-model 공통 규칙).
+    # 대시보드 DSN이 비어 있으면 코어 DSN으로 붙되 읽기 전용 트랜잭션으로 강등한다(memory/db).
+    db_dsn: str = "postgresql:///journal"
+    db_dsn_readonly: str = ""
 
 
 @lru_cache

@@ -67,10 +67,10 @@ KIS API로 주문 송출. 손절 예약.
 
 ## 3-3. 리포 구조
 ```
-프로젝트 루트      (✅=구현 완료, ◑=일부 구현, (예정)=미착수)
-├── run_daily_ingest.py         # 장 시작 전 일일 배치 진입점 (전종목 데이터·점수 준비) (예정)
+프로젝트 루트      (✅=구현 완료, ◑=일부 구현, ○=뼈대만 — 파일·설계 주석은 있고 로직 없음)
+├── run_daily_ingest.py         # 장 시작 전 일일 배치 진입점 (전종목 데이터·점수 준비) ○
 ├── run_trading_cycle.py        # 정기 사이클 진입점 (14:30, 외부 스케줄러가 호출)
-├── run_watch.py                # 보유 감시 진입점 (장중 30분 간격, 손절 무결성만) (예정)
+├── run_watch.py                # 보유 감시 진입점 (장중 30분 간격, 손절 무결성만) ○
 ├── run_gate.py                 # Go/No-Go 게이트 실행기 (설계 정합 엔진 연속 실행)
 ├── run_walkforward.py          # 워크포워드 OOS 검증 (학습 구간 선택 → 검증 구간 적용) ✅
 ├── pyproject.toml              # 의존성 + ruff/mypy 가드레일 설정 (불변식 기계 강제)
@@ -85,7 +85,7 @@ KIS API로 주문 송출. 손절 예약.
 ├── core/                       # 공용 기반 (얇은 유틸 — 프레임워크 아님)
 │   ├── schemas.py              #   pydantic 스키마 (결정 출력 전체검증 — 절반 결정 채택 금지) ✅
 │   ├── timeutils.py            #   UTC/KST 경계 함수 (시간대 정규화 단일 책임) — 10-ops 10.8 ✅
-│   ├── trading_days.py         #   거래일/휴장/반장 판정 (exchange_calendars + KIS 영업일 2중) (예정)
+│   ├── trading_days.py         #   거래일/휴장/반장 판정 (exchange_calendars + KIS 영업일 2중) ○
 │   └── costs.py                #   비용·세금·슬리피지 단일 모델 (백테스트·실거래 공통) — 04-data 4.x·09-eval 9.1 ✅
 │
 ├── broker/                     # ◆모드 분기 화이트리스트◆ KIS 연동 (도메인·계좌 주입)
@@ -99,26 +99,26 @@ KIS API로 주문 송출. 손절 예약.
 │   ├── cache.py                #   백테스트 입력 parquet 캐시(실전 전환 시 폐기) — 09-eval 9.5 ✅
 │   ├── collect.py              #   백테스트 데이터 수집 오케스트레이션(이어받기·실패격리) — 09-eval 9.5 ✅
 │   ├── market_data.py          #   운영 최근 시세·수급 fetch → prices dict(메모리, 캐시 비영속) — 3.1 2단계 ✅
-│   ├── corrections.py          #   수정주가·freshness·vintage 보정 (04-data 4.1·4.3) (예정)
+│   ├── corrections.py          #   수정주가·freshness·vintage 보정 (04-data 4.1·4.3) ○
 │   └── sources/                #   출처별 어댑터 (동일 스키마 반환) — 10-ops 10.18
 │       ├── kis_history.py      #     KIS 과거 일봉·공매도(구간 페이지네이션) ✅
 │       ├── naver_finance.py    #     네이버 과거 수급(외국인·기관)·상폐 시세(스크래핑) ✅
 │       ├── universe.py         #     KIS 종목마스터(.mst) 보통주 유니버스 ✅
 │       ├── index_history.py    #     코스피·코스닥 지수(yfinance, 벤치마크·레짐 라벨 적재) ✅
-│       └── dart_disclosure.py  #     DART 기업행위(무상증자·감자·유상증자 정형 API) (예정)
+│       └── dart_disclosure.py  #     DART 기업행위(무상증자·감자·유상증자 정형 API) ○
 │
 ├── risk/                       # 결정론 리스크·사이징
 │   ├── risk_engine.py          #   하드룰(총노출)·서킷브레이커·검사 순서·재개·이상행동 — 05-risk ✅
 │   └── sizing.py               #   동일가중(기본) + 변동성 타깃팅·켈리 상한(대안) ✅
 │
 ├── exec/                       # 주문·청산 집행
-│   ├── orders.py               #   주문 송출·중복 방지(clientOrderId)·부분체결 정리 ◑(진입 송출·체결 즉시 손절 스톱(22) 등록·Orders/Positions 적재 완료; 부분체결 분할은 후속)
+│   ├── orders.py               #   주문 송출·중복 방지(ClientOrderId)·부분체결 정리 ◑(진입 송출·체결 즉시 손절 스톱(22) 등록·Orders/Positions 적재 완료; 부분체결 분할은 후속)
 │   └── exits.py                #   청산 우선순위·R 고정·스톱 재동기화·손절 구멍 판정 ◑(청산 송출·Outcomes 적재 완료; KIS 스톱 정정·잔고 동기화·선행 게이트 연결은 후속)
 │
 ├── memory/                     # ★PostgreSQL 기록·학습 (유일한 프로세스 공유점)
 │   ├── db.py                   #   connect() 단일 진입점 (계정 분리·연결 상한) — 10-ops 10.2 ✅
 │   ├── schema.sql              #   스키마 (07-model 7장 표 카탈로그) ✅
-│   ├── migrations/             #   Alembic 스키마 변경 (forward+backward) — 10-ops 10.12 (예정)
+│   ├── migrations/             #   Alembic 스키마 변경 (forward+backward) — 10-ops 10.12 ○
 │   ├── journal.py              #   사이클 적재·조회 (Decisions·Orders·Positions·Outcomes …) ✅
 │   └── calibration.py          #   성과 통계 집계 (승률·손익비·수축·신뢰구간) — 06-sizing 6.1 켈리 입력 ✅
 │
@@ -138,19 +138,20 @@ KIS API로 주문 송출. 손절 예약.
 │   └── gate.py                 #   Go/No-Go 3조건(벤치 4종·PBO·견고성) + DSR 보조 — 09-eval 9.2 ✅
 │
 ├── ops/                        # 무인 운영 (silent failure 차단)
-│   ├── heartbeat.py            #   dead-man's switch ping (정상종료/SafeStop 구분) (예정)
-│   ├── notify.py               #   Discord 웹훅 알림 (예정)
-│   └── backup.py               #   pg_dump 백업 (거래기록 매 사이클·전체 1일 1회) — 10-ops 10.7 (예정)
+│   ├── heartbeat.py            #   dead-man's switch ping (정상종료/SafeStop 구분) ○
+│   ├── notify.py               #   Discord 웹훅 알림 ○
+│   └── backup.py               #   pg_dump 백업 (거래기록 매 사이클·전체 1일 1회) — 10-ops 10.7 ○
 │
 ├── dashboard/                  # 읽기 전용 (매매와 DB로만 결합 — 한 줄도 매매 코어 안 건드림)
-│   ├── api.py                  #   FastAPI 조회 JSON API (SELECT 전용 계정 — 08-dashboard 8.1) (예정)
-│   ├── auth.py                 #   비밀번호 로그인·출입증 발급/검증 — 08-dashboard 8.6 (예정)
-│   └── web/                    #   프론트 React+Vite+Tailwind (Vercel 배포 — 10-ops 10.13) (예정)
+│   ├── api.py                  #   FastAPI 조회 JSON API (SELECT 전용 계정 — 08-dashboard 8.1) ○
+│   ├── auth.py                 #   비밀번호 로그인·출입증 발급/검증 — 08-dashboard 8.6 ○
+│   └── web/                    #   프론트 React+Vite+Tailwind (Vercel 배포 — 10-ops 10.13) ○
 │
 ├── analysis/                   # 탐색용 분석 (정식 산출물 아님 — 파라미터 정립 근거 수집)
 │   ├── momentum_ic.py          #   모멘텀 정의별 Rank IC 비교 (신호 자체의 예측력 분리) ✅
 │   ├── momentum_grid.py        #   모멘텀 파라미터 그리드 탐색 ✅
-│   └── momentum_weights.py     #   스크리너 가중치 탐색 (3.1 1단계 미결 항목 근거) ✅
+│   ├── momentum_weights.py     #   스크리너 가중치 탐색 (3.1 1단계 미결 항목 근거) ✅
+│   └── cycle_time_compare.py   #   사이클 시각 비교 10:00 vs 14:30 (3.1 14:30 확정 근거) ✅
 │
 └── tests/                      # pytest (룰별 단위·골든 케이스·paper↔live 동일성 매트릭스) — 09-eval 9.4
 ```

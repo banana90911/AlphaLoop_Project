@@ -20,3 +20,6 @@ data/cache/        # 백테스트 데이터 캐시(코드 아님) — data/ 소�
 
 # 워크포워드 실행 결과
 tune_results/
+
+# 대시보드 화면 개발 부산물
+.playwright-mcp/

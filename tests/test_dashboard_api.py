@@ -76,19 +76,53 @@ def test_login_rejects_when_unconfigured(guarded_client, monkeypatch):
     assert r.status_code == 503
 
 
+@pytest.fixture(autouse=True)
+def _reset_lockout():
+    """잠금 상태는 프로세스 메모리에 남는다 — 테스트끼리 새어 나가지 않게 비운다."""
+    api.auth._attempts.clear()
+    yield
+    api.auth._attempts.clear()
+
+
 def test_login_sets_httponly_cookie(guarded_client, monkeypatch):
     monkeypatch.setattr(api.auth, "is_configured", lambda: True)
     monkeypatch.setattr(api.auth, "verify_password", lambda p: p == "ok")
     monkeypatch.setattr(api.auth, "issue_token", lambda: "TOKEN")
     r = guarded_client.post("/api/login", json={"password": "ok"})
-    assert r.status_code == 200 and r.json()["expires_days"] == 7
-    assert "httponly" in r.headers["set-cookie"].lower()
+    assert r.status_code == 200 and r.json()["expires_hours"] == 12
+    cookie = r.headers["set-cookie"].lower()
+    assert "httponly" in cookie
+    # 세션 쿠키여야 한다 — 만료가 박히면 브라우저가 디스크에 저장한다(8.6)
+    assert "max-age" not in cookie and "expires" not in cookie
 
 
 def test_login_rejects_wrong_password(guarded_client, monkeypatch):
     monkeypatch.setattr(api.auth, "is_configured", lambda: True)
     monkeypatch.setattr(api.auth, "verify_password", lambda p: False)
     assert guarded_client.post("/api/login", json={"password": "nope"}).status_code == 401
+
+
+def test_login_locks_out_after_repeated_failures(guarded_client, monkeypatch):
+    """연속 실패가 임계를 넘으면 맞는 비밀번호도 받지 않는다(8.6 무차별 대입 차단)."""
+    monkeypatch.setattr(api.auth, "is_configured", lambda: True)
+    monkeypatch.setattr(api.auth, "verify_password", lambda p: p == "ok")
+    monkeypatch.setattr(api.auth, "issue_token", lambda: "TOKEN")
+    for _ in range(api.auth.LOCKOUT_THRESHOLD):
+        assert guarded_client.post("/api/login", json={"password": "no"}).status_code == 401
+    r = guarded_client.post("/api/login", json={"password": "ok"})
+    assert r.status_code == 429
+
+
+def test_successful_login_clears_the_counter(guarded_client, monkeypatch):
+    monkeypatch.setattr(api.auth, "is_configured", lambda: True)
+    monkeypatch.setattr(api.auth, "verify_password", lambda p: p == "ok")
+    monkeypatch.setattr(api.auth, "issue_token", lambda: "TOKEN")
+    for _ in range(api.auth.LOCKOUT_THRESHOLD - 1):
+        guarded_client.post("/api/login", json={"password": "no"})
+    assert guarded_client.post("/api/login", json={"password": "ok"}).status_code == 200
+    # 세었던 실패가 지워졌으므로 다시 임계까지 여유가 생긴다
+    for _ in range(api.auth.LOCKOUT_THRESHOLD - 1):
+        assert guarded_client.post("/api/login", json={"password": "no"}).status_code == 401
 
 
 # ── ① 나의 정보 ──────────────────────────────────────────────────

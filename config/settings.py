@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # ── 대시보드 — 비밀번호는 해시만 둔다 ──
     dashboard_password_hash: str = ""
     dashboard_token_secret: str = ""
+    # 화면(Vercel)과 API(NCP)가 다른 출처라 브라우저가 조회를 막는다. 여기 적은 주소에서
+    # 오는 요청만 허용한다(쉼표로 여러 개). 비우면 같은 출처로 보고 아무 데도 열지 않는다.
+    dashboard_allowed_origins: str = ""
     # ── 모드 (모의/실전 전환은 이 플래그 하나로) ──
     trading_mode: str = "paper"  # "paper" | "real"
     # ── DB 접속 — 코어용(읽기·쓰기)과 대시보드용(SELECT만) 계정을 분리 ──

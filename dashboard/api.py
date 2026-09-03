@@ -10,9 +10,10 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from config.settings import load_params
+from config.settings import get_settings, load_params
 from core.timeutils import kst_day_bounds, kst_today
 from core.trading_days import trading_days_between
 from dashboard import auth
@@ -20,6 +21,19 @@ from memory import journal
 from memory.db import connect
 
 app = FastAPI(title="AlphaLoop Dashboard API", docs_url=None, redoc_url=None)
+
+# 화면은 Vercel, API는 NCP다(08-dashboard 8.5). 브라우저는 다른 출처로 나가는 조회를
+# 기본적으로 막으므로, 내 화면 주소만 명시적으로 연다. 목록이 비어 있으면 아무 데도
+# 열지 않는다 — 주소를 아는 사람이 있어도 브라우저에서는 아무것도 못 읽는다.
+_ORIGINS = [o.strip() for o in get_settings().dashboard_allowed_origins.split(",") if o.strip()]
+if _ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_ORIGINS,     # 와일드카드를 쓰지 않는다 — 쿠키를 함께 보내야 해서
+        allow_credentials=True,     # 출입증 쿠키가 요청에 실리려면 필요하다
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
 
 # 목록 조회 상한 — 화면이 한 번에 그릴 수 있는 양을 넘지 않게 서버가 막는다
 MAX_LIMIT = 1000
@@ -53,15 +67,30 @@ class LoginBody(BaseModel):
 
 @app.post("/api/login")
 def login(body: LoginBody, response: Response, request: Request) -> dict:
-    """비밀번호로 출입증을 발급한다(성공·실패 모두 로그에 남김)."""
+    """비밀번호로 출입증을 발급한다(성공·실패 모두 로그에 남김).
+
+    연속 실패가 쌓이면 그 주소를 잠근다. 출입증 유효기간을 줄이는 것보다 이 문을
+    잠그는 쪽이 실제 안전에 크게 기여한다 — 출입증은 화면 코드가 못 읽는 쿠키에 있지만
+    로그인 문은 주소만 알면 누구나 두드릴 수 있기 때문이다(8.6).
+    """
     if not auth.is_configured():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "로그인이 설정되지 않았습니다")
+    source = request.client.host if request.client else ""
+
+    wait = auth.locked_seconds(source)
+    if wait:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"시도가 너무 많습니다. {wait // 60 + 1}분 뒤에 다시 시도하세요",
+        )
+
     ok = auth.verify_password(body.password)
-    auth.log_attempt(ok, request.client.host if request.client else "")
+    auth.log_attempt(ok, source)
+    auth.record_attempt(ok, source)
     if not ok:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "비밀번호가 다릅니다")
     response.set_cookie(value=auth.issue_token(), **auth.cookie_kwargs())
-    return {"ok": True, "expires_days": auth.TOKEN_TTL_DAYS}
+    return {"ok": True, "expires_hours": auth.TOKEN_TTL_HOURS}
 
 
 @app.post("/api/logout")
@@ -334,9 +363,16 @@ def get_trades(conn: DbConn, start: date | None = None, end: date | None = None,
     설명하기 위해서다 — 매매와 이체가 따로 놀면 그 인과를 사람이 못 잇는다.
     """
     capped = max(1, min(limit, MAX_LIMIT))
+    # 목록이 요구하는 열 중 둘은 "Orders"에 없다(08-dashboard 8.4 ③) —
+    #   손절가: 그 주문을 낳은 결정의 "StopPrice"
+    #   상태(보유/청산): 그 진입이 만든 포지션이 아직 열려 있는지
+    # 화면에서 종목코드로 짐작하면 같은 종목을 재진입했을 때 옛 매수가 "보유"로 보인다.
     sql = (
-        'SELECT o.*, s."Name" FROM "Orders" o '
-        'LEFT JOIN "Symbols" s ON s."SymbolId" = o."SymbolId" WHERE 1=1'
+        'SELECT o.*, s."Name", d."StopPrice", p."Status" AS "PositionStatus" '
+        'FROM "Orders" o '
+        'LEFT JOIN "Symbols" s ON s."SymbolId" = o."SymbolId" '
+        'LEFT JOIN "Decisions" d ON d."DecisionId" = o."DecisionId" '
+        'LEFT JOIN "Positions" p ON p."EntryDecisionId" = o."DecisionId" WHERE 1=1'
     )
     params: list[Any] = []
     # OrderedDateTime은 timestamptz(UTC)다. KST 날짜를 UTC 구간으로 바꿔 거른다

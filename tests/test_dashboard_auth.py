@@ -71,20 +71,20 @@ def test_unknown_scheme_rejects(monkeypatch):
     assert not auth.verify_password("hunter2")
 
 
-# ── 출입증: 7일 만료·서명 검증 ────────────────────────────────────
+# ── 출입증: 12시간 만료·서명 검증 ─────────────────────────────────
 def test_issued_token_verifies(configured):
     assert auth.verify_token(auth.issue_token())
 
 
-def test_token_expires_in_seven_days(configured):
+def test_token_expires_in_twelve_hours(configured):
     payload = jwt.decode(auth.issue_token(), _SECRET, algorithms=[auth.ALGORITHM])
     life = payload["exp"] - payload["iat"]
-    assert life == auth.TOKEN_TTL_DAYS * 86400 == 7 * 86400
+    assert life == auth.TOKEN_TTL_HOURS * 3600 == 12 * 3600
 
 
 def test_expired_token_rejected(configured):
-    past = now_utc() - timedelta(days=8)
-    stale = jwt.encode({"sub": "owner", "iat": past, "exp": past + timedelta(days=7)},
+    past = now_utc() - timedelta(hours=13)
+    stale = jwt.encode({"sub": "owner", "iat": past, "exp": past + timedelta(hours=12)},
                        _SECRET, algorithm=auth.ALGORITHM)
     assert not auth.verify_token(stale)
 
@@ -126,7 +126,14 @@ def test_cookie_is_httponly_and_secure(monkeypatch):
     kw = auth.cookie_kwargs()
     assert kw["httponly"] is True          # JS가 읽지 못한다
     assert kw["secure"] is True
-    assert kw["max_age"] == 7 * 86400
+
+
+def test_cookie_is_session_scoped(monkeypatch):
+    """max_age가 없어야 브라우저가 디스크에 저장하지 않고 창을 닫을 때 버린다(8.6)."""
+    monkeypatch.delenv("DASHBOARD_INSECURE_COOKIE", raising=False)
+    kw = auth.cookie_kwargs()
+    assert "max_age" not in kw
+    assert "expires" not in kw
 
 
 def test_insecure_cookie_only_when_explicitly_opted_in(monkeypatch):

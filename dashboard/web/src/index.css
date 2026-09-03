@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/* ── 색 규칙 ───────────────────────────────────────────────────
+   값이 오르면 빨강, 내리면 파랑(08-dashboard 8.4). 한국 시장 관례를 그대로 따른다.
+   매수·매도 점은 이것과 별개다 — 매수 초록, 매도 빨강, 입출금은 회색.
+   "얼마나 벌었나"(빨강·파랑)와 "무슨 행동을 했나"(초록·빨강·회색)는 다른 축이라
+   같은 팔레트를 쓰면 사람이 둘을 뒤섞어 읽는다.                                  */
+@theme {
+  --color-ink-950: #0a0c10;   /* 페이지 바닥 */
+  --color-ink-900: #10131a;   /* 패널 */
+  --color-ink-850: #151922;   /* 패널 안쪽 한 겹 더 */
+  --color-ink-800: #1c212c;   /* 테두리 */
+  --color-ink-700: #2a313f;
+  --color-ink-400: #7d879a;   /* 보조 글자 */
+  --color-ink-200: #c3cad6;
+  --color-ink-50:  #eef1f6;   /* 본문 글자 */
+
+  --color-up:   #f0525f;      /* 상승 */
+  --color-down: #4e8ef7;      /* 하락 */
+  --color-buy:  #22c07d;      /* 매수 체결 */
+  --color-sell: #f0525f;      /* 매도 체결 */
+  --color-flow: #8a94a6;      /* 입출금 */
+  --color-warn: #f0a92c;
+
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+               "Apple SD Gothic Neo", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--color-ink-950);
+  color: var(--color-ink-50);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* 숫자는 어디서든 등폭으로 — 60초마다 값이 바뀔 때 자릿수가 흔들리지 않는다 */
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-700);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track { background: transparent; }
+
+input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }

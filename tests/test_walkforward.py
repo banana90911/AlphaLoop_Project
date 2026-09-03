@@ -1,4 +1,11 @@
-"""워크포워드 분할 — 롤링/앵커드·룩어헤드 차단 (backtest/walkforward, 09-eval 9.1)."""
+"""
+description:        워크포워드 분할 — 롤링/앵커드·룩어헤드 차단 (backtest/walkforward, 09-eval 9.1).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 from dataclasses import FrozenInstanceError
 from datetime import date, timedelta
 

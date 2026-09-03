@@ -1,15 +1,10 @@
-"""주문 송출·집행 — planned(신규 진입) → KIS 송출 → Orders·Positions 적재 (5~6단계).
-
-이 모듈은 *오케스트레이션*만 한다 — ClientOrderId 부여, 재시도 금지 정책(10-ops 10.3),
-체결 결과의 Orders·Positions 적재. *KIS 통신·체결 확인·응답 정규화는 broker(Broker
-프로토콜)가 책임*진다(라이브 응답 필드가 미확정이라 파싱을 한 곳에 격리). 순수 결정론
-코드(03-arch 3.3) — broker만 외부 I/O.
-
-주문 유형(10-ops 10.14 정책표): 진입=11 IOC지정가. 단 KIS 모의는 IOC 미지원이라 paper는
-00 일반지정가로 보정(reference_kis_paper_no_ioc) — `if mode` 분기가 아니라 모드별
-데이터 룩업(ENTRY_ORD_DVSN). 청산(sell/trim) 집행은 exits 경로로 후속 배선.
 """
-from __future__ import annotations
+description:        주문 송출·집행 (신규 진입 → KIS 송출 → Orders·Positions 적재)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from dataclasses import dataclass
 from typing import Protocol
@@ -17,14 +12,14 @@ from typing import Protocol
 from core.timeutils import now_utc
 from memory import journal
 
-# 진입 주문구분 — 모드별(10-ops 10.14 + 모의 IOC 미지원 보정). if-분기 아닌 데이터 룩업.
+# 진입 주문구분 — 모드별(모의 IOC 미지원 보정). if-분기 아닌 데이터 룩업.
 ENTRY_ORD_DVSN = {"real": "11", "paper": "00", "backtest": "00"}
-STOP_ORD_DVSN = "22"   # 손절 스톱지정가(10-ops 10.14). 트리거 도달 시 KIS 자동 발동.
+STOP_ORD_DVSN = "22"   # 손절 스톱지정가. 트리거 도달 시 KIS 자동 발동.
 
 
 @dataclass
 class Fill:
-    """broker가 정규화한 체결 결과. broker가 송출·접수확인·파싱을 끝낸 단일 진실."""
+    """broker가 정규화한 체결 결과."""
     filled_qty: int
     fill_price: float | None
     status: str                       # submitted/filled/partial/cancelled/rejected
@@ -34,11 +29,7 @@ class Fill:
 
 
 class Broker(Protocol):
-    """주문 집행 채널. KISClient(실거래·모의)·FakeBroker(테스트)가 구현.
-
-    place_entry는 송출 + 접수/체결 확인 + 정규화까지 책임지고 Fill을 반환한다.
-    POST 재시도는 하지 않으며(중복주문 방지 10-ops 10.3), 송출 실패·미접수는 status로 표현한다.
-    """
+    """주문 집행 채널. KISClient(실거래·모의)·FakeBroker(테스트)가 구현한다."""
     def place_entry(
         self, *, code: str, qty: int, price: int, ord_dvsn: str, client_order_id: str
     ) -> Fill: ...
@@ -65,12 +56,7 @@ def execute_entries(
     mode: str = "paper",
     now=None,
 ) -> list[str]:
-    """신규 진입(planned) 송출·체결 → Orders·Positions 적재. 반환: ClientOrderId 목록.
-
-    planned: PlannedOrder 시퀀스(code·qty·price·stop). decision_ids: code→DecisionId
-    (결정 적재 결과, Orders.DecisionId FK). market_map: code→시장(거래세율·비용,
-    Positions.Market). 체결(filled_qty>0)이면 Positions 갱신.
-    """
+    """신규 진입(planned)을 송출·체결해 Orders·Positions에 적재한다. 반환: ClientOrderId 목록."""
     decision_ids = decision_ids or {}
     market_map = market_map or {}
     ord_dvsn = ENTRY_ORD_DVSN[order_mode]
@@ -95,9 +81,7 @@ def execute_entries(
         )
         order_ids.append(coid)
         if fill.filled_qty > 0:
-            # 체결가 미파싱(KIS avg_prvs 0/누락) 시 주문가로 폴백 — 체결된 포지션을 장부·스톱
-            # 등록에서 통째로 누락(추적 안 되는 맨몸 포지션)시키지 않는다. Orders엔 broker가
-            # 보고한 원값(None)을 남기고, 비용·R 산정이 필요한 Positions만 보정.
+            # 체결가 미파싱 시 주문가로 폴백 — 체결된 포지션 장부 누락을 막는다
             entry_px = fill.fill_price if fill.fill_price is not None else float(order_price)
             position_id = journal.upsert_entry_position(
                 conn, cycle_id=cycle_id, symbol_id=o.code, add_quantity=fill.filled_qty,
@@ -105,11 +89,10 @@ def execute_entries(
                 current_stop_price=o.stop, initial_stop_price=o.stop,   # 진입 시 initial=current(R 고정)
                 market=market_map.get(o.code),
             )
-            # 손절 스톱 KIS 등록 — 체결 즉시 등록해 장간 갭 맨몸 포지션을 막는다(10-ops 10.3).
+            # 손절 스톱 KIS 등록 — 체결 즉시 등록해 장간 갭 맨몸 포지션을 막는다
             stop_coid = _register_stop(
                 conn, o, fill.filled_qty, cycle_id, seq, did, mode, ts, broker
             )
-            # 상주 스톱을 포지션에 연결 — 비어 있으면 손절 없이 방치된 포지션이다(07-model).
             journal.set_active_stop(conn, position_id, stop_coid)
             order_ids.append(stop_coid)
     return order_ids

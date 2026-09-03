@@ -31,6 +31,7 @@
 | 〃      | `Decisions`        | 제안 주문 1건           | 초기  |
 | 〃      | `RiskChecks`       | 게이트 판정 1건          | 초기  |
 | 집행     | `Orders`           | 주문 송출 1건           | 초기  |
+| 〃      | `CashFlows`        | 외부 현금흐름(입출금·배당) 1건 | 초기  |
 | 〃      | `Positions`        | 보유 상태              | 초기  |
 | 〃      | `Outcomes`         | 청산 실현손익            | 초기  |
 | 감사     | `SafeStopEvents`   | 전체 정지 발생·해제        | 초기  |
@@ -184,17 +185,25 @@
 > - 사이클마다 한 줄씩 추가
 > - 3단계 사이징(위험금액의 분모), 4단계 총노출 한도 검사, 대시보드 당일 손익률에 사용
 
-| 컬럼                 | 의미              |
-| ------------------ | --------------- |
-| `SnapshotId` (PK)  |                 |
-| `CycleId` (FK)     |                 |
-| `TradeDate`        |                 |
-| `Amount`           | 예수금             |
-| `PositionValue`    | 보유 평가금액         |
-| `TotalAsset`       | 총자본 = 현금 + 평가금액 |
-| `DayStartAsset`    | 당일 첫 사이클의 총자본   |
-| `DayReturnPercent` | 당일 손익률          |
-| `RecordedDateTime` |                 |
+| 컬럼                  | 의미                                                    |
+| ------------------- | ----------------------------------------------------- |
+| `SnapshotId` (PK)   |                                                       |
+| `CycleId` (FK)      |                                                       |
+| `TradeDate`         |                                                       |
+| `Amount`            | 예수금                                                   |
+| `PositionValue`     | 보유 평가금액                                               |
+| `TotalAsset`        | 총자본 = 현금 + 평가금액                                       |
+| `BaseAsset`         | 서킷브레이커 기준선 = **직전 거래일 마지막 스냅샷의 `TotalAsset`**          |
+| `NetFlowSinceBase`  | 기준선 이후 순외부흐름(입금 +, 출금 −)                              |
+| `AdjustedBaseAsset` | `BaseAsset + NetFlowSinceBase` — 당일 손익률의 분모            |
+| `CumulativeNetFlow` | 개시 이후 누적 순입금                                          |
+| `TwrIndex`          | 시간가중수익률 지수(1.0에서 시작)                                  |
+| `DayReturnPercent`  | `TotalAsset / AdjustedBaseAsset − 1`                  |
+| `RecordedDateTime`  |                                                       |
+
+**`BaseAsset`은 예전 `DayStartAsset`이다.** 이름만 바꾼 게 아니라 의미를 바꿨다. 예전 정의인 "당일 첫 사이클의 총자본"은 정기 사이클이 하루 한 번인 이 시스템에서 손익률을 **항상 0%**로 만들어, −4% 서킷브레이커가 영원히 발동하지 않는 정의였다. 백테스트는 처음부터 전일 종가 기준 총자산을 쓰고 있었으므로 문서를 백테스트 쪽으로 맞췄다(05-risk 5.2 / 10-ops 10.9).
+
+**검산 규칙: `TotalAsset − CumulativeNetFlow = 누적 순손익`.** 두 숫자가 서로를 검산한다. 어긋나면 흐름을 놓쳤거나 잘못 분류한 것이다. `TwrIndex`를 스냅샷마다 미리 계산해 저장하는 이유는 대시보드와 평가가 그냥 읽어 쓰게 하기 위해서다 — 매번 전체 시계열을 되짚으면 화면이 느려진다.
 
 
 `DailyScores`
@@ -282,8 +291,8 @@
 | `CycleId` (FK)    |                                                                                                |
 | `DecisionId` (FK) | 결정 단위 검사(5~7번)일 때만. 사이클 단위 검사(1~4번)는 NULL                                                      |
 | `CheckOrder`      | 5.2 검사 순서 번호(1~7) — 어느 관문에서 걸렸는지                                                               |
-| `CheckName`       | `balanceSync`/`marketHalt`/`dataFreshness`/`circuitBreaker`/`schema`/`hardLimit`/`symbolState` |
-| `Result`          | `pass`/`reject`/`reduce`(수량 축소)/`skipCycle`/`safeStop`                                         |
+| `CheckName`       | `balanceSync`/`cashFlow`/`marketHalt`/`dataFreshness`/`circuitBreaker`/`schema`/`hardLimit`/`symbolState` — `cashFlow`는 보유는 맞는데 현금만 어긋나 외부 흐름으로 기록한 경우다 |
+| `Result`          | `pass`/`reject`/`reduce`(수량 축소)/`skipCycle`/`safeStop`/`flowDetected`(차단이 아니라 "기록했고 그대로 진행했다") |
 | `Reason`          | 단일 사유                                                                                          |
 | `LimitValue`      | 총노출 기준                                                                                         |
 | `ActualValue`     | 실측값(예: 제안이 자본의 27%) — 한도와 나란히 두면 초과폭 집계가 가능                                                    |
@@ -292,6 +301,41 @@
 ---
 
 ### 7.3 집행
+`CashFlows`
+> - 외부 현금흐름 1건 — 매매로 설명할 수 없는 예수금 변동
+> - 4단계 선행 게이트의 현금 대조(05-risk 5.2 검사 1-b)에서 감지 시 생성
+> - 서킷브레이커 기준선 평행이동, TWR 계산, 대시보드 입출금 마커·거래 리포트에 사용
+
+**왜 이 표가 있는가.** 매매는 주식과 현금을 항상 같이 움직인다. 보유 종목·수량이 전부 맞는데 예수금만 어긋났다면 그건 매매로 설명할 수 없는 돈이다 — 내가 이체했거나 배당이 들어온 것이다. 이걸 기록할 곳이 없으면 두 가지가 동시에 깨진다. 잔고 불일치로 오인해 **입금 한 번에 매매가 며칠 멈추고**, 성과 지표는 입금을 수익으로 잡는다.
+
+| 컬럼                  | 의미                                                                  |
+| ------------------- | ------------------------------------------------------------------- |
+| `FlowId` (PK)       |                                                                     |
+| `DetectedCycleId` (FK) | 감지한 사이클                                                          |
+| `TradeDate`         |                                                                     |
+| `Kind`              | `deposit`/`withdrawal`/`dividend`/`taxRefund`/`interest`/`fee`/`unknown` |
+| `Amount`            | **부호 있음** — 유입 +, 유출 −                                            |
+| `Status`            | `unconfirmed`/`confirmed`/`reclassified`                            |
+| `Source`            | `residual`(잔차 감지)/`signature`(금액 서명)/`broker`(증권사 내역)/`manual`     |
+| `ExpectedCash`      | 감지 시점 기대 예수금 — 사후 감사의 근거                                          |
+| `ActualCash`        | 감지 시점 실제 예수금                                                       |
+| `Note`              |                                                                     |
+| `DetectedDateTime`  |                                                                     |
+| `ConfirmedDateTime` | 사람이 라벨을 붙인 시각                                                      |
+| `ConfirmedBy`       |                                                                     |
+| `Mode`              | `paper`/`live`                                                      |
+
+**`Kind`는 단순 라벨이 아니라 회계다.** 입금과 배당은 둘 다 "주식은 그대로인데 현금만 늘어남"으로 똑같이 보이지만 성과 계산에서는 정반대다. 입금은 원금 추가라 수익률에서 빼야 하고, 배당은 수익이라 넣어야 한다. 오분류하면 배당 수익을 통째로 지우거나 입금을 수익으로 잡는다.
+
+| `Kind`                                | 수익률(TWR) 처리                    |
+| ------------------------------------- | ------------------------------ |
+| `deposit` / `withdrawal`              | **외부 흐름** — 수익률 계산에서 제거        |
+| `dividend` / `taxRefund` / `interest` | **수익** — 수익률에 포함               |
+| `fee`                                 | **비용** — 수익률에 포함(흡수 임계 미만 잔차)  |
+| `unknown`                             | 보수적으로 외부 흐름 취급 + 대시보드에 미분류 표시  |
+
+**라벨은 CLI로만 붙인다** — `python -m ops.cashflow confirm --id F123 --kind deposit`. 대시보드는 읽기 전용이라(08-dashboard 8.1) 쓰기 엔드포인트를 두지 않는다. 확인은 매매를 막는 관문이 아니라 언제 해도 되는 사후 라벨링이다. 감지가 이미 매매를 안전하게 계속시키므로 라벨을 며칠 뒤에 붙여도 시스템은 멈추지 않는다.
+
 `Orders`
 > - KIS에 보낸 주문
 > - 5단계 송출 직후 생성, 체결 확인 시 체결 갱신

@@ -1,9 +1,14 @@
-"""exec/orders.py — 신규 진입 송출·체결 적재(5~6단계). FakeBroker로 흐름 검증."""
-from __future__ import annotations
+"""
+description:        exec/orders.py — 신규 진입 송출·체결 적재(5~6단계). FakeBroker로 흐름 검증.
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from exec.orders import ENTRY_ORD_DVSN, Fill, execute_entries
 from memory import journal
-from pipeline.trading_cycle import PlannedOrder
+from pipeline.cycle import PlannedOrder
 
 
 class FakeBroker:

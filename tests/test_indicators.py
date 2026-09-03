@@ -1,4 +1,11 @@
-"""지표 — 알려진 입력으로 값 검증 (data/indicators, 04-data §0c)."""
+"""
+description:        지표 — 알려진 입력으로 값 검증 (data/indicators, 04-data §0c).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import numpy as np
 import pandas as pd
 

@@ -1,10 +1,10 @@
-"""결정 입출력 스키마 (core/schemas, 03-arch).
-
-pydantic v2 모델로 결정 출력을 *전체 검증*한다 — 필수 필드 누락·범위 위반이면 무효
-(절반 결정을 결정으로 채택하지 않는다). 결정 규칙(pipeline/decision)의 출력이
-리스크 엔진·집행으로 안전하게 흐르도록 형(型)을 고정한다.
 """
-from __future__ import annotations
+description:        결정 입출력 스키마 (pydantic v2 전체 검증)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from enum import StrEnum
 
@@ -20,7 +20,7 @@ class OrderAction(StrEnum):
 
 
 class ProposedOrder(BaseModel):
-    """종목별 제안. *수량* 환산은 사이징이 — 결정 단계는 방향·논지·예산만 낸다."""
+    """종목별 제안 — 방향·논지·예산만 낸다(수량 환산은 사이징이 한다)."""
     model_config = {"extra": "forbid"}
 
     code: str
@@ -31,7 +31,7 @@ class ProposedOrder(BaseModel):
 
 
 class DeciderOutput(BaseModel):
-    """결정 규칙의 사이클 출력. 신규+보유 동적 관리 제안."""
+    """결정 규칙의 사이클 출력 — 신규+보유 동적 관리 제안 목록."""
     model_config = {"extra": "forbid"}
 
     orders: list[ProposedOrder] = Field(default_factory=list)

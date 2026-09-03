@@ -1,12 +1,10 @@
-"""정기 사이클 시각 비교 — 첫 사이클(10:00) vs 마지막 사이클(14:30).
-
-설계 정합 엔진(`backtest/spec_engine`)으로 같은 구간·같은 파라미터를 두 시각으로 돌려
-어느 쪽이 나은지 판정한다. 워치리스트는 양쪽 모두 *전일 확정 일봉* 기준이고, 차이는
-사이클 시점 가격 프록시(시가 vs 종가)뿐이다.
-
-사용: PYTHONPATH=. .venv/bin/python -m analysis.cycle_time_compare [--limit N] [--start YYYY-MM-DD]
 """
-from __future__ import annotations
+description:        정기 사이클 시각 비교 (10:00 시가 vs 14:30 종가)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import argparse
 import json
@@ -23,7 +21,7 @@ DEFAULT_START = date(2023, 1, 1)
 
 
 def _benchmark(start: date, end: date) -> dict:
-    """코스피 매수후보유 (09-eval 벤치마크 ①)."""
+    """코스피 매수후보유 벤치마크 지표를 계산한다."""
     df = cache.load("index_KOSPI")
     if df is None:
         return {}
@@ -37,6 +35,7 @@ def _benchmark(start: date, end: date) -> dict:
 
 
 def main() -> None:
+    """CLI 진입점 — 두 사이클 시각(첫/마지막)을 같은 구간으로 돌려 비교한다."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None, help="앞 N종목만(소규모 검증)")
     ap.add_argument("--start", default=DEFAULT_START.isoformat())

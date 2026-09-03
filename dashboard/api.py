@@ -1,58 +1,462 @@
-"""읽기 전용 조회 API — FastAPI (08-dashboard 8.1·8.3).
-
-**경계가 이 파일의 존재 이유다.** 대시보드는 읽기 전용이고, 매매 코어는 대시보드의
-존재를 모른다. 둘은 DB로만 만난다. 그래서 여기서는 `SELECT` 전용 계정으로 붙고
-(`memory.db.connect(read_only=True)`), 매매 코어의 함수를 한 줄도 부르지 않는다.
-
-**계약이 프론트보다 오래 산다.** 화면을 나중에 통째로 갈아엎어도 이 JSON 계약은
-그대로다. 그래서 API를 먼저 만들고 화면을 뒤에 붙인다.
-
-모든 조회는 출입증(`dashboard.auth`)을 요구한다. 없거나 만료됐으면 데이터를 한 줄도
-주지 않는다.
-
-미구현 — 아래 함수는 전부 뼈대다. 라우팅은 화면 4영역(08-dashboard 8.4)에 대응한다.
 """
-from __future__ import annotations
+description:        읽기 전용 조회 API (FastAPI, 대시보드 전용)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/31
+remarks:
+"""
+
+from datetime import date
+from typing import Annotated, Any
+
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
+from pydantic import BaseModel
+
+from config.settings import load_params
+from core.timeutils import kst_day_bounds, kst_today
+from core.trading_days import trading_days_between
+from dashboard import auth
+from memory import journal
+from memory.db import connect
+
+app = FastAPI(title="AlphaLoop Dashboard API", docs_url=None, redoc_url=None)
+
+# 목록 조회 상한 — 화면이 한 번에 그릴 수 있는 양을 넘지 않게 서버가 막는다
+MAX_LIMIT = 1000
+BENCH_LIMIT = 2000          # 지수 시계열(코스피·코스닥 각각)
 
 
-def get_account():
-    """① 나의 정보 — 총자본·예수금·평가손익·당일 손익률, 보유 종목.
+# ── 연결·인증 ────────────────────────────────────────────────────
+def db():
+    """요청 하나당 읽기 전용 연결을 만든다."""
+    conn = connect(read_only=True)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
-    평가손익은 `Positions.AveragePrice` vs 마지막 사이클이 본 가격
-    (`CycleScores.LastPrice`)로 낸다. 그 사이클 시각도 함께 준다 — 언제 기준의
-    값인지 모르면 숫자를 못 믿는다.
+
+def require_token(session: str | None = Cookie(default=None, alias=auth.COOKIE_NAME)):
+    """출입증을 검증한다(통과 못 하면 401)."""
+    if not auth.verify_token(session):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "로그인이 필요합니다")
+
+
+Guarded = [Depends(require_token)]
+# 인자 기본값에 Depends를 쓰는 대신 Annotated로 붙인다(ruff B008 회피 + FastAPI 권장).
+DbConn = Annotated[Any, Depends(db)]
+
+
+class LoginBody(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(body: LoginBody, response: Response, request: Request) -> dict:
+    """비밀번호로 출입증을 발급한다(성공·실패 모두 로그에 남김)."""
+    if not auth.is_configured():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "로그인이 설정되지 않았습니다")
+    ok = auth.verify_password(body.password)
+    auth.log_attempt(ok, request.client.host if request.client else "")
+    if not ok:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "비밀번호가 다릅니다")
+    response.set_cookie(value=auth.issue_token(), **auth.cookie_kwargs())
+    return {"ok": True, "expires_days": auth.TOKEN_TTL_DAYS}
+
+
+@app.post("/api/logout")
+def logout(response: Response) -> dict:
+    """출입증 쿠키를 지운다."""
+    response.delete_cookie(auth.COOKIE_NAME)
+    return {"ok": True}
+
+
+@app.get("/api/health")
+def health() -> dict:
+    """서버 생존 확인(로그인 불필요, 데이터 없음)."""
+    return {"ok": True}
+
+
+# ── ① 나의 정보 ──────────────────────────────────────────────────
+@app.get("/api/account", dependencies=Guarded)
+def get_account(conn: DbConn) -> dict:
+    """총자본·예수금·당일 손익률과 보유 종목(평가 기준 시각 포함)을 반환한다."""
+    snap = conn.execute(
+        'SELECT * FROM "AccountSnapshots" ORDER BY "RecordedDateTime" DESC LIMIT 1'
+    ).fetchone()
+    rows = conn.execute(
+        'SELECT p."PositionId", p."SymbolId", s."Name", p."Quantity", p."AveragePrice", '
+        'p."CurrentStopPrice", p."InitialStopPrice", p."EntryDate", p."Status", '
+        '  (SELECT c."LastPrice" FROM "CycleScores" c '
+        '   WHERE c."SymbolId" = p."SymbolId" AND c."LastPrice" IS NOT NULL '
+        '   ORDER BY c."ScoredDateTime" DESC LIMIT 1) AS "LastPrice", '
+        '  (SELECT c."ScoredDateTime" FROM "CycleScores" c '
+        '   WHERE c."SymbolId" = p."SymbolId" AND c."LastPrice" IS NOT NULL '
+        '   ORDER BY c."ScoredDateTime" DESC LIMIT 1) AS "PricedAt" '
+        'FROM "Positions" p LEFT JOIN "Symbols" s ON s."SymbolId" = p."SymbolId" '
+        "WHERE p.\"Status\" = 'open' ORDER BY p.\"EntryDate\"",
+    ).fetchall()
+    today = kst_today()
+    holdings = []
+    for r in rows:
+        last, avg = r["LastPrice"], r["AveragePrice"]
+        holdings.append({
+            **{k: r[k] for k in ("PositionId", "SymbolId", "Name", "Quantity",
+                                 "AveragePrice", "CurrentStopPrice", "InitialStopPrice",
+                                 "EntryDate", "LastPrice", "PricedAt")},
+            "ProfitLoss": (last - avg) * r["Quantity"] if last is not None else None,
+            "ReturnPercent": (last / avg - 1) if last is not None and avg else None,
+            # 보유일수는 거래일로 센다 — 청산 규칙과 같은 단위여야 화면과 규칙이 어긋나지 않는다
+            "HoldingDays": (
+                trading_days_between(r["EntryDate"], today) if r["EntryDate"] else None
+            ),
+        })
+    return {
+        "snapshot": dict(snap) if snap else None,
+        "holdings": holdings,
+        # 개시 이후 누적 순입금. `TotalAsset − 이 값 = 누적 순손익`으로 검산된다(07-model)
+        "cumulativeNetFlow": float(snap["CumulativeNetFlow"]) if snap else 0.0,
+        # TWR 지수를 수익률로 환산 — 이체가 섞여도 안 흔들리는 유일한 비율 지표(09-eval)
+        "twrReturn": (
+            float(snap["TwrIndex"]) - 1.0
+            if snap and snap["TwrIndex"] is not None else None
+        ),
+        # 이체 전에 폰에서 이 숫자를 보는 게 미수를 막는 실질적 유일한 수단(08-dashboard 8.4)
+        "safeWithdrawable": _safe_withdrawable(conn, snap),
+    }
+
+
+def _safe_withdrawable(conn, snap) -> float | None:
+    """안전 출금 가능액 = 예수금 − 미체결 매수 주문 금액.
+
+    이만큼까지는 빼도 미수가 안 난다. 미체결 매수는 아직 돈이 안 나갔을 뿐 이미
+    쓰기로 정해진 돈이라 예수금에서 먼저 빼고 봐야 한다.
     """
-    raise NotImplementedError
+    if snap is None:
+        return None
+    row = conn.execute(
+        'SELECT COALESCE(SUM(("OrderQuantity" - "FilledQuantity") * "OrderPrice"), 0) AS v '
+        'FROM "Orders" WHERE "Side" = \'buy\' AND "OrderPrice" IS NOT NULL '
+        "AND \"Status\" IN ('submitted','partial')"
+    ).fetchone()
+    return max(0.0, float(snap["Amount"]) - float(row["v"] or 0))
 
 
-def get_equity_curve(period: str = "all"):
-    """② 수익 그래프 — `Outcomes.NetProfitLoss`를 청산일 순으로 누적.
+# ── ② 수익 그래프 ────────────────────────────────────────────────
+# 자본 그래프의 세로축 3종(08-dashboard 8.4 ②).
+#   realized   — 청산 실현손익 누적(원). 이체와 무관하므로 마커를 찍지 않는다.
+#   totalAsset — 계좌 총자산(원). 이체가 그대로 보이므로 **여기에 입출금 마커**를 찍는다.
+#   twr        — 시간가중수익률 지수. 이체 효과가 제거된 유일한 비율 축.
+AXES = ("realized", "totalAsset", "twr")
 
-    성과 판단은 이 선 하나로만 한다(비용 차감 후 실현손익). 벤치마크는
-    `MarketIndices`의 코스피·코스닥을 겹쳐 준다.
+
+@app.get("/api/equity-curve", dependencies=Guarded)
+def get_equity_curve(conn: DbConn, start: date | None = None,
+                     end: date | None = None, axis: str = "realized") -> dict:
+    """자본 곡선을 축(axis)별로 반환한다 — 벤치마크·체결 시점·입출금 마커 포함.
+
+    축을 셋으로 나눈 이유는 금액과 비율이 이체에 다르게 반응하기 때문이다. 총자산은
+    입금하면 그냥 뛰지만 그건 수익이 아니고, 그 점프를 설명해 주는 것이 입출금 마커다.
+    비율을 보고 싶으면 이체 효과가 제거된 `twr`를 봐야 한다(09-eval).
     """
-    raise NotImplementedError
+    if axis not in AXES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"axis는 {', '.join(AXES)} 중 하나여야 합니다")
+    points = (
+        _realized_points(conn, start, end) if axis == "realized"
+        else _snapshot_points(conn, start, end, axis)
+    )
+    return {
+        "axis": axis,
+        "points": points,
+        "benchmarks": _benchmarks(conn, start, end),
+        # 곡선 위에 찍을 매수·매도 시점 — 어느 구간의 상승이 어느 거래에서 나왔는지 잇는 용도
+        "markers": _fill_markers(conn, start, end),
+        # 실현손익 축은 이체와 무관하므로 마커를 안 찍는다(찍으면 없는 인과를 암시한다)
+        "flow_markers": [] if axis == "realized" else _flow_markers(conn, start, end),
+    }
 
 
-def get_trades(start=None, end=None, side=None):
-    """③ 거래 리포트 — `Orders`·`Positions`·`Outcomes`를 시간순으로."""
-    raise NotImplementedError
+def _realized_points(conn, start: date | None, end: date | None) -> list[dict]:
+    """청산일 순 누적 실현손익(원). 이체가 절대 섞이지 않는 축이다."""
+    sql = (
+        'SELECT o."OutcomeId", o."SymbolId", s."Name", o."ExitDate", o."NetProfitLoss", '
+        'o."RMultiple", o."ExitReason", o."ReturnPercent" '
+        'FROM "Outcomes" o LEFT JOIN "Symbols" s ON s."SymbolId" = o."SymbolId" WHERE 1=1'
+    )
+    params: list[Any] = []
+    if start:
+        sql += ' AND o."ExitDate" >= %s'
+        params.append(start)
+    if end:
+        sql += ' AND o."ExitDate" <= %s'
+        params.append(end)
+    rows = conn.execute(sql + ' ORDER BY o."ExitDate", o."ClosedDateTime"', params).fetchall()
+
+    cum, points = 0.0, []
+    for r in rows:
+        cum += float(r["NetProfitLoss"] or 0)
+        points.append({**dict(r), "Cumulative": cum})
+    return points
 
 
-def get_trade_detail(client_order_id: str):
-    """③ 펼침 — 진입 근거·게이트 결과·청산 결과를 한 거래 단위로 모아 준다.
+def _snapshot_points(conn, start: date | None, end: date | None, axis: str) -> list[dict]:
+    """스냅샷 시계열에서 총자산 또는 TWR 지수를 뽑는다."""
+    sql = (
+        'SELECT "TradeDate", "TotalAsset", "CumulativeNetFlow", "TwrIndex", '
+        '"DayReturnPercent", "RecordedDateTime" FROM "AccountSnapshots" WHERE 1=1'
+    )
+    params: list[Any] = []
+    if start:
+        sql += ' AND "TradeDate" >= %s'
+        params.append(start)
+    if end:
+        sql += ' AND "TradeDate" <= %s'
+        params.append(end)
+    params.append(BENCH_LIMIT)
+    rows = conn.execute(sql + ' ORDER BY "RecordedDateTime" LIMIT %s', params).fetchall()
+    key = "TotalAsset" if axis == "totalAsset" else "TwrIndex"
+    return [
+        {**dict(r), "Cumulative": float(r[key]) if r[key] is not None else None}
+        for r in rows
+    ]
 
-    진입 근거는 `Decisions`·`CycleScores`, 게이트는 `RiskChecks`, 청산은 `Outcomes`에서.
 
-    전부 숫자라 행이 작다. 압축·삭제 없이 영구 보존하므로 몇 년 전 거래도 근거가 남는다.
+def _flow_markers(conn, start: date | None, end: date | None) -> list[dict]:
+    """곡선 위에 찍을 입출금 시점. 매수·매도 점과 구분되게 화면에서 회색 삼각형으로 그린다."""
+    marks = ", ".join(["%s"] * len(journal.EXTERNAL_KINDS))
+    sql = (
+        f'SELECT "FlowId", "TradeDate", "Kind", "Amount", "Status", "Source", '
+        f'"ExpectedCash", "ActualCash", "DetectedDateTime" FROM "CashFlows" '
+        f'WHERE "Kind" IN ({marks})'
+    )
+    params: list[Any] = list(journal.EXTERNAL_KINDS)
+    if start:
+        sql += ' AND "TradeDate" >= %s'
+        params.append(start)
+    if end:
+        sql += ' AND "TradeDate" <= %s'
+        params.append(end)
+    params.append(MAX_LIMIT)
+    rows = conn.execute(sql + ' ORDER BY "DetectedDateTime" LIMIT %s', params).fetchall()
+    return [
+        {**dict(r), "Direction": "deposit" if float(r["Amount"]) >= 0 else "withdrawal"}
+        for r in rows
+    ]
+
+
+def _benchmarks(conn, start: date | None, end: date | None) -> list[dict]:
+    """코스피·코스닥 지수 시계열을 반환한다(기간으로 좁힘)."""
+    sql = 'SELECT "IndexCode", "TradeDate", "Close" FROM "MarketIndices" WHERE 1=1'
+    params: list[Any] = []
+    if start:
+        sql += ' AND "TradeDate" >= %s'
+        params.append(start)
+    if end:
+        sql += ' AND "TradeDate" <= %s'
+        params.append(end)
+    params.append(BENCH_LIMIT)
+    rows = conn.execute(sql + ' ORDER BY "TradeDate" LIMIT %s', params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _fill_markers(conn, start: date | None, end: date | None) -> list[dict]:
+    """체결된 진입·청산 시점(매수 초록·매도 빨강으로 찍을 점)을 반환한다."""
+    sql = (
+        'SELECT "ClientOrderId", "SymbolId", "Side", "Purpose", "FilledQuantity", '
+        '"AverageFillPrice", "FilledDateTime" FROM "Orders" '
+        "WHERE \"FilledQuantity\" > 0 AND \"Purpose\" IN ('entry','exit')"
+    )
+    params: list[Any] = []
+    if start:
+        sql += ' AND "FilledDateTime" >= %s'
+        params.append(kst_day_bounds(start)[0])
+    if end:
+        sql += ' AND "FilledDateTime" < %s'
+        params.append(kst_day_bounds(end)[1])
+    params.append(MAX_LIMIT)
+    rows = conn.execute(sql + ' ORDER BY "FilledDateTime" LIMIT %s', params).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/benchmark/watchlist", dependencies=Guarded)
+def get_watchlist_benchmark(conn: DbConn, start: date | None = None,
+                            end: date | None = None) -> dict:
+    """균등가중 워치리스트 벤치마크 — 매일 점수 상위 N을 균등 보유했을 때의 누적수익.
+
+    설계 8.4 ②의 세 번째 비교선이다. 전략이 "종목 고르기"로 버는지, 아니면 그날의
+    상위권을 아무렇게나 담아도 나왔을 결과인지를 가른다.
     """
-    raise NotImplementedError
+    top_n = int(load_params("risk_params").get("screener", {}).get("top_n", 40))
+    sql = (
+        'WITH picks AS ('
+        '  SELECT "TradeDate", "SymbolId" FROM "DailyScores" '
+        '  WHERE "PassedFilter" AND "Rank" IS NOT NULL AND "Rank" <= %s'
+        ')'
+        ' SELECT p."TradeDate", '
+        '        avg(nb."Close" / b."Close" - 1.0) AS "DayReturn", '
+        '        count(*) AS "Names" '
+        ' FROM picks p '
+        ' JOIN "DailyBars" b ON b."SymbolId" = p."SymbolId" AND b."TradeDate" = p."TradeDate" '
+        ' JOIN LATERAL ('
+        '   SELECT "Close" FROM "DailyBars" x '
+        '   WHERE x."SymbolId" = p."SymbolId" AND x."TradeDate" > p."TradeDate" '
+        '   ORDER BY x."TradeDate" LIMIT 1'
+        ' ) nb ON true '
+        ' WHERE b."Close" > 0'
+    )
+    params: list[Any] = [top_n]
+    if start:
+        sql += ' AND p."TradeDate" >= %s'
+        params.append(start)
+    if end:
+        sql += ' AND p."TradeDate" <= %s'
+        params.append(end)
+    rows = conn.execute(sql + ' GROUP BY p."TradeDate" ORDER BY p."TradeDate"', params).fetchall()
+
+    cum, series = 1.0, []
+    for r in rows:
+        cum *= 1.0 + float(r["DayReturn"] or 0.0)
+        series.append({"TradeDate": r["TradeDate"], "Names": r["Names"],
+                       "Cumulative": cum - 1.0})
+    return {"top_n": top_n, "series": series}
 
 
-def get_alerts():
-    """④ 오류·정지 — `SafeStopEvents`·`Cycles`(failed·skipped)·`IngestRuns`(failed·partial).
+# ── ③ 거래 리포트 ────────────────────────────────────────────────
+@app.get("/api/trades", dependencies=Guarded)
+def get_trades(conn: DbConn, start: date | None = None, end: date | None = None,
+               side: str | None = None, include_stops: bool = False,
+               limit: int = 200) -> dict:
+    """주문과 입출금을 시간순으로 조회한다(KST 날짜로 좁힘).
 
-    무엇을 확인하고 어떻게 푸는지까지 알려준다. **해제 버튼은 두지 않는다** — 읽기
-    전용이고, 잔고 불일치·데이터 오류는 사람이 직접 개입해야 한다(05-risk 5.4).
+    `side`: `buy`·`sell`은 주문만, `flow`는 입출금만, 생략하면 둘 다.
+    입출금을 같이 내보내는 이유는 "이 구간에 왜 돈이 늘었나"를 한 화면에서
+    설명하기 위해서다 — 매매와 이체가 따로 놀면 그 인과를 사람이 못 잇는다.
     """
-    raise NotImplementedError
+    capped = max(1, min(limit, MAX_LIMIT))
+    sql = (
+        'SELECT o.*, s."Name" FROM "Orders" o '
+        'LEFT JOIN "Symbols" s ON s."SymbolId" = o."SymbolId" WHERE 1=1'
+    )
+    params: list[Any] = []
+    # OrderedDateTime은 timestamptz(UTC)다. KST 날짜를 UTC 구간으로 바꿔 거른다
+    if start:
+        sql += ' AND o."OrderedDateTime" >= %s'
+        params.append(kst_day_bounds(start)[0])
+    if end:
+        sql += ' AND o."OrderedDateTime" < %s'
+        params.append(kst_day_bounds(end)[1])
+    if side in ("buy", "sell"):
+        sql += ' AND o."Side" = %s'
+        params.append(side)
+    if not include_stops:
+        # 손절 예약(stop)은 걸어둔 것이지 오간 거래가 아니다 — 기본은 뺀다
+        sql += " AND o.\"Purpose\" <> 'stop'"
+    sql += ' ORDER BY o."OrderedDateTime" DESC LIMIT %s'
+    params.append(capped)
+
+    orders = [] if side == "flow" else [
+        dict(r) for r in conn.execute(sql, params).fetchall()
+    ]
+    flows = [] if side in ("buy", "sell") else get_cash_flows(
+        conn, start=start, end=end, limit=capped
+    )["flows"]
+    return {"orders": orders, "flows": flows}
+
+
+@app.get("/api/cash-flows", dependencies=Guarded)
+def get_cash_flows(conn: DbConn, start: date | None = None, end: date | None = None,
+                   status_filter: str | None = None, limit: int = 200) -> dict:
+    """감지된 외부 현금흐름(입출금·배당)을 시간순으로 반환한다.
+
+    거래 리포트에서 주문과 한 줄로 섞어 보여주기 위한 것이다. 부호 규칙은 주문과
+    같다 — 거래대금이 곧 현금 방향이므로 **입금 +, 출금 −**.
+    라벨을 붙이는 것은 쓰기라서 여기 없다. `python -m ops.cashflow`가 그 일을 한다
+    (08-dashboard 8.1 읽기 전용 경계).
+    """
+    sql = 'SELECT * FROM "CashFlows" WHERE 1=1'
+    params: list[Any] = []
+    if start:
+        sql += ' AND "TradeDate" >= %s'
+        params.append(start)
+    if end:
+        sql += ' AND "TradeDate" <= %s'
+        params.append(end)
+    if status_filter:
+        sql += ' AND "Status" = %s'
+        params.append(status_filter)
+    params.append(max(1, min(limit, MAX_LIMIT)))
+    rows = conn.execute(sql + ' ORDER BY "DetectedDateTime" DESC LIMIT %s', params).fetchall()
+    return {"flows": [dict(r) for r in rows]}
+
+
+@app.get("/api/trades/{client_order_id}", dependencies=Guarded)
+def get_trade_detail(client_order_id: str, conn: DbConn) -> dict:
+    """한 거래의 진입 근거·게이트 결과·청산 결과를 모아 반환한다."""
+    order = conn.execute(
+        'SELECT * FROM "Orders" WHERE "ClientOrderId" = %s', (client_order_id,)
+    ).fetchone()
+    if order is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "주문을 찾을 수 없습니다")
+    did, cid, sym = order["DecisionId"], order["CycleId"], order["SymbolId"]
+    decision = conn.execute(
+        'SELECT * FROM "Decisions" WHERE "DecisionId" = %s', (did,)
+    ).fetchone() if did else None
+    scores = conn.execute(
+        'SELECT * FROM "CycleScores" WHERE "CycleId" = %s AND "SymbolId" = %s',
+        (cid, sym),
+    ).fetchone() if cid else None
+    # 게이트 판정은 결정 단위(DecisionId)와 사이클 단위(NULL) 둘 다 보여준다
+    checks = conn.execute(
+        'SELECT * FROM "RiskChecks" WHERE "CycleId" = %s '
+        '  AND ("DecisionId" = %s OR "DecisionId" IS NULL) ORDER BY "CheckOrder"',
+        (cid, did),
+    ).fetchall() if cid else []
+    outcome = conn.execute(
+        'SELECT * FROM "Outcomes" WHERE "EntryDecisionId" = %s '
+        'OR "ExitDecisionId" = %s ORDER BY "ClosedDateTime" DESC LIMIT 1', (did, did)
+    ).fetchone() if did else None
+    return {
+        "order": dict(order),
+        "decision": dict(decision) if decision else None,
+        "cycle_score": dict(scores) if scores else None,
+        "risk_checks": [dict(c) for c in checks],
+        "outcome": dict(outcome) if outcome else None,
+    }
+
+
+# ── ④ 오류·정지 ─────────────────────────────────────────────────
+@app.get("/api/alerts", dependencies=Guarded)
+def get_alerts(conn: DbConn) -> dict:
+    """정지·실패 사이클·배치 결과와 미분류 현금 변동을 반환한다(해제는 사람이 직접 개입).
+
+    미분류 현금 변동은 **정보성 항목**이다 — 매매를 막고 있는 게 아니라 라벨이 아직
+    안 붙었다는 안내일 뿐이다. 여기 뜨는 진짜 차단은 미수·대형 유출 SafeStop 둘뿐이다.
+    """
+    safe_stops = conn.execute(
+        'SELECT * FROM "SafeStopEvents" ORDER BY "OccurredDateTime" DESC LIMIT 50'
+    ).fetchall()
+    cycles = conn.execute(
+        'SELECT "CycleId", "TradeDate", "Status", "FailedStep", "SkipReason", '
+        '"StartedDateTime" FROM "Cycles" '
+        "WHERE \"Status\" IN ('failed','skipped') "
+        'ORDER BY "StartedDateTime" DESC LIMIT 50'
+    ).fetchall()
+    ingests = conn.execute(
+        'SELECT * FROM "IngestRuns" WHERE "Status" <> \'ok\' '
+        'ORDER BY "StartedDateTime" DESC LIMIT 50'
+    ).fetchall()
+    unlabeled = conn.execute(
+        'SELECT * FROM "CashFlows" WHERE "Status" = \'unconfirmed\' '
+        'ORDER BY "DetectedDateTime" DESC LIMIT 50'
+    ).fetchall()
+    return {
+        "safe_stops": [dict(r) for r in safe_stops],
+        # 비어 있는 ReleasedDateTime이 곧 "지금 정지 중"이다(08-dashboard 8.4 ④)
+        "active_stop": any(r["ReleasedDateTime"] is None for r in safe_stops),
+        "failed_cycles": [dict(r) for r in cycles],
+        "failed_ingests": [dict(r) for r in ingests],
+        # 대시보드는 읽기 전용이라 라벨을 못 붙인다 — 붙이는 방법만 알려준다
+        "unlabeled_flows": [dict(r) for r in unlabeled],
+        "unlabeled_flow_hint": "python -m ops.cashflow confirm --id <FlowId> --kind deposit",
+    }

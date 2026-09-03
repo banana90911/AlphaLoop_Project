@@ -1,4 +1,11 @@
-"""네이버 스크래퍼 파싱 로직 (네트워크 없이, 파서 격리 검증)."""
+"""
+description:        네이버 스크래퍼 파싱 로직 (네트워크 없이, 파서 격리 검증).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 from datetime import date
 
 import pandas as pd

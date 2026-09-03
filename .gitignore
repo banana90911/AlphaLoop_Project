@@ -1,49 +1,22 @@
 # ── 시크릿 (절대 커밋 금지) ──────────────────────
 .env
-.env.*
-!.env.example
-*.key
-*.pem
+.mcp.json
 
 # ── 파이썬 ───────────────────────────────────────
 __pycache__/
 *.py[cod]
-*$py.class
-*.egg-info/
-.eggs/
-build/
-dist/
 
 # ── 가상환경 ─────────────────────────────────────
 .venv/
-venv/
-env/
-ENV/
 
 # ── 데이터·DB (로컬 산출물) ──────────────────────
-*.db
 data/cache/        # 백테스트 데이터 캐시(코드 아님) — data/ 소스 패키지는 추적
 *.parquet
-logs/
-*.log
 
 # ── 테스트·캐시 ──────────────────────────────────
 .pytest_cache/
-.mypy_cache/
 .ruff_cache/
-.coverage
-htmlcov/
 .cache/
-
-# ── 노트북 ───────────────────────────────────────
-.ipynb_checkpoints/
-
-# ── OS·에디터 ────────────────────────────────────
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.swp
 
 # 워크포워드 실행 결과
 tune_results/

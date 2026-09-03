@@ -1,10 +1,9 @@
-"""KIS 과거 시계열 수집 — 일봉·공매도를 구간 페이지네이션으로 5~10년치 (data 레이어).
-
-`broker.kis_client`의 단건 조회(한 호출 최대 ~100건)를 감싸, end→start로 구간을 이동하며
-누적한다(external-apis 실측 제약). 표준 컬럼으로 정규화하고, KIS 응답 컬럼이 기대와 다르면
-`KISHistoryError`로 명확히 실패한다.
-
-백테스트 입력 데이터 전용 — 저장은 `data.cache`(parquet)가 담당한다.
+"""
+description:        KIS 과거 시계열 수집 (일봉·공매도, 구간 페이지네이션)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
 """
 from __future__ import annotations
 
@@ -33,15 +32,17 @@ class KISHistoryError(RuntimeError):
 
 
 def _d(s: str) -> date:
+    """'YYYYMMDD' 문자열을 date로 변환한다."""
     return datetime.strptime(s, "%Y%m%d").date()
 
 
 def _s(d: date) -> str:
+    """date를 'YYYYMMDD' 문자열로 변환한다."""
     return d.strftime("%Y%m%d")
 
 
 def _windows(start: date, end: date, days: int):
-    """end에서 과거로 days 간격 구간 [chunk_start, chunk_end]를 순서대로 yield."""
+    """end에서 과거로 days 간격 구간 [chunk_start, chunk_end]를 순서대로 yield한다."""
     cur_end = end
     while cur_end >= start:
         cur_start = max(start, cur_end - timedelta(days=days - 1))
@@ -50,6 +51,7 @@ def _windows(start: date, end: date, days: int):
 
 
 def _normalize(rows: list[dict], colmap: dict[str, str], start: date, end: date) -> pd.DataFrame:
+    """KIS 원시행을 표준 컬럼으로 바꾸고 기간·중복을 정리한다."""
     std = list(colmap.values())
     if not rows:
         return pd.DataFrame(columns=std)
@@ -68,7 +70,7 @@ def _normalize(rows: list[dict], colmap: dict[str, str], start: date, end: date)
 
 
 def fetch_ohlcv_range(client: KISClient, code: str, start: str, end: str) -> pd.DataFrame:
-    """일봉 5~10년. start/end='YYYYMMDD'. 컬럼 date·open·high·low·close·volume(수정주가)."""
+    """일봉 5~10년치를 구간 페이지네이션으로 수집한다. start/end='YYYYMMDD'."""
     s, e = _d(start), _d(end)
     rows: list[dict] = []
     for ws, we in _windows(s, e, _WINDOW_DAYS):
@@ -77,7 +79,7 @@ def fetch_ohlcv_range(client: KISClient, code: str, start: str, end: str) -> pd.
 
 
 def fetch_short_sale_range(client: KISClient, code: str, start: str, end: str) -> pd.DataFrame:
-    """공매도 5~10년. start/end='YYYYMMDD'. 컬럼 date·close·short_qty·short_ratio."""
+    """공매도 5~10년치를 구간 페이지네이션으로 수집한다. start/end='YYYYMMDD'."""
     s, e = _d(start), _d(end)
     rows: list[dict] = []
     for ws, we in _windows(s, e, _WINDOW_DAYS):

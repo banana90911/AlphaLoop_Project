@@ -1,21 +1,10 @@
-"""모멘텀 기간 정의 비교 — Rank IC 분석 (탐색용, 정식 산출물 아님).
-
-목적: "현재 60일 / 개선A(120-20스킵) / 개선B(멀티룩백 고정가중)" 세 모멘텀 정의 중
-한국 시장(KOSPI/KOSDAQ 캐시)에서 어느 것이 미래수익을 더 잘 맞히는지 본다.
-
-Rank IC = 어떤 거래일의 종목별 모멘텀 *순위*가 H거래일 뒤 실제 수익률 *순위*와
-얼마나 일치하는가(Spearman 상관). +면 모멘텀이 미래수익과 같은 방향(추세 지속),
-−면 반전. 0이면 무관. 전체 백테스트와 달리 스크리너·청산·사이징을 배제해
-모멘텀 신호 *자체*의 예측력만 분리한다.
-
-지표:
-  mean IC : 평균 IC(예측력의 부호·크기). 주식 횡단면에선 0.02~0.05만 돼도 의미 있음.
-  IC IR   : mean / std (안정성, 정보비율). 높을수록 들쭉날쭉하지 않음.
-  hit     : IC>0 비율(맞힌 날 비중).
-
-사용: .venv/bin/python -m analysis.momentum_ic
 """
-from __future__ import annotations
+description:        모멘텀 기간 정의 비교 — Rank IC 분석 (탐색용)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import numpy as np
 import pandas as pd
@@ -34,7 +23,7 @@ SKIP = 20
 
 
 def variants(close: pd.Series) -> pd.DataFrame:
-    """종목 종가 → 세 모멘텀 변형 시계열(같은 인덱스)."""
+    """종목 종가로 세 모멘텀 변형(현재·개선A·개선B) 시계열을 만든다."""
     out = pd.DataFrame(index=close.index)
     # 현재: 오늘 ÷ 60일 전
     out["cur60"] = close / close.shift(60) - 1.0
@@ -47,6 +36,7 @@ def variants(close: pd.Series) -> pd.DataFrame:
 
 
 def main() -> None:
+    """CLI 진입점 — 세 모멘텀 변형의 Rank IC·IR·hit율을 비교 출력한다."""
     uni = cache.load("universe")
     if uni is None:
         raise SystemExit("universe 캐시 없음 — `python -m data.collect` 먼저")
@@ -132,6 +122,7 @@ def main() -> None:
 
 
 def _spearman(a: pd.Series, b: pd.Series) -> float:
+    """두 시리즈의 Spearman(순위) 상관계수를 계산한다."""
     return float(a.rank().corr(b.rank()))
 
 

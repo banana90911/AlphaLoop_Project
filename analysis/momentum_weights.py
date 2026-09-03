@@ -1,13 +1,10 @@
-"""모멘텀 2단계 IC 테스트 (탐색용).
-
-① 단계1: 6·9·12개월 단독(스킵 1개월) — 어느 룩백이 미래수익을 잘 맞히나.
-② 단계2: 그 셋을 섞는 가중치 후보들 — 섞는 게 12개월 단독보다 나은가.
-
-블렌드 방식: 각 룩백을 횡단면 백분위(순위)로 바꿔 가중합 → 그 합의 Rank IC.
-지표: mean IC(예측력), IC IR(=mean/std, 안정성), hit(IC>0 비율).
-사용: .venv/bin/python -m analysis.momentum_weights
 """
-from __future__ import annotations
+description:        모멘텀 2단계 IC 테스트 (단독 룩백 → 가중치 블렌드, 탐색용)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import numpy as np
 import pandas as pd
@@ -32,6 +29,7 @@ BLENDS = {
 
 
 def _stats(arr: list[float]) -> tuple[float, float, float, int]:
+    """평균·IR(mean/std)·hit율·표본수를 계산한다(NaN 제외)."""
     a = np.array([x for x in arr if not np.isnan(x)])
     if len(a) == 0:
         return float("nan"), float("nan"), float("nan"), 0
@@ -40,6 +38,7 @@ def _stats(arr: list[float]) -> tuple[float, float, float, int]:
 
 
 def main() -> None:
+    """CLI 진입점 — 단독 룩백과 가중치 블렌드의 Rank IC를 비교 출력한다."""
     uni = cache.load("universe")
     prices, _ = loader.load_prices(uni["code"].tolist())
     print(f"종목 {len(prices)}개 로드 (스킵 {SKIP}일 고정)\n")

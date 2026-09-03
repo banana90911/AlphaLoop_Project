@@ -1,13 +1,10 @@
-"""모멘텀 룩백×스킵 그리드 IC (탐색용). momentum_ic.py의 확장.
-
-질문: 어느 *룩백*(추세를 얼마나 멀리 보나)과 어느 *스킵*(최근 얼마를 잘라내나)이
-한국 시장에서 미래수익을 잘 맞히나? 짧은 기간은 반전(−), 중장기는 추세(+)일 거란
-가설을 실측한다.
-
-각 칸 = mean Rank IC. +면 추세 지속(모멘텀), −면 반전. 단일 룩백 기준.
-사용: .venv/bin/python -m analysis.momentum_grid
 """
-from __future__ import annotations
+description:        모멘텀 룩백×스킵 그리드 IC 탐색 (탐색용)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import numpy as np
 import pandas as pd
@@ -24,6 +21,7 @@ MIN_WINDOW = 20                           # 룩백−스킵이 이 미만이면 
 
 
 def main() -> None:
+    """CLI 진입점 — 룩백×스킵 조합별 Rank IC를 표로 출력한다."""
     uni = cache.load("universe")
     prices, _ = loader.load_prices(uni["code"].tolist())
     print(f"종목 {len(prices)}개 로드\n")

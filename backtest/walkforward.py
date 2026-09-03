@@ -1,14 +1,10 @@
-"""워크포워드 OOS 분할 (backtest/walkforward, 09-eval 9.1).
-
-과최적화 방지의 핵심: 데이터를 시간순으로 *튜닝(IS)* 과 *검증(OOS, 손대지 않는)* 으로 나누고,
-롤링으로 전진하며 **검증 구간 성과만** Go/No-Go에 쓴다. 검증 구간을 보고 파라미터를 되돌려
-고치지 않는다(고치면 새 검증 구간에서만 다시 평가).
-
-분할은 순수 함수(날짜 리스트 → 구간 목록). 실제 튜닝/평가 실행은 engine·gate와 결합한다.
-- rolling: 고정 크기 train 윈도우가 전진(과거를 버림)
-- anchored: train 시작점 고정, 윈도우가 확장(모든 과거 누적)
 """
-from __future__ import annotations
+description:        워크포워드 OOS 분할 (시간순 train/test 구간 나누기)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from dataclasses import dataclass
 from datetime import date
@@ -31,11 +27,7 @@ def rolling_splits(
     step: int | None = None,
     anchored: bool = False,
 ) -> list[Split]:
-    """거래일 수 기준 워크포워드 분할. train_size 다음에 test_size가 OOS로 붙는다.
-
-    step(기본=test_size)만큼 전진. anchored=True면 train 시작을 0에 고정(확장 윈도우).
-    train과 test는 겹치지 않으며, test는 항상 train 직후 미래 구간(룩어헤드 없음).
-    """
+    """거래일 수 기준으로 워크포워드 구간을 분할한다(train 뒤에 test가 OOS로 붙음)."""
     if train_size < 1 or test_size < 1:
         raise ValueError("train_size·test_size ≥ 1")
     step = step or test_size
@@ -55,7 +47,7 @@ def rolling_splits(
 
 
 def concat_oos_returns(per_split_oos: list) -> list:
-    """각 split의 OOS 수익 시퀀스를 시간순으로 이어 붙인다(전체 OOS 곡선 구성용)."""
+    """각 split의 OOS 수익 시퀀스를 시간순으로 이어 붙인다."""
     out: list = []
     for seq in per_split_oos:
         out.extend(seq)

@@ -1,4 +1,11 @@
-"""보정 통계 — 수축·Wilson·시간가중 (memory/calibration, 06-sizing 6.1)."""
+"""
+description:        보정 통계 — 수축·Wilson·시간가중 (memory/calibration, 06-sizing 6.1).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pytest
 
 from memory.calibration import shrink, time_weighted_rate, wilson_interval

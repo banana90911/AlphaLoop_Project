@@ -1,4 +1,11 @@
-"""KIS 클라이언트 순수 로직 (네트워크 없이). 실호출 검증은 scripts/verify 계열로 별도."""
+"""
+description:        KIS 클라이언트 순수 로직 (네트워크 없이, 실호출은 별도)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pytest
 
 from broker.kis_client import KISClient, KISError
@@ -24,15 +31,15 @@ _REAL = Settings(
 def test_paper_profile_selected():
     c = KISClient(settings=_PAPER)
     assert c.mode == "paper"
-    assert "openapivts" in c._p["domain"]
-    assert c._p["tr"]["balance"] == "VTTC8434R"
-    assert c._p["tr"]["buy"] == "VTTC0802U"
+    assert "openapivts" in c._profile["domain"]
+    assert c._profile["tr"]["balance"] == "VTTC8434R"
+    assert c._profile["tr"]["buy"] == "VTTC0802U"
 
 
 def test_real_profile_selected():
     c = KISClient(settings=_REAL)
-    assert "openapi.koreainvestment" in c._p["domain"]
-    assert c._p["tr"]["balance"] == "TTTC8434R"
+    assert "openapi.koreainvestment" in c._profile["domain"]
+    assert c._profile["tr"]["balance"] == "TTTC8434R"
 
 
 def test_account_parsed():

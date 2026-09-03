@@ -1,21 +1,10 @@
-"""청산 규칙 — 보유별 우선순위 결정 (exec/exits, 06-sizing §129).
-
-순수 결정 함수(백테스트·실거래 공통). 실제 KIS 스톱 정정·집행은 별도(상주 스톱·정정 API).
-매 사이클 보유 하나하나에 **우선순위 순으로 한 번에 하나만** 적용:
-
-  ① 논지무효(invalidation_price 돌파 또는 thesis 무효) → 전량 청산
-  ② 손절 도달 → 전량 청산
-  ③ +breakeven_R(기본 1.5R) 첫 도달 → 손절 본전 상향 (partial_frac>0이면 그만큼 부분 청산.
-    기본값은 0 — 부분 익절은 "이익은 길게"와 어긋나 두지 않는다, 06-sizing 6.2)
-  ④ ATR 트레일링: new_stop = max(old_stop, price − trail_k·ATR20)
-  ⑤ 보유일 > max_hold_days · 진행 < +min_progress_R · ④로 손절을 더 못 올림 → 전량 청산
-
-⑤가 ④ 뒤인 것이 규칙의 일부다 — 손절을 계속 올릴 수 있으면(=오르는 중이면) 시간청산이
-걸리지 않는다. 순서를 바꿔 시간청산을 앞에 두면 느리게 오르는 승자를 잘라낸다.
-R = |진입가 − 최초손절가| 로 **영구 고정**(부분 청산·트레일링으로 손절이 바뀌어도 불변).
-롱 포지션 기준.
 """
-from __future__ import annotations
+description:        청산 규칙 — 보유별 우선순위 결정 (논지무효→손절→본전→트레일→시간청산)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from dataclasses import dataclass
 from datetime import date
@@ -25,12 +14,13 @@ import pandas as pd
 from config.settings import load_params
 from core import costs
 from core.timeutils import kst_today, now_utc
+from core.trading_days import trading_days_between
 from memory import journal
 
-# 청산 주문구분 — 모드별(10-ops 10.14: 청산=13 IOC시장가). 모의 IOC 미지원이라 01 일반시장가.
+# 청산 주문구분 — 모드별(모의 IOC 미지원이라 01 일반시장가).
 EXIT_ORD_DVSN = {"real": "13", "paper": "01", "backtest": "01"}
 
-# 청산 사유 — 내부 표기(snake) → Outcomes.ExitReason 값(07-model CHECK 제약).
+# 청산 사유 — 내부 표기(snake) → Outcomes.ExitReason 값.
 EXIT_REASONS = {
     "thesis_invalid": "thesisInvalid",
     "stop_hit": "stopHit",
@@ -54,7 +44,7 @@ class Position:
 
 @dataclass
 class StopPosition:
-    """손절 구멍 감지 입력 — 잔고 동기화 후의 보유(종목·현재 손절가·수량)."""
+    """손절 구멍 감지 입력 — 보유(종목·현재 손절가·수량)."""
     symbol: str
     current_stop: float
     qty: int
@@ -71,17 +61,7 @@ class StopGapHit:
 def detect_stop_gaps(
     positions: list[StopPosition], prices: dict[str, float]
 ) -> list[StopGapHit]:
-    """현재가가 손절 트리거를 이탈했는데도 아직 청산 안 된 보유를 감지한다 — 손절 구멍 트리거(03-arch 폴링 트리거).
-
-    스톱지정가(22)가 개장 갭·급락으로 미체결로 남으면 KIS 잔고에 포지션이 그대로 남는다.
-    그 상태(현재가 ≤ 손절가인데 qty>0)를 이벤트 사이클 트리거로 삼아, 사이클의 execute_exits
-    ②(손절 도달 → 시장가)가 강제 정리하게 한다. 감시 단계 판정이라 주문을 내지 않고
-    *깨울 대상만* 반환한다 — decide_exit ②와 임계는 같지만(price ≤ stop) 역할이 다르다.
-
-    positions: 잔고 동기화(선행 게이트 A.1 1번) 후 값을 기대한다 — 그래야 밤사이 자동 체결된
-      스톱이 잔고에 반영돼 *이미 팔린 종목을 손절 구멍으로 오인*하지 않는다.
-    prices: symbol → 현재가. 결측·비정상(None·≤0)은 건너뛴다(감시는 다음 폴링에서 재시도).
-    """
+    """현재가가 손절 트리거를 이탈했는데도 청산 안 된 보유(손절 구멍)를 감지한다."""
     hits: list[StopGapHit] = []
     for p in positions:
         if p.qty <= 0:
@@ -105,7 +85,7 @@ class ExitAction:
 
 def decide_exit(pos: Position, price: float, atr: float, *, params: dict | None = None
                 ) -> ExitAction:
-    """현재가·ATR로 청산 액션 하나를 결정. 우선순위 순 첫 매칭."""
+    """현재가·ATR로 청산 액션 하나를 결정한다. 우선순위 순 첫 매칭."""
     e = (params or load_params("risk_params"))["exits"]
     risk = pos.entry_price - pos.initial_stop   # R (롱: 양수 가정)
 
@@ -125,7 +105,6 @@ def decide_exit(pos: Position, price: float, atr: float, *, params: dict | None 
         and risk > 0
         and price >= pos.entry_price + e["breakeven_R"] * risk
     ):
-        # max: 트레일링이 이미 본전 위로 올려둔 경우 손절을 내리지 않는다
         new_stop = max(pos.current_stop, pos.entry_price)
         frac = float(e.get("partial_frac", 0.0))
         if frac > 0:
@@ -156,26 +135,26 @@ def execute_exits(
     broker,
     cycle_id: str,
     asof: date | None = None,
+    trade_date: date | None = None,
+    last_prices: dict[str, float] | None = None,
     order_mode: str = "paper",
     mode: str = "paper",
     forced_sells=(),
     params: dict | None = None,
     tax_params: dict | None = None,
 ) -> list[str]:
-    """open 보유별로 청산 액션을 집행한다(5~6단계, 진입과 대칭). 반환: 청산 ClientOrderId 목록.
+    """open 보유별로 청산 액션을 집행한다. 반환: 청산 ClientOrderId 목록.
 
-    결정 규칙이 sell을 낸 종목(forced_sells)은 thesis_valid=False로 ①논지무효 경로에 태운다.
-    raise_stop은 내부 손절만 상향(KIS 스톱 정정은 후속), exit_full은 broker로 송출하고
-    체결분의 실현손익을 `Outcomes`에 적재(백테스트 `_close`와 동일 costs 산식).
-
-    한계: 라이브 잔고 동기화(선행 게이트 A.1 1번)는 미배선이라 내부 `Positions`를 진실로
-    본다 — 자동 체결된 KIS 스톱과의 이중주문 방지(§129)는 잔고 동기화 연결 후 완성.
+    `asof`는 지표 기준일(전일 확정 봉), `trade_date`는 사이클이 도는 날이다.
+    ATR·보유일수는 전자, 현재가·비용 날짜는 후자를 쓴다(04-data 4.2).
     """
     from data.features import build_features  # 지연 import(features↔exits 순환 회피)
     from data.panel import latest_row
 
     p = params or load_params("risk_params")
     sells = set(forced_sells)
+    prices_now = last_prices or {}
+    day = trade_date or kst_today()
     rows = conn.execute(
         'SELECT * FROM "Positions" WHERE "Status" = \'open\''
     ).fetchall()
@@ -183,13 +162,16 @@ def execute_exits(
     for r in rows:
         if r["Quantity"] <= 0:
             continue
-        df = market_data.get(r["SymbolId"])
+        code = r["SymbolId"]
+        df = market_data.get(code)
         if df is None or df.empty:
             continue
         frow = latest_row(build_features(df), asof)
         if frow is None:
             continue
-        price, atr = frow["close"], frow["atr"]
+        atr = frow["atr"]                       # 전일 확정 봉의 ATR
+        # 청산 판정 가격은 사이클 시점 현재가. 시세를 못 받았으면 전일 종가로 대신한다
+        price = prices_now.get(code, frow["close"])
         if pd.isna(price) or pd.isna(atr):
             continue
         pos = Position(
@@ -197,9 +179,9 @@ def execute_exits(
             initial_stop=r["InitialStopPrice"]
             if r["InitialStopPrice"] is not None else r["CurrentStopPrice"],
             current_stop=r["CurrentStopPrice"],
-            days_held=_days_held(r["EntryDate"], asof),
+            days_held=_days_held(r["EntryDate"], day),
             breakeven_done=bool(r["IsBreakevenDone"]),
-            thesis_valid=r["SymbolId"] not in sells,
+            thesis_valid=code not in sells,
         )
         act = decide_exit(pos, float(price), float(atr), params=p)
         if act.action == "hold":
@@ -217,14 +199,17 @@ def execute_exits(
         )
         order_ids.append(
             _settle_exit(conn, broker, r, sell_qty, float(price), act,
-                         cycle_id, asof, order_mode, mode, tax_params)
+                         cycle_id, day, order_mode, mode, tax_params)
         )
     return order_ids
 
 
-def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, asof,
+def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,
                  order_mode, mode, tax_params) -> str:
-    """청산 1건 송출 → Orders 적재 + (체결 시) Outcomes 적재·Positions 갱신."""
+    """청산 1건 송출 → Orders 적재 + (체결 시) Outcomes 적재·Positions 갱신.
+
+    `trade_date`는 청산이 일어난 날 — 거래세율·보유일수 산정의 기준이다.
+    """
     code = r["SymbolId"]
     coid = f"{cycle_id}-{code}-exit-0"
     fill = broker.place_exit(
@@ -244,7 +229,7 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, asof,
         return coid
     entry = float(r["AveragePrice"])
     mkt = r["Market"] or "KOSPI"                       # 종목→시장 매핑 부재 시 기본(TODO)
-    end = asof or kst_today()
+    end = trade_date or kst_today()
     entry_date = _as_date(r["EntryDate"], end)
     buy_cost = costs.trade_cost(entry, filled, "buy", mkt, entry_date, params=tax_params)
     sell_cost = costs.trade_cost(exit_price, filled, "sell", mkt, end, params=tax_params)
@@ -257,7 +242,7 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, asof,
         entry_decision_id=r["EntryDecisionId"], symbol_id=code, entry_price=entry,
         exit_price=exit_price, quantity=filled,
         entry_date=entry_date, exit_date=end,
-        holding_days=_days_held(r["EntryDate"], asof),
+        holding_days=_days_held(r["EntryDate"], end),
         gross_profit_loss=gross, net_profit_loss=net,
         fee=buy_cost["commission"] + sell_cost["commission"], tax=sell_cost["tax"],
         return_percent=net / (entry * filled) if entry * filled else 0.0,
@@ -275,14 +260,19 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, asof,
 
 
 def _days_held(entry_date: date | None, asof: date | None) -> int:
+    """진입일로부터 asof까지의 보유일수를 **거래일로** 센다.
+
+    청산 규칙의 단위가 거래일이기 때문이다(06-sizing 6.2 "20거래일 초과").
+    달력일로 세면 주말·연휴만큼 일찍 잘려 백테스트와 결과가 갈린다.
+    """
     ed = _as_date(entry_date, None)
     if ed is None:
         return 0
-    return max(0, ((asof or kst_today()) - ed).days)
+    return trading_days_between(ed, asof or kst_today())
 
 
 def _as_date(entry_date, fallback):
-    """EntryDate는 date 컬럼이라 보통 date로 온다 — 문자열이 섞여 와도 견디게 둔다."""
+    """EntryDate를 date로 정규화한다(문자열이 섞여 와도 견딤)."""
     if isinstance(entry_date, date):
         return entry_date
     if entry_date:

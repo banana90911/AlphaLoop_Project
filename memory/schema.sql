@@ -10,7 +10,7 @@
 --   · 조회 속도용 인덱스는 걸지 않는다 — 실제로 느려진 뒤 추가. 유일성은 전부 기본키가 담당
 --   · 접속 계정은 둘(매매 코어=읽기·쓰기 / 대시보드=SELECT만). 권한 부여는 파일 끝 참고
 --
--- 표 17개: 시장 데이터 7 · 판단 6 · 집행 3 · 감사 1 (07-model 표 카탈로그와 1:1)
+-- 표 18개: 시장 데이터 7 · 판단 6 · 집행 4 · 감사 1 (07-model 표 카탈로그와 1:1)
 
 -- ════════════════════════════════════════════════════════════
 -- 7.1 시장 데이터 — 장 시작 전 일일 배치가 적재(전 종목 대상)
@@ -130,17 +130,41 @@ CREATE TABLE IF NOT EXISTS "Cycles" (
 );
 
 -- 사이클 시점의 계좌 총액. 사이징의 분모이며, 시계열이라야 낙폭을 잴 수 있어 쌓는다.
+-- "BaseAsset"은 **직전 거래일 마지막 스냅샷의 TotalAsset**이다(05-risk 5.2 / 09-eval).
+-- 예전 이름 "DayStartAsset"은 "당일 첫 사이클의 총자본"으로 읽혀서, 정기 사이클이
+-- 하루 한 번인 이 시스템에서는 손익률이 항상 0%가 되는 정의였다 — 그래서 개명했다.
 CREATE TABLE IF NOT EXISTS "AccountSnapshots" (
-    "SnapshotId"       text PRIMARY KEY,
-    "CycleId"          text NOT NULL REFERENCES "Cycles"("CycleId"),
-    "TradeDate"        date NOT NULL,
-    "Amount"           numeric NOT NULL,           -- 예수금
-    "PositionValue"    numeric NOT NULL,           -- 보유 평가금액(거래정지 종목은 동결가)
-    "TotalAsset"       numeric NOT NULL,
-    "DayStartAsset"    numeric,                    -- 일일 손익률 판정의 분모
-    "DayReturnPercent" double precision,
-    "RecordedDateTime" timestamptz NOT NULL
+    "SnapshotId"        text PRIMARY KEY,
+    "CycleId"           text NOT NULL REFERENCES "Cycles"("CycleId"),
+    "TradeDate"         date NOT NULL,
+    "Amount"            numeric NOT NULL,          -- 예수금
+    "PositionValue"     numeric NOT NULL,          -- 보유 평가금액(거래정지 종목은 동결가)
+    "TotalAsset"        numeric NOT NULL,
+    "BaseAsset"         numeric,                   -- 직전 거래일 마지막 TotalAsset
+    "NetFlowSinceBase"  numeric NOT NULL DEFAULT 0,  -- 기준선 이후 순외부흐름(입금 +, 출금 −)
+    "AdjustedBaseAsset" numeric,                   -- BaseAsset + NetFlowSinceBase = 손익률 분모
+    "CumulativeNetFlow" numeric NOT NULL DEFAULT 0,  -- 개시 이후 누적 순입금
+    "TwrIndex"          double precision,          -- 시간가중수익률 지수(1.0에서 시작)
+    "DayReturnPercent"  double precision,          -- TotalAsset / AdjustedBaseAsset − 1
+    "RecordedDateTime"  timestamptz NOT NULL
 );
+
+-- 이미 만들어진 DB를 위한 멱등 이행. schema.sql은 매 기동마다 다시 적용되므로
+-- (memory/db.py) 여기 있는 것들도 전부 여러 번 돌아도 안전해야 한다.
+-- RENAME COLUMN에는 IF NOT EXISTS가 없어 존재 확인을 직접 한다.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'AccountSnapshots' AND column_name = 'DayStartAsset') THEN
+        EXECUTE 'ALTER TABLE "AccountSnapshots" RENAME COLUMN "DayStartAsset" TO "BaseAsset"';
+    END IF;
+END
+$$;
+
+ALTER TABLE "AccountSnapshots" ADD COLUMN IF NOT EXISTS "NetFlowSinceBase"  numeric NOT NULL DEFAULT 0;
+ALTER TABLE "AccountSnapshots" ADD COLUMN IF NOT EXISTS "AdjustedBaseAsset" numeric;
+ALTER TABLE "AccountSnapshots" ADD COLUMN IF NOT EXISTS "CumulativeNetFlow" numeric NOT NULL DEFAULT 0;
+ALTER TABLE "AccountSnapshots" ADD COLUMN IF NOT EXISTS "TwrIndex"          double precision;
 
 -- 하루 1회 산출하는 전 종목 점수. 원시값과 백분위를 함께 저장해야
 -- 나중에 가중치를 바꿔 재계산할 수 있다(백분위는 그날 통과 집합에 의존).
@@ -166,7 +190,10 @@ CREATE TABLE IF NOT EXISTS "DailyScores" (
 -- 워치리스트 종목의 사이클 시점 값. 이 표가 곧 워치리스트다(별도 표 없음).
 CREATE TABLE IF NOT EXISTS "CycleScores" (
     "CycleId"            text NOT NULL REFERENCES "Cycles"("CycleId"),
-    "SymbolId"           text NOT NULL REFERENCES "Symbols"("SymbolId"),
+    -- "Symbols" FK를 걸지 않는다: 워치리스트에는 보유 종목이 무조건 들어가는데(04-data 4.2),
+    -- 상장폐지로 명부에서 빠진 보유가 기록 불가가 되면 청산 판단의 근거가 사라진다.
+    -- 같은 이유로 "Decisions"·"Positions"·"Orders"의 SymbolId에도 FK가 없다.
+    "SymbolId"           text NOT NULL,
     "Inclusion"          text NOT NULL CHECK ("Inclusion" IN ('topRank','surge','holding')),
     "BaseScore"          double precision,         -- DailyScores의 전일 기준 종합점수
     "FlowPercentileLive" double precision,         -- 장중 잠정 수급 백분위
@@ -214,20 +241,57 @@ CREATE TABLE IF NOT EXISTS "RiskChecks" (
     "CycleId"         text NOT NULL REFERENCES "Cycles"("CycleId"),
     "DecisionId"      text REFERENCES "Decisions"("DecisionId"),  -- 사이클 단위 검사는 NULL
     "CheckOrder"      integer NOT NULL,            -- 5.2 검사 순서(1~7) = 심각도
+    -- cashFlow: 보유는 맞는데 현금만 어긋나 외부 흐름으로 기록한 경우(매매는 계속 진행)
     "CheckName"       text NOT NULL
-                      CHECK ("CheckName" IN ('balanceSync','marketHalt','dataFreshness',
+                      CHECK ("CheckName" IN ('balanceSync','cashFlow','marketHalt','dataFreshness',
                                              'circuitBreaker','schema','hardLimit','symbolState')),
+    -- flowDetected: 차단이 아니라 "기록했고 그대로 진행했다"는 뜻
     "Result"          text NOT NULL
-                      CHECK ("Result" IN ('pass','reject','reduce','skipCycle','safeStop')),
+                      CHECK ("Result" IN ('pass','reject','reduce','skipCycle','safeStop',
+                                          'flowDetected')),
     "Reason"          text,
     "LimitValue"      double precision,            -- 한도와 실측을 나란히 두면 초과폭 집계가 된다
     "ActualValue"     double precision,
     "CheckedDateTime" timestamptz NOT NULL
 );
 
+-- 이미 만들어진 DB용 멱등 이행 — CREATE TABLE IF NOT EXISTS는 기존 표의 CHECK를
+-- 갱신하지 않아서, 허용값을 늘릴 때는 제약을 직접 갈아끼워야 한다.
+-- DROP IF EXISTS + ADD 쌍이라 여러 번 돌아도 안전하다.
+ALTER TABLE "RiskChecks" DROP CONSTRAINT IF EXISTS "RiskChecks_CheckName_check";
+ALTER TABLE "RiskChecks" ADD  CONSTRAINT "RiskChecks_CheckName_check"
+    CHECK ("CheckName" IN ('balanceSync','cashFlow','marketHalt','dataFreshness',
+                           'circuitBreaker','schema','hardLimit','symbolState'));
+ALTER TABLE "RiskChecks" DROP CONSTRAINT IF EXISTS "RiskChecks_Result_check";
+ALTER TABLE "RiskChecks" ADD  CONSTRAINT "RiskChecks_Result_check"
+    CHECK ("Result" IN ('pass','reject','reduce','skipCycle','safeStop','flowDetected'));
+
+
 -- ════════════════════════════════════════════════════════════
 -- 7.3 집행
 -- ════════════════════════════════════════════════════════════
+
+-- 외부 현금흐름 1건. 주식은 일치하는데 현금만 어긋난 잔차 = 매매로 설명 불가한 돈.
+-- 매매는 주식과 현금을 항상 같이 움직이므로, 주식 대조를 통과했는데 예수금만 틀렸다면
+-- 그건 내가 이체했거나 배당이 들어온 것이다(05-risk 5.2 검사 1-b).
+-- "Kind"는 단순 라벨이 아니라 회계적으로 의미가 있다: deposit/withdrawal은 TWR에서
+-- 제거할 외부 흐름이고, dividend/taxRefund/interest는 수익이라 제거하면 안 된다(09-eval).
+CREATE TABLE IF NOT EXISTS "CashFlows" (
+    "FlowId"            text PRIMARY KEY,
+    "DetectedCycleId"   text REFERENCES "Cycles"("CycleId"),
+    "TradeDate"         date NOT NULL,
+    "Kind"              text NOT NULL,      -- deposit/withdrawal/dividend/taxRefund/interest/fee/unknown
+    "Amount"            numeric NOT NULL,   -- 부호 있음: 유입 +, 유출 −
+    "Status"            text NOT NULL,      -- unconfirmed/confirmed/reclassified
+    "Source"            text NOT NULL,      -- residual/signature/broker/manual
+    "ExpectedCash"      numeric NOT NULL,   -- 감지 시점 기대 예수금 (사후 감사 근거)
+    "ActualCash"        numeric NOT NULL,   -- 감지 시점 실제 예수금
+    "Note"              text,
+    "DetectedDateTime"  timestamptz NOT NULL,
+    "ConfirmedDateTime" timestamptz,
+    "ConfirmedBy"       text,
+    "Mode"              text NOT NULL
+);
 
 -- KIS에 보낸 주문. 기본키가 "ClientOrderId"인 것이 중복 주문 방지의 핵심 —
 -- 같은 의도면 재시작 후에도 같은 값이 나와 두 번째 삽입이 거부된다.

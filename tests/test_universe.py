@@ -1,4 +1,11 @@
-"""종목 유니버스 — 마스터 파싱·보통주 필터 (네트워크 없이)."""
+"""
+description:        종목 유니버스 — 마스터 파싱·보통주 필터 (네트워크 없이).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pandas as pd
 import pytest
 

@@ -1,4 +1,11 @@
-"""백테스트 입력 로더 — 캐시 parquet → 엔진용 prices dict (네트워크 없이)."""
+"""
+description:        백테스트 입력 로더 — 캐시 parquet → 엔진용 prices dict (네트워크 없이).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pandas as pd
 
 from backtest import loader

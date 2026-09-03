@@ -1,15 +1,10 @@
-"""백테스트 데이터 수집 오케스트레이션 (data 레이어, 배치 실행기).
-
-유니버스 종목을 돌며 가격·공매도(KIS)·수급(네이버)을 받아 parquet 캐시에 적재한다.
-- **이어받기**: 이미 캐시에 있는 종목·종류는 건너뛴다(중단 후 재개 안전).
-- **격리**: 한 종목 실패가 전체를 멈추지 않는다(실패 목록만 모아 보고).
-- KIS 시세 정본은 실전 도메인 → 기본 `mode='real'`(읽기 전용 조회라 위험 없음).
-
-실행:  python -m data.collect --start 20210101 --end 20260613 [--limit N] [--force] [--no-short]
-전체 2500여 종목은 종목당 ~36s(네이버 수급 병목)로 ~25시간 — 먼저 --limit로 소규모 검증 권장.
-중단되면 같은 명령 재실행으로 이어받기(캐시된 종목·종류는 skip).
 """
-from __future__ import annotations
+description:        백테스트 데이터 수집 오케스트레이션 (배치 실행기)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import argparse
 
@@ -33,11 +28,7 @@ def collect_one(
     force: bool = False,
     kinds: tuple[str, ...] = _ALL_KINDS,
 ) -> dict[str, object]:
-    """한 종목의 가격·수급을 수집·캐시. 종류별 행수(또는 'skip') 반환.
-
-    kinds로 수집 종류 선택(예: 공매도 미사용 시 ('ohlcv','supply')). 공매도는 현재 엔진
-    피처에 미연결 — 빼면 KIS 호출이 거의 절반(이어받기 지원이라 나중에 추가 가능).
-    """
+    """한 종목의 가격·수급을 수집·캐시한다. 종류별 행수(또는 'skip')를 반환."""
     plan = {
         "ohlcv": lambda: kis_history.fetch_ohlcv_range(client, code, start, end),
         "short": lambda: kis_history.fetch_short_sale_range(client, code, start, end),
@@ -64,7 +55,7 @@ def collect_universe(
     codes: list[str] | None = None,
     kinds: tuple[str, ...] = _ALL_KINDS,
 ) -> dict[str, list]:
-    """유니버스 전체(또는 codes/limit) 수집. 실패 목록을 모아 반환."""
+    """유니버스 전체(또는 codes/limit)를 수집한다. 실패 목록을 모아 반환."""
     if codes is None:
         uni = fetch_universe()
         cache.save("universe", uni)
@@ -92,6 +83,7 @@ def collect_universe(
 
 
 def main() -> None:
+    """CLI 진입점 — 유니버스 종목의 가격·수급을 parquet 캐시로 수집한다."""
     ap = argparse.ArgumentParser(description="백테스트 데이터 수집")
     ap.add_argument("--start", required=True, help="YYYYMMDD")
     ap.add_argument("--end", required=True, help="YYYYMMDD")

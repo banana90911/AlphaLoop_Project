@@ -1,4 +1,11 @@
-"""결정 입출력 스키마 — 전체 검증·범위 (core/schemas)."""
+"""
+description:        결정 입출력 스키마 — 전체 검증·범위 (core/schemas).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pytest
 from pydantic import ValidationError
 

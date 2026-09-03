@@ -1,7 +1,9 @@
-"""백테스트 거래 결과 → 켈리 p·b (backtest/seed).
-
-DB 적재는 검증하지 않는다 — 백테스트 결과는 DB에 넣지 않는 것이 설계다(07-model 공통
-규칙). 여기 남은 것은 순수 계산뿐이라 DB 서버 없이도 돈다.
+"""
+description:        백테스트 거래 결과 → 켈리 p·b (backtest/seed)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
 """
 from datetime import date
 

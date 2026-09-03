@@ -1,23 +1,10 @@
-"""워크포워드 OOS 검증 (09-eval 9.1).
-
-**무엇을 왜 검증하나** — 지금까지 파라미터를 2023~2026 전 구간 성적을 *보면서* 골랐다.
-그러면 "전략이 좋은 것"과 "그 기간에만 우연히 맞는 값을 찾은 것"이 구분되지 않는다.
-그래서 학습 구간에서만 값을 고르고, 그 값을 *고를 때 보지 않은* 다음 구간(OOS)에 적용해
-성적을 잰다. 검증 결과를 보고 값을 되돌려 고치지 않는다.
-
-**어떻게** — `backtest/walkforward.rolling_splits`로 학습/검증을 시간순 분할하고, 각 학습
-구간의 그리드 최적값을 다음 검증 구간에 적용한다. 검증 구간들의 파라미터를 하나의
-스케줄로 묶어 **자본·보유를 이어가며 한 번에** 실행한다 — 구간마다 자본을 초기화하는
-콜드스타트가 장기보유 모멘텀을 토막내는 계측 결함(9.6.5)을 피하기 위함이다.
-
-비교 대상 셋을 같은 OOS 기간에서 나란히 본다.
-  ① WF 튜닝   — 구간마다 학습 최적값을 갈아끼움
-  ② 고정 기본값 — 현재 확정값(config 그대로)
-  ③ 고정 공격형 — 부분익절 0·트레일 4.0·시간청산 없음·손절 3.0 ATR
-
-사용: PYTHONPATH=. .venv/bin/python run_walkforward.py [--train 250] [--test 125]
 """
-from __future__ import annotations
+description:        워크포워드 OOS 검증 (학습 구간 선택 → 다음 구간 적용)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import argparse
 import copy
@@ -35,9 +22,9 @@ from data import cache
 from eval import metrics
 
 CAPITAL = 10_000_000.0
-WARMUP_START = date(2022, 1, 1)      # 12-1 모멘텀 워밍업(252+20거래일) 이후부터 분할
+WARMUP_START = date(2022, 1, 1)      # 12-1 모멘텀 워밍업 이후부터 분할
 
-# 과최적화 위험이 큰 손잡이만 그리드로 (09-eval 9.3: 손잡이 7개 이하)
+# 과최적화 위험이 큰 손잡이만 그리드로
 GRID = {
     ("exits", "partial_frac"): [0.0, 0.4],
     ("exits", "trail_k"): [2.75, 4.0],
@@ -47,6 +34,7 @@ GRID = {
 
 
 def _variant(base: dict, combo: tuple) -> dict:
+    """base에 combo 조합을 얹은 파라미터 사본을 만든다."""
     p = copy.deepcopy(base)             # load_params는 캐시 공유 → 반드시 사본
     for (sec, key), val in zip(GRID.keys(), combo, strict=True):
         p[sec][key] = val
@@ -54,10 +42,12 @@ def _variant(base: dict, combo: tuple) -> dict:
 
 
 def _label(combo: tuple) -> str:
+    """조합을 'key=value ...' 문자열로 표시한다."""
     return " ".join(f"{k}={v}" for (_, k), v in zip(GRID.keys(), combo, strict=True))
 
 
 def main() -> None:
+    """CLI 진입점 — 학습 구간마다 그리드 최적값을 골라 다음 구간에 적용, OOS를 잰다."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--train", type=int, default=250, help="학습 거래일 수(약 12개월)")
     ap.add_argument("--test", type=int, default=125, help="검증 거래일 수(약 6개월)")

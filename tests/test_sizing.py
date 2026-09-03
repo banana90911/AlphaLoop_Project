@@ -1,6 +1,9 @@
-"""포지션 사이징 — 동일가중·변동성 타깃팅·켈리 천장 (06-sizing, 09-eval 9.4 ①).
-
-라이브에서 켈리가 켜지길 기다릴 필요 없이 가짜 (p,b,n)으로 지금 검증한다.
+"""
+description:        포지션 사이징 — 동일가중·변동성 타깃팅·켈리 천장
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
 """
 from risk import sizing
 

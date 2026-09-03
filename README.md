@@ -15,6 +15,8 @@
 - **성과 측정**: 거래세·수수료·슬리피지·세금을 뺀 뒤 코스피 매수후보유 등 벤치마크 4종과 비교한다.
 - **대시보드**: 같은 DB를 조회 전용으로 열어 수익·포지션·결정 근거·정지 이력을 보여준다. 비밀번호로 로그인한 뒤 어느 기기에서든 본다.
 
+
+
 ## 핵심 설계 원칙
 
 1. **결정은 결정론적 코드가 한다.** 같은 입력이면 항상 같은 결정이 나오고, 백테스트와 실거래가 같은 코드 경로를 쓴다.
@@ -22,6 +24,8 @@
 3. **프레임워크 없이 직접 조립한다.** 단일 목적 라이브러리만 쓰고, 지표·백테스트·게이트를 직접 구현한다. 추상화가 얇을수록 무엇을 왜 했는지가 그대로 남는다.
 4. **사이징·청산이 방향만큼 수익을 좌우한다.** 종목을 맞히는 것은 절반이고, 얼마를 사고 언제 파느냐가 나머지 절반이다.
 5. **측정이 없으면 수익도 없다.** 단순 전략을 비용 떼고도 이겨야 가치가 있다. 모의 → 소액 실거래 순으로 검증한 뒤에만 자본을 늘린다.
+
+
 
 ## 한 사이클의 흐름 (6단계)
 
@@ -36,19 +40,21 @@
 
 ## 기술 스택
 
-| 영역 | 선택 |
-| --- | --- |
-| 언어 | Python 3.12 |
-| 증권사·시세 | 한국투자증권 KIS Developers API |
-| 글로벌·매크로 | `yfinance`, FRED |
-| 기업행위 공시 | DART 정형 API |
-| 데이터 처리·지표 | `pandas`, `numpy`, `exchange_calendars` |
-| 게이트 통계 | `scipy` (PBO·Deflated Sharpe) |
-| 스키마·설정 | `pydantic` v2, `pydantic-settings`, `tomllib` |
-| 저장소 | `PostgreSQL` — 매매 코어와 같은 서버, 모든 프로세스의 유일한 공유점 (쓰기·조회 계정 분리) |
-| 대시보드 | `FastAPI` 조회 전용 JSON API + `React`·`Vite`·`Tailwind CSS` (비밀번호 로그인 — 08-dashboard 8.6) |
-| 배포 | 매매·DB·API는 NCP 서울 서버, 화면은 Vercel, 둘을 잇는 길은 Tailscale Funnel (10-operations 10.13) |
-| 로깅·테스트 | `structlog`, `pytest`, `ruff`, `mypy` |
+
+| 영역        | 선택                                                                  |
+| --------- | ------------------------------------------------------------------- |
+| 언어        | Python 3.12                                                         |
+| 증권사·시세    | 한국투자증권 KIS Developers API                                           |
+| 글로벌·매크로   | `yfinance`, FRED                                                    |
+| 기업행위 공시   | DART 정형 API                                                         |
+| 데이터 처리·지표 | `pandas`, `numpy`, `exchange_calendars`                             |
+| 게이트 통계    | `scipy` (PBO·Deflated Sharpe)                                       |
+| 스키마·설정    | `pydantic` v2, `pydantic-settings`, `tomllib`                       |
+| 저장소       | `PostgreSQL` — 매매 코어와 같은 서버, 모든 프로세스의 유일한 공유점 (쓰기·조회 계정 분리)         |
+| 대시보드      | `FastAPI` 조회 전용 JSON API + `React`·`Vite`·`Tailwind CSS` (비밀번호 로그인) |
+| 배포        | 매매·DB·API는 NCP 서울 서버, 화면은 Vercel, 둘을 잇는 길은 Tailscale Funnel         |
+| 로깅·테스트    | `structlog`, `pytest`, `ruff`, `mypy`                               |
+
 
 모의투자와 실전 투자는 설정값(도메인·계좌번호)만 다르고 코드는 동일하게 동작한다 — 코드에 모드 분기를 두지 않는 것이 불변식이며 CI가 이를 강제한다.
 
@@ -56,21 +62,23 @@
 
 설계 정본은 `docs/` 디렉터리다.
 
-| # | 문서 | 내용 |
-| --- | --- | --- |
-| 01 | [01-overview](docs/01-overview.md) | 프로젝트 개요·목표·용도 |
-| 02 | [02-principles](docs/02-principles.md) | 핵심 설계 원칙·현실적 기대치 |
-| 03 | [03-architecture](docs/03-architecture.md) | 사이클 6단계·일일 배치·결정 로직·리포 구조 |
-| 04 | [04-data](docs/04-data.md) | 데이터 구성·품질 보정·후보 선별·vintage |
-| 05 | [05-risk-engine](docs/05-risk-engine.md) | 리스크 엔진 — 하드룰·검사 순서·안전 정지 |
-| 06 | [06-sizing-portfolio](docs/06-sizing-portfolio.md) | 포지션 사이징·청산 |
-| 07 | [07-data-model](docs/07-data-model.md) | 데이터 모델 (PostgreSQL 17개 표) |
-| 08 | [08-dashboard](docs/08-dashboard.md) | 대시보드 — 불변식·화면 구성·접속·로그인 |
-| 09 | [09-evaluation](docs/09-evaluation.md) | 성과 평가·벤치마크·백테스트·게이트·실행 이력 |
-| 10 | [10-operations](docs/10-operations.md) | 운영 — 멱등성·DB 권한·백업·배포·조용한 실패 차단 |
 
-외부 API 명세는 [docs/reference/external-apis.md](docs/reference/external-apis.md)에 있다. 이 프로젝트가 쓰는 모든 외부 API의 명세·제약·실측 결과를 정리했다(키 값은 코드·문서에 넣지 않고 `.env`에만 둔다).
+| #   | 문서                                                 | 내용                             |
+| --- | -------------------------------------------------- | ------------------------------ |
+| 01  | [01-overview](docs/01-overview.md)                 | 프로젝트 개요·목표·용도                  |
+| 02  | [02-principles](docs/02-principles.md)             | 핵심 설계 원칙·현실적 기대치               |
+| 03  | [03-architecture](docs/03-architecture.md)         | 사이클 6단계·일일 배치·결정 로직·리포 구조      |
+| 04  | [04-data](docs/04-data.md)                         | 데이터 구성·품질 보정·후보 선별·vintage     |
+| 05  | [05-risk-engine](docs/05-risk-engine.md)           | 리스크 엔진 — 하드룰·검사 순서·안전 정지       |
+| 06  | [06-sizing-portfolio](docs/06-sizing-portfolio.md) | 포지션 사이징·청산                     |
+| 07  | [07-data-model](docs/07-data-model.md)             | 데이터 모델 (PostgreSQL 17개 표)      |
+| 08  | [08-dashboard](docs/08-dashboard.md)               | 대시보드 — 불변식·화면 구성·접속·로그인        |
+| 09  | [09-evaluation](docs/09-evaluation.md)             | 성과 평가·벤치마크·백테스트·게이트·실행 이력      |
+| 10  | [10-operations](docs/10-operations.md)             | 운영 — 멱등성·DB 권한·백업·배포·조용한 실패 차단 |
+
+
+외부 API 명세 -> [docs/reference/external-apis.md](docs/reference/external-apis.md)
 
 ## 면책
 
-이 프로젝트는 개인 학습·연구 목적이다. 결정·수익률·체결은 외부에 공개하지 않는다(10.17).
+이 프로젝트는 개인 학습·연구 본 목적이다.

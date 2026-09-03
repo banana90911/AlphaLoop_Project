@@ -1,14 +1,10 @@
-"""네이버 금융 스크래핑 — 백테스트용 과거 시세·수급 (data 레이어).
-
-공식 API 아님. 공개 웹페이지(HTML 표)를 파싱한다(external-apis 실측 제약 — 네이버 금융).
-- 과거/상폐 시세: item/sise_day → date·open·high·low·close·volume
-- 과거 수급(외국인·기관): item/frgn → date·close·volume·inst_net·foreign_net
-
-**비공식 경로**라 네이버가 구조를 바꾸면 조용히 틀린 데이터를 내는 대신 `NaverParseError`로
-명확히 실패한다(파서 격리). 운영용 아님 — 백테스트 데이터를 1회 수집해 DB에 적재하는 용도.
-종목은 단축코드 6자리(KIS와 동일). 인코딩 euc-kr.
 """
-from __future__ import annotations
+description:        네이버 금융 스크래핑 (백테스트용 과거 시세·수급)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import time
 from datetime import date, datetime
@@ -25,7 +21,7 @@ _HEADERS = {
     )
 }
 _PAUSE = 0.4          # 요청 간 지연(매너·차단 회피)
-_MAX_PAGES = 600      # 안전 상한(무한 루프 방지). 1page≈10~20거래일 → 충분히 과거까지.
+_MAX_PAGES = 600      # 안전 상한(무한 루프 방지)
 
 # 네이버 원본 컬럼 → 표준 컬럼. 구조 검증의 기준이기도 하다.
 _OHLCV_MAP = {"날짜": "date", "시가": "open", "고가": "high", "저가": "low",
@@ -39,12 +35,14 @@ class NaverParseError(RuntimeError):
 
 
 def _new_session() -> requests.Session:
+    """네이버 요청용 세션(공통 헤더 포함)을 만든다."""
     s = requests.Session()
     s.headers.update(_HEADERS)
     return s
 
 
 def _get_tables(session: requests.Session, path: str, code: str, page: int) -> list[pd.DataFrame]:
+    """한 페이지의 HTML 표들을 파싱해 반환한다."""
     r = session.get(f"{_BASE}/{path}?code={code}&page={page}", timeout=10)
     r.raise_for_status()
     r.encoding = "euc-kr"
@@ -52,10 +50,12 @@ def _get_tables(session: requests.Session, path: str, code: str, page: int) -> l
 
 
 def _to_date(s: str) -> date:
+    """'YYYY.MM.DD' 문자열을 date로 변환한다."""
     return datetime.strptime(s.strip(), "%Y.%m.%d").date()
 
 
 def _parse_date_str(d: str) -> date:
+    """'YYYYMMDD' 문자열을 date로 변환한다."""
     return datetime.strptime(d, "%Y%m%d").date()
 
 
@@ -67,7 +67,7 @@ def _paginate(
     end: date,
     parse_page,
 ) -> pd.DataFrame:
-    """start(과거)~end(최근)까지 페이지를 거슬러 수집. 한 페이지가 start보다 과거면 중단."""
+    """start~end까지 페이지를 거슬러 수집한다(마지막 페이지 반복 시 중단)."""
     frames: list[pd.DataFrame] = []
     seen_oldest: date | None = None
     for page in range(1, _MAX_PAGES + 1):
@@ -75,7 +75,6 @@ def _paginate(
         if df.empty:
             break
         oldest = df["date"].min()
-        # 같은 oldest가 반복 = 마지막 페이지 도달(네이버는 범위 밖 page도 마지막을 반복 반환)
         if oldest == seen_oldest:
             break
         seen_oldest = oldest
@@ -91,7 +90,7 @@ def _paginate(
 
 
 def _pick_table(tables: list[pd.DataFrame], required_ko: set[str]) -> pd.DataFrame:
-    """필요한 한글 컬럼을 모두 가진 표를 고른다. 없으면 파서 격리 에러."""
+    """필요한 한글 컬럼을 모두 가진 표를 고른다(없으면 에러)."""
     for t in tables:
         cols = {str(c[0]) if isinstance(c, tuple) else str(c) for c in t.columns}
         if required_ko <= cols:
@@ -100,6 +99,7 @@ def _pick_table(tables: list[pd.DataFrame], required_ko: set[str]) -> pd.DataFra
 
 
 def _parse_ohlcv(tables: list[pd.DataFrame]) -> pd.DataFrame:
+    """시세 표를 표준 OHLCV 컬럼으로 변환한다."""
     t = _pick_table(tables, set(_OHLCV_MAP)).dropna(how="all")
     t = t.rename(columns=_OHLCV_MAP)[list(_OHLCV_MAP.values())].dropna(subset=["date"])
     t["date"] = t["date"].map(_to_date)
@@ -109,6 +109,7 @@ def _parse_ohlcv(tables: list[pd.DataFrame]) -> pd.DataFrame:
 
 
 def _parse_supply(tables: list[pd.DataFrame]) -> pd.DataFrame:
+    """수급 표(2단 멀티헤더)를 표준 컬럼으로 변환한다."""
     # frgn은 2단 멀티헤더 → 상위 레벨(날짜/종가/거래량/기관/외국인)로 식별
     for t in tables:
         top = {str(c[0]) if isinstance(c, tuple) else str(c) for c in t.columns}
@@ -130,7 +131,7 @@ def _parse_supply(tables: list[pd.DataFrame]) -> pd.DataFrame:
 
 def fetch_ohlcv(code: str, start: str, end: str, *, session: requests.Session | None = None
                 ) -> pd.DataFrame:
-    """일별 시세(상폐 포함). start/end='YYYYMMDD'. 컬럼: date·open·high·low·close·volume."""
+    """일별 시세(상폐 포함)를 조회한다. start/end='YYYYMMDD'."""
     s = session or _new_session()
     return _paginate(s, "sise_day.naver", code, _parse_date_str(start), _parse_date_str(end),
                      _parse_ohlcv)
@@ -138,10 +139,7 @@ def fetch_ohlcv(code: str, start: str, end: str, *, session: requests.Session | 
 
 def fetch_supply(code: str, start: str, end: str, *, session: requests.Session | None = None
                  ) -> pd.DataFrame:
-    """투자자 수급(외국인·기관 순매매). start/end='YYYYMMDD'.
-
-    컬럼: date·close·volume·inst_net·foreign_net (개인 순매매는 네이버 미제공).
-    """
+    """투자자 수급(외국인·기관 순매매)을 조회한다. start/end='YYYYMMDD'."""
     s = session or _new_session()
     return _paginate(s, "frgn.naver", code, _parse_date_str(start), _parse_date_str(end),
                      _parse_supply)

@@ -1,4 +1,11 @@
-"""시간대 정규화 (0-B 게이트, 10-ops 10.8)."""
+"""
+description:        시간대 정규화 (0-B 게이트, 10-ops 10.8).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 from core.timeutils import now_utc, session_label, to_kst
 
 

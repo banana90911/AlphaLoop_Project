@@ -1,4 +1,11 @@
-"""결정 규칙 — 점수 임계로 신규 진입·보유 청산 (pipeline/decision)."""
+"""
+description:        결정 규칙 — 점수 임계로 신규 진입·보유 청산 (pipeline/decision).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pytest
 
 from config.settings import load_params

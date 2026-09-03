@@ -1,23 +1,10 @@
-"""Go/No-Go 게이트 실행기 — 동결 기본값 연속 백테스트 1회 (09-eval 9.2·9.6.5).
-
-그리드 튜닝을 기각했으므로(9.6.5) 파라미터를 고르지 않는다.
-`config/risk_params.toml` 기본값을 그대로 검증기간에 **연속 보유**로 1회 실행하고 하드
-3조건으로 판정한다.
-
-  ① 벤치마크 4종 전부 초과 — 코스피 매수후보유·단순 모멘텀·현금·균등가중 워치리스트
-  ② PBO — 그리드를 탐색하지 않으므로 판정 대상 아님(9.6.5)
-  ③ 견고성 — 파라미터 ±20% 재실행이 기준선(기본값의 50%, `drop_tol=0.5`) 위 + 비용 2배에서
-     균등가중 초과
-
-엔진은 설계 정합 정본(`backtest/spec_engine`)을 쓴다 — 구 `engine.py`는 설계 위반 14건으로
-폐기 대상이다(9.6.3). 하락장 필터(regime)는 설계에 없으므로 주입하지 않는다(04-data 지수 행).
-
-사용: PYTHONPATH=. .venv/bin/python run_gate.py [--partial 0.4]
-
-`--partial FRAC`은 +breakeven_R 도달 시 FRAC만큼 부분 청산하는 변형을 돌린다 — 부분 익절은
-설계에서 제거했으므로(06-sizing 6.2) **비교 측정 전용**이다.
 """
-from __future__ import annotations
+description:        Go/No-Go 게이트 실행기 (동결 기본값 연속 백테스트 1회)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import argparse
 import copy
@@ -31,13 +18,13 @@ from data import cache
 from eval import metrics
 
 RESULTS_DIR = Path("tune_results")
-CAPITAL = 10_000_000.0
-GATE_START = date(2023, 1, 1)     # 검증 시작(9.6.4~9.6.5 실행과 동일 구간)
-TREND_DAYS = 200                  # 벤치마크용 단순 모멘텀 지수 SMA (전략 입력 아님)
+CAPITAL = 10_000_000.0     # 기본 자본. --capital로 덮어쓴다(소액 검증용)
+GATE_START = date(2023, 1, 1)     # 검증 시작
+TREND_DAYS = 200                  # 벤치마크용 단순 모멘텀 지수 SMA
 DROP_TOL = 0.5                    # 견고성: 기본값 대비 이 비율 아래로 꺾이면 절벽
 SENSITIVITY = 0.20                # ±20%
 
-# ±20%를 흔들 파라미터 — 조정 가능한 손잡이 목록(9.3: 7개 이하로 고정)
+# ±20%를 흔들 파라미터 목록
 KNOBS: list[tuple[str, str, str]] = [
     ("entry", "stop_atr_k", "float"),
     ("exits", "breakeven_R", "float"),
@@ -48,7 +35,7 @@ KNOBS: list[tuple[str, str, str]] = [
 
 
 def _shift(params: dict, section: str, key: str, kind: str, factor: float) -> dict | None:
-    """파라미터 하나를 factor배로 흔든 사본. 값이 안 바뀌면 None(정수 반올림 등)."""
+    """파라미터 하나를 factor배로 흔든 사본을 반환한다(값이 안 바뀌면 None)."""
     out = copy.deepcopy(params)
     base_val = params[section][key]
     new = base_val * factor
@@ -60,7 +47,7 @@ def _shift(params: dict, section: str, key: str, kind: str, factor: float) -> di
 
 
 def _double_costs(tax: dict) -> dict:
-    """수수료·슬리피지·거래세 2배 (비용 2배 스트레스)."""
+    """수수료·슬리피지·거래세를 2배로 만든 사본을 반환한다."""
     out = copy.deepcopy(tax)
     out["brokerage"]["rate"] *= 2
     out["slippage"]["rate"] *= 2
@@ -70,10 +57,14 @@ def _double_costs(tax: dict) -> dict:
 
 
 def main() -> None:
+    """CLI 진입점 — 기본값 연속 백테스트 1회로 벤치마크·견고성을 판정한다."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--partial", type=float, default=0.0,
                     help="부분 익절 비율(0=없음, 설계 기본). 비교 측정 전용")
+    ap.add_argument("--capital", type=float, default=CAPITAL,
+                    help="초기 자본(원). 소액에서는 1주 단위 때문에 진입 가능 종목이 줄어든다")
     args = ap.parse_args()
+    capital = args.capital
 
     base = load_params("risk_params")
     tax = load_params("tax_rates")
@@ -99,12 +90,12 @@ def main() -> None:
 
     frac = float(base["exits"].get("partial_frac", 0.0))
     variant = f"부분익절 {frac:.0%}" if frac > 0 else "부분익절 없음"
-    print(f"종목 {len(prices)}개 · 검증 {GATE_START}~{end} · 자본 {CAPITAL:,.0f}원 · {variant}")
+    print(f"종목 {len(prices)}개 · 검증 {GATE_START}~{end} · 자본 {capital:,.0f}원 · {variant}")
     print(f"동결 기본값: {', '.join(f'{k}={base[s][k]}' for s, k, _ in KNOBS)}\n")
 
-    def run(params: dict, tax_params: dict) -> engine.BacktestResult:
+    def run(params: dict, tax_params: dict) -> engine.SpecResult:
         return engine.run(prices, markets, start=GATE_START, end=end,
-                          initial_capital=CAPITAL, params=params,
+                          initial_capital=capital, params=params,
                           tax_params=tax_params, feats=feats, entry_timing="last")
 
     # ── 기본값 연속 실행 ──
@@ -116,12 +107,12 @@ def main() -> None:
     print(f"■ 전략  누적 {base_ret:+.2%}  샤프 {strat['sharpe']:.2f}  "
           f"MDD {strat['max_drawdown']:.2%}  거래 {len(res.trades)}건")
 
-    # ── ① 벤치마크 4종 (09-eval 9.1 정의) ──
+    # ── ① 벤치마크 4종 ──
     bench_prices = {c: df["close"] for c, df in prices.items()}
-    ew = metrics.equal_weight_equity(bench_prices, CAPITAL)
+    ew = metrics.equal_weight_equity(bench_prices, capital)
     kospi = idx_close["KOSPI"] if "KOSPI" in idx_close else next(iter(idx_close.values()))
-    bh = metrics.buy_and_hold_equity(kospi, CAPITAL)
-    mom = metrics.momentum_equity(kospi, TREND_DAYS, CAPITAL)
+    bh = metrics.buy_and_hold_equity(kospi, capital)
+    mom = metrics.momentum_equity(kospi, TREND_DAYS, capital)
     bench = {
         "kospi_buy_hold": metrics.total_return(bh.loc[bh.index >= GATE_START]),
         "momentum": metrics.total_return(mom.loc[mom.index >= GATE_START]),
@@ -171,7 +162,7 @@ def main() -> None:
         "run_at": datetime.now().isoformat(timespec="seconds"),
         "period": [str(GATE_START), str(end)],
         "universe": len(prices),
-        "capital": CAPITAL,
+        "capital": capital,
         "variant": variant,
         "params": {f"{s}.{k}": base[s][k] for s, k, _ in KNOBS},
         "strategy": {**{k: float(v) for k, v in strat.items()},

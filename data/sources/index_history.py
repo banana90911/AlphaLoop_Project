@@ -1,12 +1,10 @@
-"""시장 지수 과거 시세 (data/sources/index_history). 벤치마크 비교·레짐 라벨 적재용.
-
-레짐은 결정 입력이 아니다 — 사후 분류 축으로만 쓴다(04-data 지수 행).
-
-코스피·코스닥 지수는 KIS/네이버 대신 yfinance로 받는다(지수는 yfinance가 단순·안정).
-벤치마크(코스피 매수후보유·단순 모멘텀)의 입력 — 09-eval 9.1 벤치마크 4종.
-워밍업(이동평균) 확보를 위해 종목보다 앞선 시작일로 받는 것을 권장한다.
 """
-from __future__ import annotations
+description:        시장 지수 과거 시세 (yfinance, 벤치마크·레짐 라벨용)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from datetime import datetime
 
@@ -29,7 +27,7 @@ def _ymd_dash(s: str) -> str:
 
 
 def fetch_index(market: str, start: str, end: str) -> pd.DataFrame:
-    """시장 지수 OHLCV(date 컬럼·표준컬럼). start/end는 YYYYMMDD."""
+    """시장 지수 OHLCV(date 컬럼)를 조회한다. start/end는 YYYYMMDD."""
     if market not in _SYMBOLS:
         raise IndexHistoryError(f"지원하지 않는 시장: {market}")
     raw = yf.download(_SYMBOLS[market], start=_ymd_dash(start), end=_ymd_dash(end),

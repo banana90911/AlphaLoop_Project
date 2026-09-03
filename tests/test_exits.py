@@ -1,17 +1,27 @@
-"""청산 규칙 — 우선순위·R 고정 (exec/exits, 05-risk §129)."""
+"""
+description:        청산 규칙 — 우선순위·R 고정 (exec/exits, 05-risk §129).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
+from datetime import date
+
 import pandas as pd
 
 from exec.exits import (
     Position,
     StopGapHit,
     StopPosition,
+    _days_held,
     decide_exit,
     detect_stop_gaps,
     execute_exits,
 )
 from exec.orders import Fill, execute_entries
 from memory import journal
-from pipeline.trading_cycle import PlannedOrder
+from pipeline.cycle import PlannedOrder
 
 _P = {"exits": {"breakeven_R": 1.5, "trail_k": 2.75,
                 "max_hold_days": 20, "min_progress_R": 0.5}}
@@ -228,3 +238,30 @@ def test_execute_hold_no_action(conn):
     assert conn.execute(
         'SELECT "Status" FROM "Positions"'
     ).fetchone()["Status"] == "open"
+
+
+# ── 보유일수는 거래일로 센다 (06-sizing 6.2) ──
+
+def test_days_held_counts_trading_days():
+    # 2026-08-03(월) → 2026-08-10(월): 달력 7일, 거래일 5일
+    assert _days_held(date(2026, 8, 3), date(2026, 8, 10)) == 5
+
+
+def test_days_held_skips_weekend():
+    assert _days_held(date(2026, 8, 7), date(2026, 8, 9)) == 0    # 금 → 일: 거래일 0
+
+
+def test_days_held_is_less_than_calendar_days():
+    start, end = date(2026, 8, 3), date(2026, 8, 31)
+    assert _days_held(start, end) < (end - start).days        # 달력일보다 항상 적다
+
+
+def test_time_exit_needs_more_calendar_days_now():
+    """20거래일 기준이면 달력으로는 4주가 넘어야 시간청산에 닿는다."""
+    start = date(2026, 8, 3)
+    assert _days_held(start, date(2026, 8, 24)) <= 20           # 달력 21일: 아직 미달
+    assert _days_held(start, date(2026, 9, 2)) > 20             # 달력 30일: 초과
+
+
+def test_days_held_handles_missing_entry_date():
+    assert _days_held(None, None) == 0

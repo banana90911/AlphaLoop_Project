@@ -1,4 +1,11 @@
-"""수집 오케스트레이션 — 이어받기(skip)·격리 (네트워크 없이, mock)."""
+"""
+description:        수집 오케스트레이션 — 이어받기(skip)·격리 (네트워크 없이, mock).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pandas as pd
 
 import data.collect as collect

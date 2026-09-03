@@ -68,9 +68,9 @@ KIS API로 주문 송출. 손절 예약.
 ## 3-3. 리포 구조
 ```
 프로젝트 루트      (✅=구현 완료, ◑=일부 구현, ○=뼈대만 — 파일·설계 주석은 있고 로직 없음)
-├── run_daily_ingest.py         # 장 시작 전 일일 배치 진입점 (전종목 데이터·점수 준비) ○
-├── run_trading_cycle.py        # 정기 사이클 진입점 (14:30, 외부 스케줄러가 호출)
-├── run_watch.py                # 보유 감시 진입점 (장중 30분 간격, 손절 무결성만) ○
+├── run_daily_ingest.py         # 장 시작 전 일일 배치 진입점 (전종목 데이터·점수 준비) ◑(Symbols·DailyBars·DailyFlows·MarketIndices·DailyScores 적재 완료; SymbolStates·기업행위 연결은 후속)
+├── run_cycle.py                # 정기 사이클 진입점 (14:30, 외부 스케줄러가 호출) ✅
+├── run_watch.py                # 보유 감시 진입점 (장중 30분 간격, 손절 무결성만) ✅
 ├── run_gate.py                 # Go/No-Go 게이트 실행기 (설계 정합 엔진 연속 실행)
 ├── run_walkforward.py          # 워크포워드 OOS 검증 (학습 구간 선택 → 검증 구간 적용) ✅
 ├── pyproject.toml              # 의존성 + ruff/mypy 가드레일 설정 (불변식 기계 강제)
@@ -85,8 +85,8 @@ KIS API로 주문 송출. 손절 예약.
 ├── core/                       # 공용 기반 (얇은 유틸 — 프레임워크 아님)
 │   ├── schemas.py              #   pydantic 스키마 (결정 출력 전체검증 — 절반 결정 채택 금지) ✅
 │   ├── timeutils.py            #   UTC/KST 경계 함수 (시간대 정규화 단일 책임) — 10-ops 10.8 ✅
-│   ├── trading_days.py         #   거래일/휴장/반장 판정 (exchange_calendars + KIS 영업일 2중) ○
-│   └── costs.py                #   비용·세금·슬리피지 단일 모델 (백테스트·실거래 공통) — 04-data 4.x·09-eval 9.1 ✅
+│   ├── trading_days.py         #   거래일/휴장 판정 + 거래일 간격(보유일수 단위) ✅(반장은 한국시장에 없어 제외)
+│   └── costs.py                #   비용·세금·슬리피지 + 무거래 판정(기대이익 vs 왕복비용) — 06-sizing 6.1 ✅
 │
 ├── broker/                     # ◆모드 분기 화이트리스트◆ KIS 연동 (도메인·계좌 주입)
 │   └── kis_client.py           #   인증·토큰자동갱신·조회·주문·정정취소·rate limit·재시도·송출실패 즉시조회(P1-4) ✅
@@ -99,13 +99,13 @@ KIS API로 주문 송출. 손절 예약.
 │   ├── cache.py                #   백테스트 입력 parquet 캐시(실전 전환 시 폐기) — 09-eval 9.5 ✅
 │   ├── collect.py              #   백테스트 데이터 수집 오케스트레이션(이어받기·실패격리) — 09-eval 9.5 ✅
 │   ├── market_data.py          #   운영 최근 시세·수급 fetch → prices dict(메모리, 캐시 비영속) — 3.1 2단계 ✅
-│   ├── corrections.py          #   수정주가·freshness·vintage 보정 (04-data 4.1·4.3) ○
+│   ├── corrections.py          #   수정주가·freshness·이상치 방어 (04-data 4.1·4.3) ✅
 │   └── sources/                #   출처별 어댑터 (동일 스키마 반환) — 10-ops 10.18
 │       ├── kis_history.py      #     KIS 과거 일봉·공매도(구간 페이지네이션) ✅
 │       ├── naver_finance.py    #     네이버 과거 수급(외국인·기관)·상폐 시세(스크래핑) ✅
 │       ├── universe.py         #     KIS 종목마스터(.mst) 보통주 유니버스 ✅
 │       ├── index_history.py    #     코스피·코스닥 지수(yfinance, 벤치마크·레짐 라벨 적재) ✅
-│       └── dart_disclosure.py  #     DART 기업행위(무상증자·감자·유상증자 정형 API) ○
+│       └── dart_disclosure.py  #     DART 기업행위(무상증자·감자·유상증자 정형 API) ✅
 │
 ├── risk/                       # 결정론 리스크·사이징
 │   ├── risk_engine.py          #   하드룰(총노출)·서킷브레이커·검사 순서·재개·이상행동 — 05-risk ✅
@@ -123,8 +123,9 @@ KIS API로 주문 송출. 손절 예약.
 │   └── calibration.py          #   성과 통계 집계 (승률·손익비·수축·신뢰구간) — 06-sizing 6.1 켈리 입력 ✅
 │
 ├── pipeline/
-│   ├── trading_cycle.py        #   6단계 오케스트레이션 (상태머신 + 후보 선별·결정·게이트·집행 연결) ✅
+│   ├── cycle.py                #   7단계 오케스트레이션 (상태머신 + 후보 선별·결정·게이트·집행 연결) ✅
 │   ├── screening.py            #   1단계 후보 선별 = 패널+스크리너 결합(데이터 미주입 시 보유로 축소) — 3-1 ✅
+│   ├── gates.py                #   4단계 게이트 입력 조립 (잔고 대조·거래일·신선도·종목상태) — 05-risk 5.2 ◑(사이드카·KRX 서킷브레이커는 조회 경로 부재)
 │   └── decision.py             #   3단계 결정 = 점수 임계 규칙(신규 진입·보유 청산 제안) ✅
 │
 ├── backtest/                   # 과거 재생 (직접 구현, zipline/vectorbt 미사용)
@@ -138,13 +139,13 @@ KIS API로 주문 송출. 손절 예약.
 │   └── gate.py                 #   Go/No-Go 3조건(벤치 4종·PBO·견고성) + DSR 보조 — 09-eval 9.2 ✅
 │
 ├── ops/                        # 무인 운영 (silent failure 차단)
-│   ├── heartbeat.py            #   dead-man's switch ping (정상종료/SafeStop 구분) ○
-│   ├── notify.py               #   Discord 웹훅 알림 ○
-│   └── backup.py               #   pg_dump 백업 (거래기록 매 사이클·전체 1일 1회) — 10-ops 10.7 ○
+│   ├── heartbeat.py            #   dead-man's switch ping (정상종료/SafeStop 구분) ✅(run_cycle 연결)
+│   ├── notify.py               #   Discord 웹훅 알림 ✅(SafeStop·사이클 실패 연결; 배치 실패는 후속)
+│   └── backup.py               #   pg_dump 백업 (거래기록 매 사이클·전체 1일 1회) — 10-ops 10.7 ✅
 │
 ├── dashboard/                  # 읽기 전용 (매매와 DB로만 결합 — 한 줄도 매매 코어 안 건드림)
-│   ├── api.py                  #   FastAPI 조회 JSON API (SELECT 전용 계정 — 08-dashboard 8.1) ○
-│   ├── auth.py                 #   비밀번호 로그인·출입증 발급/검증 — 08-dashboard 8.6 ○
+│   ├── api.py                  #   FastAPI 조회 JSON API (SELECT 전용 계정 — 08-dashboard 8.1) ✅(네 영역 + 균등가중 워치리스트 벤치마크)
+│   ├── auth.py                 #   비밀번호 로그인·출입증 발급/검증 — 08-dashboard 8.6 ✅
 │   └── web/                    #   프론트 React+Vite+Tailwind (Vercel 배포 — 10-ops 10.13) ○
 │
 ├── analysis/                   # 탐색용 분석 (정식 산출물 아님 — 파라미터 정립 근거 수집)

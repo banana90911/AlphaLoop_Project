@@ -1,4 +1,11 @@
-"""리스크 엔진 코어 — 하드 한도·서킷브레이커·안전정지 (risk/risk_engine, 05-risk A·A)."""
+"""
+description:        리스크 엔진 코어 — 하드 한도·서킷브레이커·안전정지
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pytest
 
 from config.settings import load_params
@@ -80,9 +87,10 @@ def test_screen_cycle_proceed(params):
 
 
 def test_screen_cycle_halt_on_balance(params):
-    # 잔고 불일치가 최우선(시장 마비보다 먼저)
+    # 보유 불일치가 최우선(시장 마비보다 먼저). 현금 불일치는 사고가 아니라 입출금이라
+    # 따로 다룬다 — 아래 test_screen_cycle_proceeds_on_ordinary_flow 참고.
     d = screen_cycle(MarketState(balance_ok=False, halted=True), _acc(10_000_000), params)
-    assert d.action == "halt" and "잔고" in d.reason
+    assert d.action == "halt" and "보유 불일치" in d.reason
 
 
 def test_screen_cycle_skip_on_market_halt(params):
@@ -175,3 +183,65 @@ def test_anomaly_buy_sell_conflict(params):
     props = [OrderProposal("A", "buy", 1_000_000), OrderProposal("A", "sell", 1_000_000)]
     v = detect_anomaly(props, acc, params)
     assert not v and "충돌" in v.reason
+
+
+# ── 외부 현금흐름(입출금) — 기준선 평행이동과 2단 잔고 대조 ──────────────────
+def test_daily_loss_pct_unchanged_without_flow():
+    """회귀 방지 — net_external_flow=0.0이면 예전 식과 1원도 다르지 않다."""
+    acc = _acc(5_000_000, [Position("005930", 100, 40_000)])   # 평가 900만 / 기준 1000만
+    assert acc.net_external_flow == 0.0
+    assert acc.baseline == acc.start_capital
+    assert daily_loss_pct(acc) == pytest.approx(acc.equity / acc.start_capital - 1.0)
+    assert daily_loss_pct(acc) == pytest.approx(-0.10)
+
+
+def test_baseline_shift_deposit_reveals_real_loss(params):
+    """케이스 A — 입금이 진짜 −4% 손실을 가리지 못하게 기준선을 올린다(05-risk 5.2)."""
+    # 어제 총자산 1000만 → 밤에 +200만 입금 → 오늘 −4% 하락해 1152만
+    acc = Account(start_capital=10_000_000, cash=11_520_000, net_external_flow=2_000_000)
+    assert acc.equity / acc.start_capital - 1.0 == pytest.approx(0.152)   # 안 옮기면 +15.2%
+    assert daily_loss_pct(acc) == pytest.approx(-0.04)                    # 옮기면 −4.0%
+    assert "daily_loss" in breakers_tripped(acc, params)                  # 정상 발동
+
+
+def test_baseline_shift_withdrawal_avoids_false_trip(params):
+    """케이스 B — 출금이 가짜 −30%를 만들어 하루를 통째로 버리는 일을 막는다."""
+    # 어제 총자산 1000만 → 밤에 −300만 출금 → 오늘 손익 없이 700만
+    acc = Account(start_capital=10_000_000, cash=7_000_000, net_external_flow=-3_000_000)
+    assert acc.equity / acc.start_capital - 1.0 == pytest.approx(-0.30)   # 안 옮기면 −30%
+    assert daily_loss_pct(acc) == pytest.approx(0.0)                      # 옮기면 0%
+    assert not breakers_tripped(acc, params)                              # 가짜 발동 없음
+
+
+def test_screen_cycle_halt_on_negative_cash(params):
+    """미수(예수금 음수)는 즉시 안전 정지(05-risk 5.1)."""
+    d = screen_cycle(MarketState(cash_negative=True), _acc(10_000_000), params)
+    assert d.action == "halt" and "미수" in d.reason
+    assert (d.check, d.result) == ("balanceSync", "safeStop")
+
+
+def test_screen_cycle_halt_on_large_outflow(params):
+    """유출 전 총자산의 50%를 넘게 빠져나가면 사고로 보고 사람을 부른다."""
+    # 유출 후 400만 남음 + 유출 600만 = 유출 전 1000만 → 60% > 50%
+    d = screen_cycle(MarketState(cash_residual=-6_000_000), _acc(4_000_000), params)
+    assert d.action == "halt" and "유출" in d.reason
+    assert (d.check, d.result) == ("balanceSync", "safeStop")
+
+
+def test_screen_cycle_proceeds_on_ordinary_flow(params):
+    """평범한 입출금은 기록만 하고 매매를 그대로 진행한다 — 이번 설계의 핵심 이득."""
+    # 200만 입금 → 예수금도 기준선도 같이 200만 올라 손익률은 그대로 0%
+    acc = Account(start_capital=10_000_000, cash=12_000_000, net_external_flow=2_000_000)
+    assert screen_cycle(MarketState(cash_residual=2_000_000), acc, params).action == "proceed"
+    # 유출 쪽도 50% 미만이면 통과 (900만 남음 + 100만 유출 = 1000만 중 10%)
+    out = Account(start_capital=10_000_000, cash=9_000_000, net_external_flow=-1_000_000)
+    assert screen_cycle(MarketState(cash_residual=-1_000_000), out, params).action == "proceed"
+
+
+def test_holdings_mismatch_checked_before_cash(params):
+    """검사 순서 — 보유 불일치(1-a)가 현금 검사(1-b)보다 먼저 걸린다."""
+    d = screen_cycle(
+        MarketState(balance_ok=False, cash_negative=True, cash_residual=-9_000_000),
+        _acc(1_000_000), params,
+    )
+    assert d.action == "halt" and "보유 불일치" in d.reason

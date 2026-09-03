@@ -1,11 +1,18 @@
-"""DB 초기화·제약·멱등성 (0-B 게이트). 표·컬럼 이름은 07-model 그대로 PascalCase."""
+"""
+description:        DB 초기화·제약·멱등성 (0-B 게이트). 표·컬럼 이름은 07-model 그대로 PascalCase.
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 from memory.db import SCHEMA_PATH
 
 CATALOG = {
     "Symbols", "SymbolStates", "DailyBars", "DailyFlows", "CorporateActions",
     "MarketIndices", "IngestRuns",
     "Cycles", "AccountSnapshots", "DailyScores", "CycleScores", "Decisions", "RiskChecks",
-    "Orders", "Positions", "Outcomes",
+    "Orders", "CashFlows", "Positions", "Outcomes",
     "SafeStopEvents",
 }
 
@@ -19,7 +26,7 @@ def _tables(conn) -> set[str]:
 
 
 def test_schema_creates_core_tables(conn):
-    """07-model 표 카탈로그 17개가 전부 생성된다."""
+    """07-model 표 카탈로그 18개가 전부 생성된다."""
     assert CATALOG <= _tables(conn)
 
 

@@ -1,11 +1,17 @@
-"""사이클 1단계 — 워치리스트 선별·보유 포함·이벤트 분기 (pipeline/screening·trading_cycle)."""
+"""
+description:        사이클 1단계 — 워치리스트 선별·보유 포함·이벤트 분기 (pipeline/screening·cycle).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 from datetime import date
 
 import numpy as np
 import pandas as pd
 
-from pipeline import screening
-from pipeline.trading_cycle import run_cycle
+from pipeline import cycle, screening
 
 
 def _series(start: float, step: float, n: int = 300, end: date = date(2024, 6, 28)) -> pd.DataFrame:
@@ -45,7 +51,7 @@ def test_empty_prices_returns_empty():
 
 
 def test_cycle_step1_runs_with_market_data(conn):
-    res = run_cycle(conn, market_data=_universe())
+    res = cycle.run(conn, market_data=_universe())
     status = conn.execute(
         'SELECT "Status" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
     ).fetchone()["Status"]

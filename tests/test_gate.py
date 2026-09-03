@@ -1,4 +1,11 @@
-"""Go/No-Go 게이트 — DSR·PBO·방향성 (eval/gate, 09-eval 9.1)."""
+"""
+description:        Go/No-Go 게이트 — DSR·PBO·방향성 (eval/gate, 09-eval 9.1).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import numpy as np
 
 from eval import gate

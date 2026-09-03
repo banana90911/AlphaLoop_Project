@@ -1,4 +1,11 @@
-"""운영 횡단면 패널 — asof 최신행·워밍업·결측 처리 (data/panel)."""
+"""
+description:        운영 횡단면 패널 — asof 최신행·워밍업·결측 처리 (data/panel).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 from datetime import date
 
 import numpy as np

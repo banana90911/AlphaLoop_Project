@@ -1,4 +1,11 @@
-"""스크리너 — 백분위 점수·방향·top_n·보유 포함 (data/screener, 04-data)."""
+"""
+description:        스크리너 — 백분위 점수·방향·top_n·보유 포함 (data/screener, 04-data).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pandas as pd
 
 from data import screener

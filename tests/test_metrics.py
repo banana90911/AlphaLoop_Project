@@ -1,4 +1,11 @@
-"""성과 지표·벤치마크 (eval/metrics, 09-eval 9.1)."""
+"""
+description:        성과 지표·벤치마크 (eval/metrics, 09-eval 9.1).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 import pandas as pd
 
 from eval import metrics

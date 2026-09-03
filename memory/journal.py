@@ -1,13 +1,10 @@
-"""사이클·결정·주문·보유·손익 적재 (07-model 7장 표 카탈로그).
-
-표 이름과 컬럼 이름은 문서의 PascalCase 그대로다 — PostgreSQL은 큰따옴표로 감싸지
-않은 식별자를 전부 소문자로 접기 때문에, 여기 SQL은 예외 없이 감싼다.
-
-idempotency: 사이클은 `intent`→`scoring`→`deciding`→`ordering`→`recorded` 상태머신을
-따르며, 미완으로 남은 사이클은 시작 시 복구한다(10-ops 10.1). 주문은 `ClientOrderId`가
-기본키라, 재시작 뒤 같은 의도를 다시 송출하면 삽입 단계에서 거부된다.
 """
-from __future__ import annotations
+description:        사이클·결정·주문·보유·손익 적재 (PostgreSQL 기록 계층)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from collections.abc import Iterable
 from datetime import date, datetime
@@ -19,17 +16,14 @@ from core.schemas import ProposedOrder
 from core.timeutils import kst_today, now_utc
 
 CYCLE_STATES = ("intent", "scoring", "deciding", "ordering", "recorded", "failed", "skipped")
-# 이 상태로 남았다면 프로세스가 사이클 도중 죽은 것이다(마감 상태가 아니다).
-PENDING_STATES = ("intent", "scoring", "deciding", "ordering")
+PENDING_STATES = ("intent", "scoring", "deciding", "ordering")  # 미완 = 프로세스가 도중 죽은 상태
 
-# OrderAction(buy/add/hold/trim/sell) → Decisions의 (Action, Reason).
-# hold는 주문이 없어 적재하지 않는다. 부분 청산(exitPartial)은 규칙에서 뺐으므로(06-sizing 6.2)
-# trim도 전량 청산으로 기록한다.
+# OrderAction → Decisions의 (Action, Reason). hold는 적재하지 않고, trim은 전량 청산으로 기록한다.
 _ACTION_MAP: dict[str, tuple[str, str]] = {
-    "buy":  ("buy", "entryThreshold"),      # 신규 진입
-    "add":  ("buy", "entryThreshold"),      # 추가 매수
-    "sell": ("exitAll", "thesisInvalid"),   # 전량 청산
-    "trim": ("exitAll", "thesisInvalid"),   # 부분 청산 폐지 → 전량 청산
+    "buy":  ("buy", "entryThreshold"),
+    "add":  ("buy", "entryThreshold"),
+    "sell": ("exitAll", "thesisInvalid"),
+    "trim": ("exitAll", "thesisInvalid"),
 }
 
 
@@ -74,47 +68,380 @@ def advance_status(
     conn.commit()
 
 
+def last_account_snapshot(conn: psycopg.Connection) -> dict[str, Any] | None:
+    """가장 최근 계좌 스냅샷 1행(없으면 None). 기준선·누적값을 이어받는 출발점."""
+    row = conn.execute(
+        'SELECT * FROM "AccountSnapshots" ORDER BY "RecordedDateTime" DESC LIMIT 1'
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def record_account_snapshot(
+    conn: psycopg.Connection,
+    *,
+    cycle_id: str,
+    cash: float,
+    position_value: float,
+    total_asset: float,
+    base_asset: float | None = None,
+    net_flow_since_base: float = 0.0,
+    flow_this_snapshot: float = 0.0,
+    trade_date: date | None = None,
+) -> str:
+    """사이클 시점 자본을 `AccountSnapshots`에 남긴다. 반환: SnapshotId.
+
+    `base_asset`(서킷브레이커 기준선)은 **직전 거래일 마지막 스냅샷의 TotalAsset**이고,
+    분모는 거기에 그 사이 순외부흐름을 더한 `AdjustedBaseAsset`이다 — 이체는 손익이
+    아니므로 기준선을 같이 밀어줘야 손익률이 진실을 말한다(05-risk 5.2).
+
+    `flow_this_snapshot`은 **직전 스냅샷 이후** 새로 감지된 순외부흐름이다.
+    누적 순입금(`CumulativeNetFlow`)과 TWR 지수는 직전 행에서 이어받아 갱신한다.
+    """
+    prev = last_account_snapshot(conn)
+
+    if base_asset is None:
+        base_asset = float(prev["TotalAsset"]) if prev else total_asset
+    adjusted = base_asset + net_flow_since_base
+    day_return = total_asset / adjusted - 1.0 if adjusted else None
+
+    prev_cum = float(prev["CumulativeNetFlow"]) if prev else 0.0
+    cumulative = prev_cum + flow_this_snapshot
+
+    # TWR 구간수익률 — 기초자산에 이번 구간의 흐름을 얹은 값이 분모다.
+    # 흐름을 빼지 않으면 입금이 그대로 "수익"으로 잡힌다(09-eval).
+    prev_index = float(prev["TwrIndex"]) if prev and prev["TwrIndex"] is not None else 1.0
+    prev_total = float(prev["TotalAsset"]) if prev else None
+    if prev_total is None:
+        twr_index = 1.0
+    else:
+        denom = prev_total + flow_this_snapshot
+        twr_index = (
+            prev_index * (total_asset / denom) if denom > 0 else prev_index
+        )
+
+    sid = f"{cycle_id}_snap"
+    conn.execute(
+        'INSERT INTO "AccountSnapshots"("SnapshotId", "CycleId", "TradeDate", "Amount", '
+        '"PositionValue", "TotalAsset", "BaseAsset", "NetFlowSinceBase", '
+        '"AdjustedBaseAsset", "CumulativeNetFlow", "TwrIndex", "DayReturnPercent", '
+        '"RecordedDateTime") VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+        (sid, cycle_id, trade_date or kst_today(), cash, position_value, total_asset,
+         base_asset, net_flow_since_base, adjusted, cumulative, twr_index,
+         day_return, now_utc()),
+    )
+    conn.commit()
+    return sid
+
+
+def record_cycle_scores(
+    conn: psycopg.Connection, cycle_id: str, rows: Iterable[dict[str, Any]]
+) -> int:
+    """워치리스트 종목의 사이클 시점 값을 `CycleScores`에 적재. 반환: 적재 행 수."""
+    now = now_utc()
+    n = 0
+    for r in rows:
+        conn.execute(
+            'INSERT INTO "CycleScores"("CycleId", "SymbolId", "Inclusion", "BaseScore", '
+            '"FlowPercentileLive", "TotalScore", "LastPrice", "BuyQuantity", '
+            '"SellQuantity", "Atr", "StopWidth", "IsTradable", "BlockReason", '
+            '"ScoredDateTime") '
+            "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            'ON CONFLICT ("CycleId", "SymbolId") DO NOTHING',
+            (cycle_id, r["symbol_id"], r.get("inclusion", "topRank"),
+             r.get("base_score"), r.get("flow_percentile_live"), r.get("total_score"),
+             r.get("last_price"), r.get("buy_quantity"), r.get("sell_quantity"),
+             r.get("atr"), r.get("stop_width"), r.get("is_tradable"),
+             r.get("block_reason") or None, now),
+        )
+        n += 1
+    conn.commit()
+    return n
+
+
+def record_risk_check(
+    conn: psycopg.Connection,
+    *,
+    cycle_id: str,
+    check_order: int,
+    check_name: str,
+    result: str,
+    decision_id: str | None = None,
+    reason: str | None = None,
+    limit_value: float | None = None,
+    actual_value: float | None = None,
+) -> str:
+    """게이트 판정 1건을 `RiskChecks`에 남긴다. 반환: CheckId."""
+    suffix = decision_id or "cycle"
+    check_id = f"{cycle_id}_{suffix}_{check_name}"
+    conn.execute(
+        'INSERT INTO "RiskChecks"("CheckId", "CycleId", "DecisionId", "CheckOrder", '
+        '"CheckName", "Result", "Reason", "LimitValue", "ActualValue", "CheckedDateTime") '
+        "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        'ON CONFLICT ("CheckId") DO NOTHING',
+        (check_id, cycle_id, decision_id, check_order, check_name, result,
+         reason or None, limit_value, actual_value, now_utc()),
+    )
+    conn.commit()
+    return check_id
+
+
+# ── 외부 현금흐름(CashFlows) ────────────────────────────────────────────────
+# 주식은 맞는데 예수금만 어긋난 잔차. Kind가 회계적으로 의미를 갖는다 —
+# deposit/withdrawal은 수익률에서 제거할 외부 흐름, dividend/taxRefund/interest는
+# 수익이라 제거하면 안 된다(09-eval). unknown은 보수적으로 외부 흐름 취급.
+FLOW_KINDS = ("deposit", "withdrawal", "dividend", "taxRefund", "interest", "fee", "unknown")
+EXTERNAL_KINDS = ("deposit", "withdrawal", "unknown")   # TWR에서 제거하는 것들
+FLOW_STATUSES = ("unconfirmed", "confirmed", "reclassified")
+FLOW_SOURCES = ("residual", "signature", "broker", "manual")
+
+
+def expected_cash(conn: psycopg.Connection, *, mode: str | None = None) -> dict[str, Any] | None:
+    """직전 스냅샷 이후 체결로만 설명되는 **기대 예수금**을 계산한다(05-risk 5.2 검사 1-b).
+
+        기대 예수금 = 직전 스냅샷 예수금
+                    + Σ(그 사이 매도 체결 순수취금)
+                    − Σ(그 사이 매수 체결 순지급금)
+
+    직전 스냅샷이 없으면(첫 사이클) None — 비교할 기준이 없으니 잔차도 없다.
+    미체결 매수 주문이 증거금으로 묶일 걱정은 없다: 선행 게이트가 사이클 시작 때
+    먼저 취소하므로 이 시점에 살아 있는 미체결 진입 주문이 없다.
+    """
+    prev = last_account_snapshot(conn)
+    if prev is None:
+        return None
+    sql = (
+        'SELECT "Side", COALESCE(SUM("FilledQuantity" * "AverageFillPrice"), 0) AS gross, '
+        'COALESCE(SUM(COALESCE("Fee", 0) + COALESCE("Tax", 0)), 0) AS charges '
+        'FROM "Orders" WHERE "FilledQuantity" > 0 AND "AverageFillPrice" IS NOT NULL '
+        'AND "FilledDateTime" > %s'
+    )
+    args: list[Any] = [prev["RecordedDateTime"]]
+    if mode:
+        sql += ' AND "Mode" = %s'
+        args.append(mode)
+    rows = conn.execute(sql + ' GROUP BY "Side"', args).fetchall()
+
+    delta = 0.0
+    for r in rows:
+        gross, charges = float(r["gross"] or 0), float(r["charges"] or 0)
+        # 매도는 세금·수수료를 뗀 만큼 들어오고, 매수는 수수료를 얹은 만큼 나간다.
+        delta += (gross - charges) if r["Side"] == "sell" else -(gross + charges)
+
+    return {
+        "expected": float(prev["Amount"]) + delta,
+        "prev_cash": float(prev["Amount"]),
+        "fills_delta": delta,
+        "since": prev["RecordedDateTime"],
+        "prev_total_asset": float(prev["TotalAsset"]),
+        "prev_snapshot_id": prev["SnapshotId"],
+    }
+
+
+def record_cash_flow(
+    conn: psycopg.Connection,
+    cycle_id: str | None,
+    *,
+    kind: str,
+    amount: float,
+    source: str,
+    expected: float,
+    actual: float,
+    mode: str = "paper",
+    status: str = "unconfirmed",
+    note: str | None = None,
+    trade_date: date | None = None,
+) -> str:
+    """외부 현금흐름 1건을 `CashFlows`에 남긴다. 반환: FlowId.
+
+    `amount`는 부호가 있다(유입 +, 유출 −). `expected`/`actual`은 감지 시점의
+    기대·실제 예수금으로, 나중에 이 판정이 옳았는지 되짚는 유일한 근거다.
+    """
+    if kind not in FLOW_KINDS:
+        raise ValueError(f"알 수 없는 Kind: {kind!r} (가능: {', '.join(FLOW_KINDS)})")
+    if source not in FLOW_SOURCES:
+        raise ValueError(f"알 수 없는 Source: {source!r}")
+    now = now_utc()
+    flow_id = f"F{now:%Y%m%dT%H%M%S%f}"
+    conn.execute(
+        'INSERT INTO "CashFlows"("FlowId", "DetectedCycleId", "TradeDate", "Kind", '
+        '"Amount", "Status", "Source", "ExpectedCash", "ActualCash", "Note", '
+        '"DetectedDateTime", "Mode") VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+        (flow_id, cycle_id, trade_date or kst_today(), kind, amount, status, source,
+         expected, actual, note, now, mode),
+    )
+    conn.commit()
+    return flow_id
+
+
+def confirm_cash_flow(
+    conn: psycopg.Connection,
+    flow_id: str,
+    *,
+    kind: str,
+    by: str = "cli",
+    note: str | None = None,
+) -> bool:
+    """감지된 흐름에 사람이 라벨을 확정한다(CLI가 호출). 반환: 갱신 여부.
+
+    이미 confirmed인 건을 다시 부르면 `reclassified`가 된다 — 배당을 입금으로
+    잘못 잡았다가 바로잡는 경우가 이쪽이다.
+    """
+    if kind not in FLOW_KINDS:
+        raise ValueError(f"알 수 없는 Kind: {kind!r} (가능: {', '.join(FLOW_KINDS)})")
+    cur = conn.execute('SELECT "Status" FROM "CashFlows" WHERE "FlowId"=%s', (flow_id,))
+    row = cur.fetchone()
+    if row is None:
+        return False
+    status = "reclassified" if row["Status"] != "unconfirmed" else "confirmed"
+    conn.execute(
+        'UPDATE "CashFlows" SET "Kind"=%s, "Status"=%s, "ConfirmedDateTime"=%s, '
+        '"ConfirmedBy"=%s, "Note"=COALESCE(%s, "Note") WHERE "FlowId"=%s',
+        (kind, status, now_utc(), by, note, flow_id),
+    )
+    conn.commit()
+    return True
+
+
+def load_cash_flows(
+    conn: psycopg.Connection,
+    *,
+    status: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """`CashFlows`를 최신순으로 읽는다(대시보드·CLI 공용)."""
+    sql = 'SELECT * FROM "CashFlows" WHERE 1=1'
+    args: list[Any] = []
+    if status:
+        sql += ' AND "Status"=%s'
+        args.append(status)
+    if start:
+        sql += ' AND "TradeDate" >= %s'
+        args.append(start)
+    if end:
+        sql += ' AND "TradeDate" <= %s'
+        args.append(end)
+    args.append(limit)
+    rows = conn.execute(sql + ' ORDER BY "DetectedDateTime" DESC LIMIT %s', args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def sum_flows_since(
+    conn: psycopg.Connection, since: datetime | None, *, mode: str | None = None
+) -> float:
+    """`since` 이후 감지된 순외부흐름 합(입금 +, 출금 −).
+
+    `NetFlowSinceBase`(서킷브레이커 기준선 평행이동 폭)를 만드는 데 쓴다.
+    수익으로 분류된 흐름(배당·이자·환급)은 기준선을 옮기지 않으므로 제외한다 —
+    그건 진짜 손익이라 손익률에 그대로 잡혀야 한다.
+    """
+    marks = ", ".join(["%s"] * len(EXTERNAL_KINDS))
+    sql = f'SELECT COALESCE(SUM("Amount"), 0) AS s FROM "CashFlows" WHERE "Kind" IN ({marks})'
+    args: list[Any] = list(EXTERNAL_KINDS)
+    if since is not None:
+        sql += ' AND "DetectedDateTime" > %s'
+        args.append(since)
+    if mode:
+        sql += ' AND "Mode"=%s'
+        args.append(mode)
+    return float(conn.execute(sql, args).fetchone()["s"] or 0.0)
+
+
+def cumulative_net_flow(conn: psycopg.Connection, *, mode: str | None = None) -> float:
+    """개시 이후 누적 순입금. `TotalAsset − 이 값 = 누적 순손익`으로 검산된다."""
+    return sum_flows_since(conn, None, mode=mode)
+
+
+def record_safe_stop(
+    conn: psycopg.Connection,
+    *,
+    cause: str,
+    cycle_id: str | None = None,
+    trigger: str = "auto",
+) -> str:
+    """전체 정지 발생을 `SafeStopEvents`에 남긴다. 반환: EventId."""
+    now = now_utc()
+    event_id = f"{cycle_id or 'manual'}_{now:%Y%m%dT%H%M%S%fZ}"
+    conn.execute(
+        'INSERT INTO "SafeStopEvents"("EventId", "CycleId", "OccurredDateTime", '
+        '"Cause", "Trigger") VALUES(%s, %s, %s, %s, %s)',
+        (event_id, cycle_id, now, cause, trigger),
+    )
+    conn.commit()
+    return event_id
+
+
+def active_safe_stop(conn: psycopg.Connection) -> dict[str, Any] | None:
+    """미해제 SafeStop 중 가장 최근 것을 반환한다(없으면 None = 정상)."""
+    return conn.execute(
+        'SELECT * FROM "SafeStopEvents" WHERE "ReleasedDateTime" IS NULL '
+        'ORDER BY "OccurredDateTime" DESC LIMIT 1'
+    ).fetchone()
+
+
+def release_safe_stop(
+    conn: psycopg.Connection, event_id: str, *, released_by: str, reason: str
+) -> None:
+    """SafeStop을 해제한다(잔고 불일치·데이터 오류·이상행동은 사람 개입 필수 — 05-risk 5.4)."""
+    conn.execute(
+        'UPDATE "SafeStopEvents" SET "ReleasedDateTime"=%s, "ReleasedBy"=%s, '
+        '"ReleaseReason"=%s WHERE "EventId"=%s AND "ReleasedDateTime" IS NULL',
+        (now_utc(), released_by, reason, event_id),
+    )
+    conn.commit()
+
+
 def record_decisions(
     conn: psycopg.Connection,
     cycle_id: str,
     orders: Iterable[ProposedOrder],
     *,
     plans: dict[str, Any] | None = None,
+    no_trades: dict[str, dict[str, float]] | None = None,
     entry_threshold: float | None = None,
     exit_threshold: float | None = None,
     target_positions: int | None = None,
     decided_at: datetime | None = None,
 ) -> list[str]:
-    """결정 제안을 `Decisions`에 적재. 반환: DecisionId 목록.
+    """결정 제안을 `Decisions`에 적재(hold는 건너뜀). 반환: DecisionId 목록.
 
-    hold는 주문이 없어 건너뛴다. plans는 code → 집행 계획(qty·price·stop 속성을 가진
-    PlannedOrder)이며, 진입 결정의 수량·진입가·손절가를 여기서 채운다. target_positions는
-    동일가중 배분의 분모(그 시점 목표 보유 종목 수)다. DecisionId는
-    cycle_id+종목+Action의 결정론 키(사이클 내 유일)라 재시작해도 같은 값이 나온다.
+    `no_trades`에 든 종목은 매수 제안이었더라도 `noTrade`/`costExceedsEdge`로 남긴다 —
+    기대이익이 왕복 비용을 못 넘어 사지 않기로 한 거래다(06-sizing 6.1).
     """
     plans = plans or {}
+    no_trades = no_trades or {}
     ts = decided_at or now_utc()
     ids: list[str] = []
     for o in orders:
         mapped = _ACTION_MAP.get(str(o.action))
-        if mapped is None:                           # hold 등은 적재 생략
+        if mapped is None:
             continue
         action, reason = mapped
+        edge = no_trades.get(o.code)
+        if edge is not None and action == "buy":
+            action, reason = "noTrade", "costExceedsEdge"
+        else:
+            edge = _plan_edge(plans.get(o.code))
         plan = plans.get(o.code)
         did = f"{cycle_id}_{o.code}_{action}"
         conn.execute(
             'INSERT INTO "Decisions"("DecisionId", "CycleId", "SymbolId", "Action", "Reason", '
             '"Score", "Threshold", "EntryPrice", "StopPrice", "RiskPerShare", '
-            '"TargetPositions", "Quantity", "DecidedDateTime") '
-            "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            '"TargetPositions", "Quantity", "RewardRiskRatio", "EstimatedCost", '
+            '"NetEdge", "DecidedDateTime") '
+            "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 did, cycle_id, o.code, action, reason, o.risk_budget,
-                entry_threshold if action == "buy" else exit_threshold,
+                entry_threshold if action in ("buy", "noTrade") else exit_threshold,
                 getattr(plan, "price", None),
                 getattr(plan, "stop", None),
                 _risk_per_share(plan),
                 target_positions,
                 getattr(plan, "qty", None),
+                (edge or {}).get("reward_risk_ratio"),
+                (edge or {}).get("estimated_cost"),
+                (edge or {}).get("net_edge"),
                 ts,
             ),
         )
@@ -123,8 +450,22 @@ def record_decisions(
     return ids
 
 
+def _plan_edge(plan: Any) -> dict[str, float] | None:
+    """집행 계획이 들고 있는 엣지 값을 뽑는다(없으면 None)."""
+    if plan is None:
+        return None
+    cost = getattr(plan, "estimated_cost", None)
+    if cost is None:
+        return None
+    return {
+        "estimated_cost": cost,
+        "net_edge": getattr(plan, "net_edge", None),
+        "reward_risk_ratio": getattr(plan, "reward_risk_ratio", None),
+    }
+
+
 def _risk_per_share(plan: Any) -> float | None:
-    """R = 진입가 − 최초 손절가. 집행 계획이 없으면(청산 결정 등) NULL."""
+    """R = 진입가 − 최초 손절가. 집행 계획이 없으면 NULL."""
     price, stop = getattr(plan, "price", None), getattr(plan, "stop", None)
     return float(price) - float(stop) if price is not None and stop is not None else None
 
@@ -153,11 +494,7 @@ def record_order(
     ordered_at: datetime | None = None,
     filled_at: datetime | None = None,
 ) -> None:
-    """KIS 주문·체결 1건을 `Orders`에 적재. status∈submitted/partial/filled/cancelled/rejected.
-
-    체결가·수량은 broker가 정규화한 Fill 기준. cycle_id·decision_id는 상주 스톱 자동 체결
-    시 NULL이 될 수 있어, 모드는 `Mode` 열에 따로 남긴다(07-model).
-    """
+    """KIS 주문·체결 1건을 `Orders`에 적재."""
     conn.execute(
         'INSERT INTO "Orders"("ClientOrderId", "CycleId", "DecisionId", "KisOrderNo", '
         '"SymbolId", "Side", "Purpose", "OrderType", "OrderQuantity", "OrderPrice", '
@@ -185,12 +522,7 @@ def upsert_entry_position(
     market: str | None = None,
     entry_date: date | None = None,
 ) -> str:
-    """진입 체결 → `Positions` 생성 또는 수량·평단 갱신. 반환: PositionId.
-
-    같은 종목 open 보유가 있으면 수량 합산·평단 가중평균으로 갱신(추가매수), 없으면 신규
-    생성(PositionId = cycle_id_종목). 추가매수 시 R 기준(InitialStopPrice·EntryDate)은 첫
-    진입값을 유지한다 — R은 청산까지 불변이기 때문이다.
-    """
+    """진입 체결 → `Positions` 생성 또는 수량·평단 갱신(추가매수 병합). 반환: PositionId."""
     now = now_utc()
     row = conn.execute(
         'SELECT "PositionId", "Quantity", "AveragePrice" FROM "Positions" '
@@ -224,7 +556,7 @@ def upsert_entry_position(
 
 
 def set_active_stop(conn: psycopg.Connection, position_id: str, client_order_id: str) -> None:
-    """KIS에 상주 중인 스톱 주문을 포지션에 연결 — 비어 있으면 손절 없이 방치된 포지션이다."""
+    """KIS에 상주 중인 스톱 주문을 포지션에 연결한다."""
     conn.execute(
         'UPDATE "Positions" SET "ActiveStopOrderId"=%s, "UpdatedDateTime"=%s '
         'WHERE "PositionId"=%s',
@@ -240,7 +572,7 @@ def update_stop(
     *,
     breakeven_done: bool | None = None,
 ) -> None:
-    """트레일링·본전 상향 — CurrentStopPrice 갱신(청산 없음, exits ③④)."""
+    """트레일링·본전 상향 — CurrentStopPrice 갱신(청산 없음)."""
     conn.execute(
         'UPDATE "Positions" SET "CurrentStopPrice"=%s, '
         '"IsBreakevenDone"=COALESCE(%s, "IsBreakevenDone"), "UpdatedDateTime"=%s '
@@ -257,7 +589,7 @@ def reduce_position(
     sell_quantity: int,
     new_stop: float | None = None,
 ) -> None:
-    """부분 체결 뒤처리 — 체결분만 수량 차감(+선택 손절 갱신). 부분 익절은 설계에 없다."""
+    """부분 체결 뒤처리 — 체결분만 수량 차감(+선택 손절 갱신)."""
     conn.execute(
         'UPDATE "Positions" SET "Quantity"=GREATEST(0, "Quantity" - %s), '
         '"CurrentStopPrice"=COALESCE(%s, "CurrentStopPrice"), "UpdatedDateTime"=%s '
@@ -268,7 +600,7 @@ def reduce_position(
 
 
 def close_position(conn: psycopg.Connection, position_id: str) -> None:
-    """전량 청산 — Status=closed, 잔량 0(exits ①·②·⑤)."""
+    """전량 청산 — Status=closed, 잔량 0."""
     conn.execute(
         'UPDATE "Positions" SET "Status"=\'closed\', "Quantity"=0, "UpdatedDateTime"=%s '
         'WHERE "PositionId"=%s',
@@ -304,11 +636,7 @@ def record_outcome(
     mode: str = "paper",
     closed_at: datetime | None = None,
 ) -> None:
-    """청산 체결 1건의 실현손익을 `Outcomes`에 적재. NetProfitLoss는 비용 차감 후.
-
-    성과 집계의 1차 자료 — 산식은 백테스트 `spec_engine`의 청산 처리와 동일하게
-    `core.costs.trade_cost` 기반이다(모드가 달라도 같은 경로).
-    """
+    """청산 체결 1건의 실현손익을 `Outcomes`에 적재."""
     conn.execute(
         'INSERT INTO "Outcomes"("OutcomeId", "PositionId", "EntryDecisionId", '
         '"ExitDecisionId", "SymbolId", "EntryPrice", "ExitPrice", "Quantity", "EntryDate", '
@@ -327,10 +655,7 @@ def record_outcome(
 
 
 def recover_pending_cycles(conn: psycopg.Connection) -> list[str]:
-    """시작 시 미완 사이클을 failed로 마감하고 그 id 목록 반환(10-ops 10.1).
-
-    프로세스가 사이클 도중 죽어도 다음 실행이 깨끗한 상태에서 시작하게 한다.
-    """
+    """시작 시 미완 사이클을 failed로 마감하고 그 id 목록을 반환한다."""
     rows = conn.execute(
         'SELECT "CycleId" FROM "Cycles" WHERE "Status" = ANY(%s)', (list(PENDING_STATES),)
     ).fetchall()
@@ -338,3 +663,223 @@ def recover_pending_cycles(conn: psycopg.Connection) -> list[str]:
     for cid in pending:
         advance_status(conn, cid, "failed")
     return pending
+
+
+# ── 일일 배치 — 시장 데이터 적재·조회(run_daily_ingest가 쓴다, 전부 upsert) ──────
+
+def upsert_symbols(conn: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> int:
+    """종목 명부 적재(upsert). 반환: 적재 행 수."""
+    now = now_utc()
+    n = 0
+    for r in rows:
+        conn.execute(
+            'INSERT INTO "Symbols"("SymbolId", "Name", "Market", "SecurityType", '
+            '"LastUpdateDateTime") VALUES(%s, %s, %s, %s, %s) '
+            'ON CONFLICT ("SymbolId") DO UPDATE SET '
+            '"Name"=EXCLUDED."Name", "Market"=EXCLUDED."Market", '
+            '"SecurityType"=EXCLUDED."SecurityType", '
+            '"LastUpdateDateTime"=EXCLUDED."LastUpdateDateTime"',
+            (r["code"], r["name"], r["market"], r.get("security_type", "common"), now),
+        )
+        n += 1
+    conn.commit()
+    return n
+
+
+def upsert_daily_bars(
+    conn: psycopg.Connection, symbol_id: str, bars: Iterable[dict[str, Any]]
+) -> int:
+    """일봉 적재(upsert). 거래대금이 없으면 종가×거래량으로 채운다. 반환: 적재 행 수."""
+    n = 0
+    for b in bars:
+        close, volume = b.get("close"), b.get("volume")
+        value = b.get("value")
+        if value is None and close is not None and volume is not None:
+            value = float(close) * float(volume)
+        conn.execute(
+            'INSERT INTO "DailyBars"("SymbolId", "TradeDate", "Open", "High", "Low", '
+            '"Close", "Volume", "Value") VALUES(%s, %s, %s, %s, %s, %s, %s, %s) '
+            'ON CONFLICT ("SymbolId", "TradeDate") DO UPDATE SET '
+            '"Open"=EXCLUDED."Open", "High"=EXCLUDED."High", "Low"=EXCLUDED."Low", '
+            '"Close"=EXCLUDED."Close", "Volume"=EXCLUDED."Volume", '
+            '"Value"=EXCLUDED."Value"',
+            (symbol_id, b["date"], b.get("open"), b.get("high"), b.get("low"),
+             close, int(volume) if volume is not None else None, value),
+        )
+        n += 1
+    conn.commit()
+    return n
+
+
+def upsert_daily_flows(
+    conn: psycopg.Connection, symbol_id: str, flows: Iterable[dict[str, Any]]
+) -> int:
+    """수급 적재(upsert). 당일분은 IsFinal=false로 넣고 다음날 확정치로 덮는다."""
+    n = 0
+    today = kst_today()
+    for f in flows:
+        conn.execute(
+            'INSERT INTO "DailyFlows"("SymbolId", "TradeDate", "ForeignNet", '
+            '"InstitutionNet", "IsFinal", "CollectedDateTime") '
+            "VALUES(%s, %s, %s, %s, %s, %s) "
+            'ON CONFLICT ("SymbolId", "TradeDate") DO UPDATE SET '
+            '"ForeignNet"=EXCLUDED."ForeignNet", '
+            '"InstitutionNet"=EXCLUDED."InstitutionNet", '
+            '"IsFinal"=EXCLUDED."IsFinal", '
+            '"CollectedDateTime"=EXCLUDED."CollectedDateTime"',
+            (symbol_id, f["date"], f.get("foreign_net"), f.get("inst_net"),
+             f["date"] < today, now_utc()),
+        )
+        n += 1
+    conn.commit()
+    return n
+
+
+def upsert_market_index(
+    conn: psycopg.Connection, index_code: str, rows: Iterable[dict[str, Any]]
+) -> int:
+    """지수 적재(upsert). 반환: 적재 행 수."""
+    now = now_utc()
+    n = 0
+    for r in rows:
+        conn.execute(
+            'INSERT INTO "MarketIndices"("IndexCode", "TradeDate", "Close", "Sma200", '
+            '"Regime", "CollectedDateTime") VALUES(%s, %s, %s, %s, %s, %s) '
+            'ON CONFLICT ("IndexCode", "TradeDate") DO UPDATE SET '
+            '"Close"=EXCLUDED."Close", "Sma200"=EXCLUDED."Sma200", '
+            '"Regime"=EXCLUDED."Regime", '
+            '"CollectedDateTime"=EXCLUDED."CollectedDateTime"',
+            (index_code, r["date"], r["close"], r.get("sma200"), r.get("regime"), now),
+        )
+        n += 1
+    conn.commit()
+    return n
+
+
+def upsert_daily_scores(
+    conn: psycopg.Connection, trade_date: date, rows: Iterable[dict[str, Any]]
+) -> int:
+    """전 종목 점수 적재(upsert, 원시값+백분위). 반환: 적재 행 수."""
+    now = now_utc()
+    n = 0
+    for r in rows:
+        conn.execute(
+            'INSERT INTO "DailyScores"("TradeDate", "SymbolId", "PassedFilter", '
+            '"FilterReason", "Momentum", "FlowNet20Day", "ValueRatio", "Volatility", '
+            '"MomentumPercentile", "FlowPercentile", "ValuePercentile", '
+            '"LowVolatilityPercentile", "TotalScore", "Rank", "ComputedDateTime") '
+            "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            'ON CONFLICT ("TradeDate", "SymbolId") DO UPDATE SET '
+            '"PassedFilter"=EXCLUDED."PassedFilter", '
+            '"FilterReason"=EXCLUDED."FilterReason", "Momentum"=EXCLUDED."Momentum", '
+            '"FlowNet20Day"=EXCLUDED."FlowNet20Day", "ValueRatio"=EXCLUDED."ValueRatio", '
+            '"Volatility"=EXCLUDED."Volatility", '
+            '"MomentumPercentile"=EXCLUDED."MomentumPercentile", '
+            '"FlowPercentile"=EXCLUDED."FlowPercentile", '
+            '"ValuePercentile"=EXCLUDED."ValuePercentile", '
+            '"LowVolatilityPercentile"=EXCLUDED."LowVolatilityPercentile", '
+            '"TotalScore"=EXCLUDED."TotalScore", "Rank"=EXCLUDED."Rank", '
+            '"ComputedDateTime"=EXCLUDED."ComputedDateTime"',
+            (trade_date, r["symbol_id"], r["passed_filter"], r.get("filter_reason"),
+             r.get("momentum"), r.get("flow_net_20day"), r.get("value_ratio"),
+             r.get("volatility"), r.get("momentum_percentile"),
+             r.get("flow_percentile"), r.get("value_percentile"),
+             r.get("low_volatility_percentile"), r.get("total_score"), r.get("rank"),
+             now),
+        )
+        n += 1
+    conn.commit()
+    return n
+
+
+def record_ingest_run(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+    target_table: str,
+    source: str,
+    status: str,
+    started_at: datetime,
+    range_start: date | None = None,
+    range_end: date | None = None,
+    target_count: int | None = None,
+    success_count: int | None = None,
+    rows_written: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    """배치 실행 1회의 결과를 `IngestRuns`에 남긴다(신선도 검사가 여기를 읽는다)."""
+    conn.execute(
+        'INSERT INTO "IngestRuns"("RunId", "TargetTable", "Source", "RangeStartDate", '
+        '"RangeEndDate", "Status", "TargetCount", "SuccessCount", "RowsWritten", '
+        '"ErrorMessage", "StartedDateTime", "FinishedDateTime") '
+        "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        'ON CONFLICT ("RunId") DO UPDATE SET "Status"=EXCLUDED."Status", '
+        '"SuccessCount"=EXCLUDED."SuccessCount", "RowsWritten"=EXCLUDED."RowsWritten", '
+        '"ErrorMessage"=EXCLUDED."ErrorMessage", '
+        '"FinishedDateTime"=EXCLUDED."FinishedDateTime"',
+        (run_id, target_table, source, range_start, range_end, status, target_count,
+         success_count, rows_written, error_message, started_at, now_utc()),
+    )
+    conn.commit()
+
+
+def last_ingest_run(
+    conn: psycopg.Connection, target_table: str, trade_date: date
+) -> dict[str, Any] | None:
+    """그날 그 표의 마지막 배치 기록을 반환한다."""
+    return conn.execute(
+        'SELECT * FROM "IngestRuns" WHERE "TargetTable"=%s AND "RangeEndDate"=%s '
+        'ORDER BY "StartedDateTime" DESC LIMIT 1',
+        (target_table, trade_date),
+    ).fetchone()
+
+
+def load_symbol_ids(conn: psycopg.Connection) -> list[str]:
+    """상장 중인 종목코드를 반환한다."""
+    rows = conn.execute(
+        'SELECT "SymbolId" FROM "Symbols" WHERE "DelistedDate" IS NULL '
+        'ORDER BY "SymbolId"'
+    ).fetchall()
+    return [r["SymbolId"] for r in rows]
+
+
+def load_daily_score_candidates(conn: psycopg.Connection, trade_date: date) -> list[str]:
+    """그날 배치가 제외 필터를 통과시킨 종목코드를 rank 순으로 반환한다."""
+    rows = conn.execute(
+        'SELECT "SymbolId" FROM "DailyScores" WHERE "TradeDate"=%s AND "PassedFilter" '
+        'ORDER BY "Rank" ASC NULLS LAST',
+        (trade_date,),
+    ).fetchall()
+    return [r["SymbolId"] for r in rows]
+
+
+def load_price_history(
+    conn: psycopg.Connection, *, start: date, end: date, symbol_ids: list[str] | None = None
+) -> dict[str, Any]:
+    """DB의 일봉+수급을 종목별 시계열 dict로 반환한다(fetch_prices와 동일 형식)."""
+    import pandas as pd
+
+    sql = (
+        'SELECT b."SymbolId", b."TradeDate", b."Open", b."High", b."Low", b."Close", '
+        'b."Volume", f."ForeignNet", f."InstitutionNet" '
+        'FROM "DailyBars" b '
+        'LEFT JOIN "DailyFlows" f '
+        '  ON f."SymbolId" = b."SymbolId" AND f."TradeDate" = b."TradeDate" '
+        'WHERE b."TradeDate" BETWEEN %s AND %s'
+    )
+    params: list[Any] = [start, end]
+    if symbol_ids:
+        sql += ' AND b."SymbolId" = ANY(%s)'
+        params.append(symbol_ids)
+    rows = conn.execute(sql + ' ORDER BY b."SymbolId", b."TradeDate"', params).fetchall()
+    if not rows:
+        return {}
+    df = pd.DataFrame(rows).rename(columns={
+        "TradeDate": "date", "Open": "open", "High": "high", "Low": "low",
+        "Close": "close", "Volume": "volume",
+        "ForeignNet": "foreign_net", "InstitutionNet": "inst_net",
+    })
+    out: dict[str, Any] = {}
+    for code, g in df.groupby("SymbolId"):
+        out[code] = g.drop(columns=["SymbolId"]).set_index("date").sort_index()
+    return out

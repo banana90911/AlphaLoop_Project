@@ -1,4 +1,11 @@
-"""운영 시세·수급 수집 — 정규화·실패격리·수급결측 (data/market_data)."""
+"""
+description:        운영 시세·수급 수집 — 정규화·실패격리·수급결측 (data/market_data).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 from datetime import date
 
 import pandas as pd

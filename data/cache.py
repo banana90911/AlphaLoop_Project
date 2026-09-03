@@ -1,13 +1,10 @@
-"""백테스트 재료(과거 시세·수급) parquet 캐시 (data 레이어).
-
-이 캐시는 **백테스트 입력 데이터 전용**이다. 실전 운영 DB(PostgreSQL `journal`)와 분리되며,
-실전은 이 캐시를 읽지 않는다 → 실전 전환 시 `clear()`로 폴더째 비울 수 있다.
-백테스트 *결과*도 DB에 넣지 않는다 — 실거래 표에 섞이면 성과 집계가 오염되기 때문이고,
-산출물은 파일로 남긴다(07-model 공통 규칙 · 09-eval).
-
-대용량·읽기전용·열 단위 분석에 맞춰 parquet 사용. `.gitignore`로 추적 제외.
 """
-from __future__ import annotations
+description:        백테스트 재료(과거 시세·수급) parquet 캐시
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from pathlib import Path
 
@@ -22,6 +19,7 @@ def path(name: str) -> Path:
 
 
 def save(name: str, df: pd.DataFrame) -> Path:
+    """DataFrame을 parquet으로 저장하고 경로를 반환한다."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     p = path(name)
     df.to_parquet(p, index=False)
@@ -35,6 +33,7 @@ def load(name: str) -> pd.DataFrame | None:
 
 
 def exists(name: str) -> bool:
+    """해당 이름의 캐시 파일 존재 여부."""
     return path(name).exists()
 
 

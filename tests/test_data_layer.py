@@ -1,4 +1,11 @@
-"""데이터 레이어 — KIS 수집 정규화·구간분할 + parquet 캐시 (네트워크 없이)."""
+"""
+description:        데이터 레이어 — KIS 수집 정규화·구간분할 + parquet 캐시 (네트워크 없이).
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
+
 from datetime import date
 
 import pandas as pd

@@ -1,19 +1,10 @@
-"""운영 Tier0 시세·수급 수집 (data/market_data, 03-arch 3.1 2단계·04-data 0b).
-
-사이클이 *결정 시점에* 필요한 **최근 구간**의 시세·수급을 KIS에서 받아 `panel.build_panel`·
-`engine`이 먹는 prices dict(code→date인덱스 OHLCV[+inst_net·foreign_net])로 돌려준다.
-
-백테스트 수집(`data.collect`→parquet 캐시)과 다른 레이어다:
-- 백테스트: 5~10년치를 1회 받아 *폐기 가능 캐시*에 적재(실전은 안 읽음 — data/cache 주석).
-- 운영: 매 사이클 *최근 구간만* 받아 **메모리로** 넘긴다(디스크 영속 없음 → vintage 오염·
-  실전/백테스트 캐시 혼선 방지). 같은 정규화·피처 정의를 재사용해 둘이 어긋나지 않게.
-
-OHLCV는 KIS 일봉(확정 스키마, `kis_history` 재사용)이 정본이다. 수급(투자자 순매수)은 KIS
-`inquire-investor`가 **최근 30거래일만** 주고(external-apis 실측 제약) 출력 컬럼이 아직
-*라이브 미검증*이라, 컬럼 가드로 다르면 명확히 실패시키고(조용한 오염 금지) 수급 실패는
-OHLCV를 막지 않는다(수급 없으면 스크리너가 중립 처리).
 """
-from __future__ import annotations
+description:        운영 Tier0 시세·수급 수집 (사이클용 최근 구간 조회)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 from datetime import date, datetime, timedelta
 
@@ -23,7 +14,7 @@ from broker.kis_client import KISClient
 from data.sources import kis_history
 from data.sources.kis_history import KISHistoryError
 
-# KIS inquire-investor(FHKST01010900) 출력 컬럼 → 표준. ★라이브 검증 필요(external-apis 실측 제약).
+# KIS inquire-investor(FHKST01010900) 출력 컬럼 → 표준
 _INVESTOR_COLS = {
     "stck_bsop_date": "date",
     "orgn_ntby_qty": "inst_net",     # 기관계 순매수 수량
@@ -32,7 +23,7 @@ _INVESTOR_COLS = {
 
 
 def _normalize_investor(rows: list[dict]) -> pd.DataFrame:
-    """투자자 순매수 원시행 → date·inst_net·foreign_net. 컬럼 다르면 KISHistoryError."""
+    """투자자 순매수 원시행을 date·inst_net·foreign_net 표준 컬럼으로 바꾼다."""
     std = list(_INVESTOR_COLS.values())
     if not rows:
         return pd.DataFrame(columns=std)
@@ -50,7 +41,7 @@ def _normalize_investor(rows: list[dict]) -> pd.DataFrame:
 def fetch_ohlcv(
     client: KISClient, code: str, *, lookback_days: int = 200, end: date | None = None
 ) -> pd.DataFrame:
-    """한 종목 최근 OHLCV(date 인덱스). lookback_days는 달력일(피처 워밍업 여유 포함)."""
+    """한 종목 최근 OHLCV(date 인덱스)를 조회한다. lookback_days는 달력일."""
     end = end or date.today()
     start = end - timedelta(days=lookback_days)
     df = kis_history.fetch_ohlcv_range(
@@ -60,7 +51,7 @@ def fetch_ohlcv(
 
 
 def fetch_supply(client: KISClient, code: str) -> pd.DataFrame:
-    """한 종목 최근(≤30거래일) 투자자 순매수(date 인덱스 inst_net·foreign_net)."""
+    """한 종목 최근(≤30거래일) 투자자 순매수를 조회한다."""
     df = _normalize_investor(client.get_investor(code))
     return df.set_index("date").sort_index() if not df.empty else df
 
@@ -74,11 +65,7 @@ def fetch_prices(
     end: date | None = None,
     client: KISClient | None = None,
 ) -> tuple[dict[str, pd.DataFrame], list[tuple[str, str]]]:
-    """여러 종목 운영 시세(+수급) → (prices, failed). 시세 조회만 하므로 mode 기본 real.
-
-    한 종목 OHLCV 실패는 격리(failed에 모음). 수급 실패는 그 종목 OHLCV는 살리고 수급만 뺀다
-    (수급 없는 종목은 패널에서 supply 결측 → 스크리너 중립 처리).
-    """
+    """여러 종목의 운영 시세(+수급)를 조회한다. 반환: (prices, failed)."""
     client = client or KISClient(mode=mode)
     prices: dict[str, pd.DataFrame] = {}
     failed: list[tuple[str, str]] = []

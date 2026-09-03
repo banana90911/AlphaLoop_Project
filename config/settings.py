@@ -1,12 +1,10 @@
-"""설정의 단일 로딩 진입점 (03-arch 3-3).
-
-두 갈래로 분리한다:
-- **시크릿**: `.env`/환경변수 → `Settings` (리포에 값 없음, 10-ops 10.6)
-- **운영 파라미터**: `config/*.toml` → `load_params()` (날짜별·모델별, 그 시점 값으로 과거 재현)
-
-모드(모의/실전/백테스트) 분기는 여기와 `broker/kis_client.py`에서만 한다(03-arch 3.3).
 """
-from __future__ import annotations
+description:        설정 단일 로딩 진입점 (시크릿 .env + 운영 파라미터 toml)
+author:             siheon jung
+created date:       2026/08/29
+last modified date: 2026/08/30
+remarks:
+"""
 
 import tomllib
 from functools import lru_cache
@@ -39,14 +37,22 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
     # ── 운영 ──
     healthcheck_url: str = ""
+    # SafeStop 전용 ping 주소. 비우면 정상 주소의 /fail로 대신 보낸다.
+    healthcheck_safestop_url: str = ""
     discord_webhook_url: str = ""
-    # ── 모드 (모의/실전 전환은 이 플래그 하나로, 03-arch 3.3 / 10-ops 10.10) ──
+    # ── 대시보드 — 비밀번호는 해시만 둔다 ──
+    dashboard_password_hash: str = ""
+    dashboard_token_secret: str = ""
+    # ── 모드 (모의/실전 전환은 이 플래그 하나로) ──
     trading_mode: str = "paper"  # "paper" | "real"
-    # ── DB 접속(호스트 비의존, 03-arch 3.3) ──
-    # 접속 계정은 둘 — 매매 코어용(읽기·쓰기)과 대시보드용(SELECT만, 07-model 공통 규칙).
-    # 대시보드 DSN이 비어 있으면 코어 DSN으로 붙되 읽기 전용 트랜잭션으로 강등한다(memory/db).
+    # ── DB 접속 — 코어용(읽기·쓰기)과 대시보드용(SELECT만) 계정을 분리 ──
     db_dsn: str = "postgresql:///journal"
     db_dsn_readonly: str = ""
+    # ── 외부 현금흐름(입출금) 감지 — 매매 결정을 바꾸지 않으므로 손잡이 7개에 안 든다 ──
+    # 관찰 모드: 흡수 임계 미만 잔차까지 전부 기록해 분포를 모은다(임계 확정 전까지 켜둔다).
+    cashflow_observation_mode: bool = True
+    # 금액 서명(입금 ...777 / 출금 ...555)으로 Kind를 자동 확정. 기본 비활성(10-ops).
+    cashflow_signature_enabled: bool = False
 
 
 @lru_cache
@@ -57,11 +63,7 @@ def get_settings() -> Settings:
 
 @lru_cache
 def load_params(name: str) -> dict:
-    """운영 파라미터 toml 로드.
-
-    name ∈ {tax_rates, rate_limits, risk_params}.
-    값이 자주 바뀌고 *그 시점 값으로 과거를 재현*해야 하므로 코드·시크릿과 수명을 분리한다.
-    """
+    """운영 파라미터 toml 로드(캐시됨). name ∈ {tax_rates, rate_limits, risk_params}."""
     path = CONFIG_DIR / f"{name}.toml"
     with path.open("rb") as f:
         return tomllib.load(f)

@@ -33,7 +33,7 @@ const STEP_NAME: Record<number, string> = {
 
 /** 행을 고르면 원인과 "무엇을 확인하고 어떻게 해제하는지"를 함께 보여준다(8.4 ④) */
 function stopGuide(e: SafeStopEvent): { what: string; how: string; manual: boolean } {
-  const cause = e.Cause.toLowerCase()
+  const cause = e.cause.toLowerCase()
   if (cause.includes('balance') || cause.includes('잔고') || cause.includes('sync'))
     return {
       what: '우리 기록의 보유 수량과 KIS 실잔고가 어긋났습니다. 어긋난 채로 주문하면 없는 주식을 팔거나 두 번 살 수 있어 전체를 멈춥니다.',
@@ -101,28 +101,28 @@ export function AlertPanel({
           {stops.length > 0 && (
             <Group title="안전 정지" count={stops.length}>
               {stops.map((e) => (
-                <StopRow key={e.EventId} e={e} />
+                <StopRow key={e.event_id} e={e} />
               ))}
             </Group>
           )}
           {cycles.length > 0 && (
             <Group title="실패 · 건너뛴 사이클" count={cycles.length}>
               {cycles.map((c) => (
-                <CycleRow key={c.CycleId} c={c} />
+                <CycleRow key={c.cycle_id} c={c} />
               ))}
             </Group>
           )}
           {ingests.length > 0 && (
             <Group title="일일 배치" count={ingests.length}>
               {ingests.map((r) => (
-                <IngestRow key={r.RunId} r={r} />
+                <IngestRow key={r.run_id} r={r} />
               ))}
             </Group>
           )}
           {flows.length > 0 && (
             <Group title="미분류 현금 변동" count={flows.length} info>
               {flows.map((f) => (
-                <FlowRow key={f.FlowId} f={f} hint={data?.unlabeled_flow_hint ?? ''} />
+                <FlowRow key={f.flow_id} f={f} hint={data?.unlabeled_flow_hint ?? ''} />
               ))}
             </Group>
           )}
@@ -188,7 +188,7 @@ function Row({
 }
 
 function StopRow({ e }: { e: SafeStopEvent }) {
-  const active = e.ReleasedDateTime === null
+  const active = e.released_date_time === null
   const g = stopGuide(e)
   return (
     <Row
@@ -196,21 +196,21 @@ function StopRow({ e }: { e: SafeStopEvent }) {
       head={
         <span className="flex items-center gap-2">
           <Badge tone={active ? 'up' : 'neutral'}>{active ? '정지 중' : '해제됨'}</Badge>
-          <span className="truncate text-ink-50">{e.Cause}</span>
-          <span className="text-ink-400">{e.Trigger === 'auto' ? '자동' : '수동'}</span>
+          <span className="truncate text-ink-50">{e.cause}</span>
+          <span className="text-ink-400">{e.trigger === 'auto' ? '자동' : '수동'}</span>
         </span>
       }
-      meta={fmtStamp(e.OccurredDateTime)}
+      meta={fmtStamp(e.occurred_date_time)}
       detail={
         <>
           <p className="mb-1.5 text-ink-200">{g.what}</p>
           <p className="mb-1.5">{g.how}</p>
           <div className="mt-2 grid gap-1 sm:grid-cols-2">
-            <span>사이클 {e.CycleId ?? '—'}</span>
+            <span>사이클 {e.cycle_id ?? '—'}</span>
             <span>
-              해제 {e.ReleasedDateTime ? `${fmtStamp(e.ReleasedDateTime)} · ${e.ReleasedBy ?? ''}` : '—'}
+              해제 {e.released_date_time ? `${fmtStamp(e.released_date_time)} · ${e.released_by ?? ''}` : '—'}
             </span>
-            {e.ReleaseReason && <span className="sm:col-span-2">사유: {e.ReleaseReason}</span>}
+            {e.release_reason && <span className="sm:col-span-2">사유: {e.release_reason}</span>}
           </div>
         </>
       }
@@ -219,7 +219,7 @@ function StopRow({ e }: { e: SafeStopEvent }) {
 }
 
 function CycleRow({ c }: { c: FailedCycle }) {
-  const failed = c.Status === 'failed'
+  const failed = c.status === 'failed'
   return (
     <Row
       head={
@@ -227,14 +227,14 @@ function CycleRow({ c }: { c: FailedCycle }) {
           <Badge tone={failed ? 'warn' : 'neutral'}>{failed ? '실패' : '건너뜀'}</Badge>
           <span className="text-ink-50">
             {failed
-              ? `${c.FailedStep ?? '?'}단계 ${c.FailedStep ? (STEP_NAME[c.FailedStep] ?? '') : ''}`
-              : c.SkipReason
-                ? (SKIP_REASON[c.SkipReason] ?? c.SkipReason)
+              ? `${c.failed_step ?? '?'}단계 ${c.failed_step ? (STEP_NAME[c.failed_step] ?? '') : ''}`
+              : c.skip_reason
+                ? (SKIP_REASON[c.skip_reason] ?? c.skip_reason)
                 : '사유 없음'}
           </span>
         </span>
       }
-      meta={`${fmtDate(c.TradeDate)} ${fmtStamp(c.StartedDateTime).slice(-5)}`}
+      meta={`${fmtDate(c.trade_date)} ${fmtStamp(c.started_date_time).slice(-5)}`}
       detail={
         <>
           <p className="mb-1.5 text-ink-200">
@@ -247,7 +247,7 @@ function CycleRow({ c }: { c: FailedCycle }) {
               ? '로그에서 해당 CycleId를 찾아 원인을 확인합니다. 5단계(주문 실행)에서 멈췄다면 KIS 주문 조회로 실제 송출 여부를 먼저 확인해야 중복 주문을 피합니다.'
               : '정상 동작일 수 있습니다. 사유를 확인하세요.'}
           </p>
-          <p className="mt-2 font-mono">CycleId {c.CycleId}</p>
+          <p className="mt-2 font-mono">CycleId {c.cycle_id}</p>
         </>
       }
     />
@@ -255,18 +255,18 @@ function CycleRow({ c }: { c: FailedCycle }) {
 }
 
 function IngestRow({ r }: { r: IngestRun }) {
-  const failed = r.Status === 'failed'
+  const failed = r.status === 'failed'
   return (
     <Row
       tone={failed ? 'border-warn/40' : 'border-ink-800'}
       head={
         <span className="flex items-center gap-2">
           <Badge tone="warn">{failed ? '실패' : '부분 성공'}</Badge>
-          <span className="text-ink-50">{r.TargetTable}</span>
-          <span className="text-ink-400">{r.Source}</span>
+          <span className="text-ink-50">{r.target_table}</span>
+          <span className="text-ink-400">{r.source}</span>
         </span>
       }
-      meta={`${r.SuccessCount ?? 0}/${r.TargetCount ?? 0}`}
+      meta={`${r.success_count ?? 0}/${r.target_count ?? 0}`}
       detail={
         <>
           <p className="mb-1.5 text-ink-200">
@@ -277,11 +277,11 @@ function IngestRow({ r }: { r: IngestRun }) {
           <code className="mt-2 block rounded border border-ink-800 bg-ink-950 px-2 py-1.5 font-mono">
             python run_daily_ingest.py
           </code>
-          {r.ErrorMessage && (
-            <p className="mt-2 break-all text-ink-200">오류: {r.ErrorMessage}</p>
+          {r.error_message && (
+            <p className="mt-2 break-all text-ink-200">오류: {r.error_message}</p>
           )}
           <p className="mt-1 font-mono">
-            {fmtStamp(r.StartedDateTime)} → {fmtStamp(r.FinishedDateTime)}
+            {fmtStamp(r.started_date_time)} → {fmtStamp(r.finished_date_time)}
           </p>
         </>
       }
@@ -290,19 +290,19 @@ function IngestRow({ r }: { r: IngestRun }) {
 }
 
 function FlowRow({ f, hint }: { f: CashFlow; hint: string }) {
-  const inbound = Number(f.Amount) >= 0
+  const inbound = Number(f.amount) >= 0
   return (
     <Row
       head={
         <span className="flex items-center gap-2">
           <Badge tone="neutral">미분류</Badge>
           <span className={`font-mono ${inbound ? 'text-up' : 'text-down'}`}>
-            {fmtWonSigned(f.Amount)}원
+            {fmtWonSigned(f.amount)}원
           </span>
-          <span className="text-ink-400">{f.Source}</span>
+          <span className="text-ink-400">{f.source}</span>
         </span>
       }
-      meta={fmtDate(f.TradeDate)}
+      meta={fmtDate(f.trade_date)}
       detail={
         <>
           <p className="mb-1.5 text-ink-200">
@@ -314,10 +314,10 @@ function FlowRow({ f, hint }: { f: CashFlow; hint: string }) {
             그래서 라벨이 필요합니다.
           </p>
           <code className="mt-2 block rounded border border-ink-800 bg-ink-950 px-2 py-1.5 font-mono break-all">
-            {hint.replace('<FlowId>', f.FlowId)}
+            {hint.replace('<FlowId>', f.flow_id)}
           </code>
           <p className="mt-2 font-mono">
-            기대 {fmtWonSigned(f.ExpectedCash)} / 실제 {fmtWonSigned(f.ActualCash)}
+            기대 {fmtWonSigned(f.expected_cash)} / 실제 {fmtWonSigned(f.actual_cash)}
           </p>
         </>
       }

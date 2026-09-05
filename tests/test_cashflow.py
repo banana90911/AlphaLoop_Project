@@ -80,9 +80,9 @@ def test_expected_cash_follows_fills(conn):
         total_asset=5_000_000, trade_date=_DAY,
     )
     conn.execute(
-        'INSERT INTO "Orders"("ClientOrderId","SymbolId","Side","Purpose","OrderType",'
-        '"OrderQuantity","FilledQuantity","AverageFillPrice","Fee","Status",'
-        '"OrderedDateTime","FilledDateTime","Mode") VALUES'
+        'INSERT INTO orders(client_order_id,symbol_id,side,purpose,order_type,'
+        'order_quantity,filled_quantity,average_fill_price,fee,status,'
+        'ordered_date_time,filled_date_time,mode) VALUES'
         "('o1','005930','buy','entry','00',10,10,100000,1500,'filled',now(),now(),'paper'),"
         "('o2','000660','sell','exit','00',5,5,200000,3000,'filled',now(),now(),'paper')"
     )
@@ -100,15 +100,15 @@ def test_record_and_confirm_cash_flow(conn):
         expected=5_000_000, actual=7_000_000, mode="paper",
     )
     row = journal.load_cash_flows(conn, status="unconfirmed")[0]
-    assert row["FlowId"] == fid and row["Status"] == "unconfirmed"
+    assert row["flow_id"] == fid and row["status"] == "unconfirmed"
 
     assert journal.confirm_cash_flow(conn, fid, kind="deposit", by="cli")
     row = journal.load_cash_flows(conn)[0]
-    assert (row["Kind"], row["Status"], row["ConfirmedBy"]) == ("deposit", "confirmed", "cli")
+    assert (row["kind"], row["status"], row["confirmed_by"]) == ("deposit", "confirmed", "cli")
 
     # 다시 부르면 정정(배당을 입금으로 잘못 잡았다가 바로잡는 경로)
     assert journal.confirm_cash_flow(conn, fid, kind="dividend", by="cli")
-    assert journal.load_cash_flows(conn)[0]["Status"] == "reclassified"
+    assert journal.load_cash_flows(conn)[0]["status"] == "reclassified"
 
 
 def test_confirm_rejects_unknown_kind(conn):
@@ -148,12 +148,12 @@ def test_snapshot_carries_flow_and_twr(conn):
         net_flow_since_base=2_000_000, flow_this_snapshot=2_000_000, trade_date=_DAY,
     )
     row = journal.last_account_snapshot(conn)
-    assert float(row["AdjustedBaseAsset"]) == 12_000_000
-    assert abs(float(row["DayReturnPercent"])) < 1e-9       # 입금은 수익이 아니다
-    assert float(row["CumulativeNetFlow"]) == 2_000_000
-    assert row["TwrIndex"] == pytest.approx(1.0)
+    assert float(row["adjusted_base_asset"]) == 12_000_000
+    assert abs(float(row["day_return_percent"])) < 1e-9       # 입금은 수익이 아니다
+    assert float(row["cumulative_net_flow"]) == 2_000_000
+    assert row["twr_index"] == pytest.approx(1.0)
     # 검산: TotalAsset − CumulativeNetFlow = 누적 순손익
-    assert float(row["TotalAsset"]) - float(row["CumulativeNetFlow"]) == 10_000_000
+    assert float(row["total_asset"]) - float(row["cumulative_net_flow"]) == 10_000_000
 
 
 def test_twr_index_tracks_real_gain_after_deposit(conn):
@@ -168,7 +168,7 @@ def test_twr_index_tracks_real_gain_after_deposit(conn):
         base_asset=10_000_000, net_flow_since_base=2_000_000,
         flow_this_snapshot=2_000_000, trade_date=_DAY,
     )
-    assert journal.last_account_snapshot(conn)["TwrIndex"] == pytest.approx(1.10)
+    assert journal.last_account_snapshot(conn)["twr_index"] == pytest.approx(1.10)
 
 
 def test_cycle_detects_deposit_and_keeps_trading(conn, monkeypatch):
@@ -183,13 +183,13 @@ def test_cycle_detects_deposit_and_keeps_trading(conn, monkeypatch):
     assert res.cycle_action != "halt"                                   # 안 멈춘다
     flows = journal.load_cash_flows(conn)
     assert len(flows) == 1
-    assert float(flows[0]["Amount"]) == pytest.approx(2_000_000)
-    assert flows[0]["Kind"] == "unknown" and flows[0]["Status"] == "unconfirmed"
+    assert float(flows[0]["amount"]) == pytest.approx(2_000_000)
+    assert flows[0]["kind"] == "unknown" and flows[0]["status"] == "unconfirmed"
 
     check = conn.execute(
-        'SELECT * FROM "RiskChecks" WHERE "CheckName"=%s', ("cashFlow",)
+        'SELECT * FROM risk_checks WHERE check_name=%s', ("cashFlow",)
     ).fetchone()
-    assert check["Result"] == "flowDetected"
+    assert check["result"] == "flowDetected"
 
 
 def test_cycle_halts_on_massive_outflow(conn):

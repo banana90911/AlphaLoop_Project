@@ -102,9 +102,9 @@ function Dashboard({ onSignedOut }: { onSignedOut: () => void }) {
   // 그래프의 체결 마커는 종목코드만 들고 온다 — 이미 받아 둔 응답에서 이름을 모아 붙인다
   const names = useMemo(() => {
     const m: Record<string, string> = {}
-    for (const h of account.data?.holdings ?? []) if (h.Name) m[h.SymbolId] = h.Name
-    for (const o of trades.data?.orders ?? []) if (o.Name) m[o.SymbolId] = o.Name
-    for (const p of curve.data?.points ?? []) if (p.Name && p.SymbolId) m[p.SymbolId] = p.Name
+    for (const h of account.data?.holdings ?? []) if (h.name) m[h.symbol_id] = h.name
+    for (const o of trades.data?.orders ?? []) if (o.name) m[o.symbol_id] = o.name
+    for (const p of curve.data?.points ?? []) if (p.name && p.symbol_id) m[p.symbol_id] = p.name
     return m
   }, [account.data, trades.data, curve.data])
 

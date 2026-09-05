@@ -129,8 +129,8 @@ def test_successful_login_clears_the_counter(guarded_client, monkeypatch):
 def test_account_empty_is_not_an_error(client):
     body = client.get("/api/account").json()
     assert body["snapshot"] is None and body["holdings"] == []
-    assert body["cumulativeNetFlow"] == 0.0
-    assert body["twrReturn"] is None and body["safeWithdrawable"] is None
+    assert body["cumulative_net_flow"] == 0.0
+    assert body["twr_return"] is None and body["safe_withdrawable"] is None
 
 
 def test_account_returns_snapshot_and_holdings(conn, client):
@@ -152,15 +152,15 @@ def test_account_returns_snapshot_and_holdings(conn, client):
 
     body = client.get("/api/account").json()
     snap = body["snapshot"]
-    assert snap["Amount"] == 8_000_000 and snap["TotalAsset"] == 10_000_000
-    assert snap["DayReturnPercent"] == pytest.approx(10_000_000 / 10_500_000 - 1)
+    assert snap["amount"] == 8_000_000 and snap["total_asset"] == 10_000_000
+    assert snap["day_return_percent"] == pytest.approx(10_000_000 / 10_500_000 - 1)
 
     h = body["holdings"][0]
-    assert h["Name"] == "삼성전자" and h["Quantity"] == 20
-    assert h["LastPrice"] == 110_000                     # CycleScores에서 온 값
-    assert h["ProfitLoss"] == pytest.approx(200_000)     # (110000-100000)×20
-    assert h["ReturnPercent"] == pytest.approx(0.10)
-    assert h["CurrentStopPrice"] == 94_000
+    assert h["name"] == "삼성전자" and h["quantity"] == 20
+    assert h["last_price"] == 110_000                     # CycleScores에서 온 값
+    assert h["profit_loss"] == pytest.approx(200_000)     # (110000-100000)×20
+    assert h["return_percent"] == pytest.approx(0.10)
+    assert h["current_stop_price"] == 94_000
 
 
 def test_holding_days_counted_in_trading_days(conn, client, monkeypatch):
@@ -173,7 +173,7 @@ def test_holding_days_counted_in_trading_days(conn, client, monkeypatch):
     )
     monkeypatch.setattr(api, "kst_today", lambda: date(2026, 8, 10))
     h = client.get("/api/account").json()["holdings"][0]
-    assert h["HoldingDays"] == 5                          # 달력 7일 ≠ 거래일 5일
+    assert h["holding_days"] == 5                          # 달력 7일 ≠ 거래일 5일
 
 
 def test_missing_price_does_not_break_account(conn, client):
@@ -184,7 +184,7 @@ def test_missing_price_does_not_break_account(conn, client):
         entry_decision_id=None, current_stop_price=90.0, initial_stop_price=90.0,
     )
     h = client.get("/api/account").json()["holdings"][0]
-    assert h["LastPrice"] is None and h["ProfitLoss"] is None
+    assert h["last_price"] is None and h["profit_loss"] is None
 
 
 def test_closed_positions_excluded(conn, client):
@@ -215,8 +215,8 @@ def test_equity_curve_accumulates_net_profit(conn, client):
     _outcome(conn, "O2", "A", date(2026, 8, 4), -40.0)
     _outcome(conn, "O3", "A", date(2026, 8, 5), 25.0)
     pts = client.get("/api/equity-curve").json()["points"]
-    assert [p["Cumulative"] for p in pts] == [100.0, 60.0, 85.0]
-    assert pts[0]["Name"] == "에이" and pts[0]["RMultiple"] == 1.0
+    assert [p["cumulative"] for p in pts] == [100.0, 60.0, 85.0]
+    assert pts[0]["name"] == "에이" and pts[0]["r_multiple"] == 1.0
 
 
 def test_equity_curve_filters_by_date(conn, client):
@@ -224,7 +224,7 @@ def test_equity_curve_filters_by_date(conn, client):
     _outcome(conn, "O1", "A", date(2026, 8, 3), 100.0)
     _outcome(conn, "O2", "A", date(2026, 8, 20), 50.0)
     pts = client.get("/api/equity-curve?start=2026-08-10").json()["points"]
-    assert len(pts) == 1 and pts[0]["OutcomeId"] == "O2"
+    assert len(pts) == 1 and pts[0]["outcome_id"] == "O2"
 
 
 def test_equity_curve_returns_fill_markers(conn, client):
@@ -239,7 +239,7 @@ def test_equity_curve_returns_fill_markers(conn, client):
            ordered_at=ts, cycle_id="C1", filled=0)
     markers = client.get("/api/equity-curve").json()["markers"]
     # 체결된 진입·청산만 점으로 찍는다 — 미체결 스톱 예약은 거래가 아니다
-    assert {m["Purpose"] for m in markers} == {"entry", "exit"}
+    assert {m["purpose"] for m in markers} == {"entry", "exit"}
 
 
 def test_equity_curve_includes_index_benchmarks(conn, client):
@@ -251,7 +251,7 @@ def test_equity_curve_includes_index_benchmarks(conn, client):
         {"date": date(2026, 8, 3), "close": 900.0, "regime": "uptrend"},
     ])
     bench = client.get("/api/equity-curve").json()["benchmarks"]
-    assert {b["IndexCode"] for b in bench} == {"KOSPI", "KOSDAQ"}
+    assert {b["index_code"] for b in bench} == {"KOSPI", "KOSDAQ"}
     assert len(bench) == 3
 
 
@@ -272,8 +272,8 @@ def test_watchlist_benchmark_averages_next_day_return(conn, client):
     ])
     body = client.get("/api/benchmark/watchlist").json()
     # A +10%, B −10% → 균등가중 0%
-    assert body["series"][0]["Cumulative"] == pytest.approx(0.0)
-    assert body["series"][0]["Names"] == 2
+    assert body["series"][0]["cumulative"] == pytest.approx(0.0)
+    assert body["series"][0]["names"] == 2
 
 
 def test_watchlist_benchmark_excludes_filtered_out(conn, client):
@@ -289,8 +289,8 @@ def test_watchlist_benchmark_excludes_filtered_out(conn, client):
         {"symbol_id": "B", "passed_filter": False, "filter_reason": "동전주"},
     ])
     body = client.get("/api/benchmark/watchlist").json()
-    assert body["series"][0]["Names"] == 1                      # 탈락 종목은 안 담는다
-    assert body["series"][0]["Cumulative"] == pytest.approx(0.10)
+    assert body["series"][0]["names"] == 1                      # 탈락 종목은 안 담는다
+    assert body["series"][0]["cumulative"] == pytest.approx(0.10)
 
 
 def test_watchlist_benchmark_empty_is_not_an_error(client):
@@ -310,10 +310,10 @@ def test_trades_date_filter_uses_kst_not_utc(conn, client):
            ordered_at=datetime(2026, 8, 27, 23, 0, tzinfo=KST))
 
     got = client.get("/api/trades?start=2026-08-28").json()["orders"]
-    assert [o["ClientOrderId"] for o in got] == ["early"]        # 전날 것이 안 섞인다
+    assert [o["client_order_id"] for o in got] == ["early"]        # 전날 것이 안 섞인다
 
     got = client.get("/api/trades?end=2026-08-27").json()["orders"]
-    assert [o["ClientOrderId"] for o in got] == ["prev-day"]     # 다음날 것이 안 섞인다
+    assert [o["client_order_id"] for o in got] == ["prev-day"]     # 다음날 것이 안 섞인다
 
 
 def test_trades_end_is_inclusive_of_whole_kst_day(conn, client):
@@ -332,7 +332,7 @@ def test_trades_excludes_stop_reservations_by_default(conn, client):
     _order(conn, "entry", code="A", side="buy", purpose="entry", cycle_id="C1", ordered_at=ts)
     _order(conn, "stop", code="A", side="sell", purpose="stop", cycle_id="C1",
            ordered_at=ts, filled=0)
-    assert [o["ClientOrderId"] for o in
+    assert [o["client_order_id"] for o in
             client.get("/api/trades").json()["orders"]] == ["entry"]
     assert len(client.get("/api/trades?include_stops=true").json()["orders"]) == 2
 
@@ -343,7 +343,7 @@ def test_trades_side_filter(conn, client):
     ts = datetime(2026, 8, 28, 14, 30, tzinfo=KST)
     _order(conn, "b", code="A", side="buy", purpose="entry", cycle_id="C1", ordered_at=ts)
     _order(conn, "s", code="A", side="sell", purpose="exit", cycle_id="C1", ordered_at=ts)
-    assert [o["Side"] for o in
+    assert [o["side"] for o in
             client.get("/api/trades?side=buy").json()["orders"]] == ["buy"]
     assert len(client.get("/api/trades?side=bogus").json()["orders"]) == 2
 
@@ -386,10 +386,10 @@ def test_trade_detail_joins_decision_scores_and_checks(conn, client):
            decision_id=did, ordered_at=now_utc())
 
     body = client.get("/api/trades/c1-A-buy-0").json()
-    assert body["decision"]["Action"] == "buy" and body["decision"]["Threshold"] == 0.6
-    assert body["cycle_score"]["StopWidth"] == 60.0
+    assert body["decision"]["action"] == "buy" and body["decision"]["threshold"] == 0.6
+    assert body["cycle_score"]["stop_width"] == 60.0
     # 사이클 단위 검사(DecisionId NULL)와 결정 단위 검사가 순서대로 함께 온다
-    assert [c["CheckOrder"] for c in body["risk_checks"]] == [4, 7]
+    assert [c["check_order"] for c in body["risk_checks"]] == [4, 7]
 
 
 def test_trade_detail_without_decision_is_not_an_error(conn, client):
@@ -411,7 +411,7 @@ def test_alerts_flags_unreleased_safe_stop(conn, client):
     journal.record_safe_stop(conn, cause="잔고 불일치", cycle_id="C1")
     body = client.get("/api/alerts").json()
     assert body["active_stop"] is True                    # 비어 있는 해제시각 = 지금 정지 중
-    assert body["safe_stops"][0]["Cause"] == "잔고 불일치"
+    assert body["safe_stops"][0]["cause"] == "잔고 불일치"
 
 
 def test_alerts_clears_after_release(conn, client):
@@ -427,17 +427,17 @@ def test_alerts_lists_failed_cycles_and_ingests(conn, client):
     _cycle(conn, "C2")
     journal.advance_status(conn, "C2", "recorded")
     journal.record_ingest_run(
-        conn, run_id="R1", target_table="DailyBars", source="kis", status="partial",
+        conn, run_id="R1", target_table="daily_bars", source="kis", status="partial",
         started_at=now_utc(), range_end=_DAY, error_message="12종목 실패",
     )
     journal.record_ingest_run(
-        conn, run_id="R2", target_table="DailyScores", source="journal", status="ok",
+        conn, run_id="R2", target_table="daily_scores", source="journal", status="ok",
         started_at=now_utc(), range_end=_DAY,
     )
     body = client.get("/api/alerts").json()
-    assert [c["CycleId"] for c in body["failed_cycles"]] == ["C1"]
-    assert body["failed_cycles"][0]["FailedStep"] == 4
-    assert [i["RunId"] for i in body["failed_ingests"]] == ["R1"]   # ok는 안 뜬다
+    assert [c["cycle_id"] for c in body["failed_cycles"]] == ["C1"]
+    assert body["failed_cycles"][0]["failed_step"] == 4
+    assert [i["run_id"] for i in body["failed_ingests"]] == ["R1"]   # ok는 안 뜬다
 
 
 # ── 외부 현금흐름 반영 (08-dashboard 8.4) ────────────────────────
@@ -459,10 +459,10 @@ def test_account_reports_net_flow_and_safe_withdrawable(conn, client):
         net_flow_since_base=2_000_000, flow_this_snapshot=2_000_000, trade_date=_DAY,
     )
     body = client.get("/api/account").json()
-    assert body["cumulativeNetFlow"] == 2_000_000
-    assert body["twrReturn"] == pytest.approx(0.0)
+    assert body["cumulative_net_flow"] == 2_000_000
+    assert body["twr_return"] == pytest.approx(0.0)
     # 미체결 매수가 없으면 예수금 전액이 안전 출금 가능액
-    assert body["safeWithdrawable"] == 8_000_000
+    assert body["safe_withdrawable"] == 8_000_000
 
 
 def test_safe_withdrawable_subtracts_pending_buys(conn, client):
@@ -478,7 +478,7 @@ def test_safe_withdrawable_subtracts_pending_buys(conn, client):
         order_quantity=10, filled_quantity=0, order_price=300_000,
         status="submitted", mode="paper", ordered_at=now_utc(),
     )
-    assert client.get("/api/account").json()["safeWithdrawable"] == 8_000_000 - 3_000_000
+    assert client.get("/api/account").json()["safe_withdrawable"] == 8_000_000 - 3_000_000
 
 
 def test_equity_curve_axis_totalasset_shows_flow_markers(conn, client):
@@ -491,9 +491,9 @@ def test_equity_curve_axis_totalasset_shows_flow_markers(conn, client):
     _flow(conn, "C1", kind="deposit", amount=2_000_000)
     body = client.get("/api/equity-curve?axis=totalAsset").json()
     assert body["axis"] == "totalAsset"
-    assert body["points"][0]["Cumulative"] == 12_000_000
+    assert body["points"][0]["cumulative"] == 12_000_000
     assert len(body["flow_markers"]) == 1
-    assert body["flow_markers"][0]["Direction"] == "deposit"
+    assert body["flow_markers"][0]["direction"] == "deposit"
 
 
 def test_realized_axis_never_shows_flow_markers(conn, client):
@@ -529,7 +529,7 @@ def test_trades_include_flows_and_can_be_filtered(conn, client):
 
     body = client.get("/api/trades").json()
     assert len(body["orders"]) == 1 and len(body["flows"]) == 1
-    assert float(body["flows"][0]["Amount"]) == -500_000        # 출금은 음수
+    assert float(body["flows"][0]["amount"]) == -500_000        # 출금은 음수
 
     assert client.get("/api/trades?side=flow").json()["orders"] == []
     assert client.get("/api/trades?side=buy").json()["flows"] == []

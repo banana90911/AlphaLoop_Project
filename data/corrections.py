@@ -54,7 +54,7 @@ def adjust_stop_for_action(stop_price: float, price_factor: float) -> float:
 
 # ── ② 신선도 ─────────────────────────────────────────────────────
 def check_freshness(
-    conn, *, trade_date: date, tables: tuple[str, ...] = ("DailyBars", "DailyScores"),
+    conn, *, trade_date: date, tables: tuple[str, ...] = ("daily_bars", "daily_scores"),
     max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
 ) -> tuple[bool, str]:
     """오늘 배치가 제때 `ok`로 끝났는지 확인한다. 반환: (통과 여부, 사유)."""
@@ -65,9 +65,9 @@ def check_freshness(
         run = journal.last_ingest_run(conn, table, trade_date)
         if run is None:
             return False, f"{table} 배치 기록 없음({trade_date})"
-        if run["Status"] != "ok":
-            return False, f"{table} 배치 {run['Status']}: {run['ErrorMessage'] or '사유 미기록'}"
-        finished = run["FinishedDateTime"]
+        if run["status"] != "ok":
+            return False, f"{table} 배치 {run['status']}: {run['error_message'] or '사유 미기록'}"
+        finished = run["finished_date_time"]
         if finished is None:
             return False, f"{table} 배치가 끝나지 않았다"
         age_h = (now - finished).total_seconds() / 3600

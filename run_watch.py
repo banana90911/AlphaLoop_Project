@@ -24,9 +24,9 @@ _ALIVE = {"submitted", "partial"}
 def load_open_positions(conn) -> list[dict]:
     """open 보유(잔량>0)를 조회한다 — 감시 대상."""
     return conn.execute(
-        'SELECT "PositionId", "SymbolId", "Quantity", "CurrentStopPrice", '
-        '"ActiveStopOrderId" FROM "Positions" '
-        "WHERE \"Status\"='open' AND \"Quantity\" > 0"
+        'SELECT position_id, symbol_id, quantity, current_stop_price, '
+        'active_stop_order_id FROM positions '
+        "WHERE status='open' AND quantity > 0"
     ).fetchall()
 
 
@@ -42,9 +42,9 @@ def find_missing_stops(conn, client: KISClient, positions: list[dict]) -> list[d
     }
     missing = []
     for p in positions:
-        if p["ActiveStopOrderId"] is None:
+        if p["active_stop_order_id"] is None:
             missing.append(p)
-        elif orders and p["SymbolId"] not in live_by_code:
+        elif orders and p["symbol_id"] not in live_by_code:
             missing.append(p)          # 장부엔 있는데 KIS엔 없다
     return missing
 
@@ -67,26 +67,26 @@ def register_missing_stops(conn, client: KISClient, missing: list[dict], *,
     stamp = now_utc().strftime("%Y%m%dT%H%M%SZ")
     mode = get_settings().trading_mode
     for p in missing:
-        stop = p["CurrentStopPrice"]
+        stop = p["current_stop_price"]
         if stop is None or stop <= 0:
             continue                    # 손절가를 모르면 임의로 만들지 않는다
-        coid = f"watch{stamp}-{p['SymbolId']}-stop-0"
+        coid = f"watch{stamp}-{p['symbol_id']}-stop-0"
         if dry_run:
             ids.append(coid)
             continue
         trigger = int(round(float(stop)))
         fill = client.place_stop(
-            code=p["SymbolId"], qty=p["Quantity"], trigger_price=trigger,
+            code=p["symbol_id"], qty=p["quantity"], trigger_price=trigger,
             limit_price=trigger, client_order_id=coid,
         )
         journal.record_order(
             conn, client_order_id=coid, cycle_id=None, decision_id=None,
-            symbol_id=p["SymbolId"], side="sell", purpose="stop",
-            order_type=STOP_ORD_DVSN, order_quantity=p["Quantity"],
+            symbol_id=p["symbol_id"], side="sell", purpose="stop",
+            order_type=STOP_ORD_DVSN, order_quantity=p["quantity"],
             filled_quantity=0, order_price=float(trigger), trigger_price=float(trigger),
             kis_order_no=fill.broker_order_id, status=fill.status, mode=mode,
         )
-        journal.set_active_stop(conn, p["PositionId"], coid)
+        journal.set_active_stop(conn, p["position_id"], coid)
         ids.append(coid)
     return ids
 
@@ -96,13 +96,13 @@ def find_stop_gaps(client: KISClient, positions: list[dict]) -> list:
     prices: dict[str, float] = {}
     for p in positions:
         try:
-            out = client.get_price(p["SymbolId"]).get("output", {})
-            prices[p["SymbolId"]] = float(out.get("stck_prpr") or 0)
+            out = client.get_price(p["symbol_id"]).get("output", {})
+            prices[p["symbol_id"]] = float(out.get("stck_prpr") or 0)
         except Exception:
             continue                    # 결측은 다음 폴링에서 재시도
     watch = [
-        StopPosition(p["SymbolId"], float(p["CurrentStopPrice"] or 0), p["Quantity"])
-        for p in positions if p["CurrentStopPrice"]
+        StopPosition(p["symbol_id"], float(p["current_stop_price"] or 0), p["quantity"])
+        for p in positions if p["current_stop_price"]
     ]
     return detect_stop_gaps(watch, prices)
 
@@ -134,7 +134,7 @@ def main() -> None:
     # ① 상주 스톱 무결성
     missing = find_missing_stops(conn, client, positions)
     if missing:
-        codes = [p["SymbolId"] for p in missing]
+        codes = [p["symbol_id"] for p in missing]
         print(f"  손절 없는 보유 {len(missing)}종목: {codes}")
         ids = register_missing_stops(conn, client, missing, dry_run=args.check)
         print(f"  {'등록 예정' if args.check else '등록 완료'} {len(ids)}건")

@@ -178,7 +178,7 @@ def run(
         p_close, p_atr = W["close"].loc[prev], W["atr"].loc[prev]
 
         # 서킷브레이커 기준선 — 전일 종가 기준 총자산. 실거래의 `Account.start_capital`
-        # (= AccountSnapshots.BaseAsset, 직전 거래일 마지막 총자산)과 같은 정의다.
+        # (= account_snapshots.base_asset, 직전 거래일 마지막 총자산)과 같은 정의다.
         # 백테스트에는 입출금이 없으므로 `Account.net_external_flow`는 기본값 0.0을 쓰고,
         # 그때 daily_loss_pct는 예전 식과 1원도 다르지 않다(10-ops 10.9 동일성).
         day_start_equity = cash + sum(

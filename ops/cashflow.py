@@ -109,11 +109,11 @@ def classify_residual(
 
 # ── CLI ────────────────────────────────────────────────────────────────────
 def _fmt(row: dict) -> str:
-    sign = "+" if float(row["Amount"]) >= 0 else ""
+    sign = "+" if float(row["amount"]) >= 0 else ""
     return (
-        f'{row["FlowId"]}  {row["TradeDate"]}  {row["Kind"]:<10} '
-        f'{sign}{float(row["Amount"]):>14,.0f}원  {row["Status"]:<12} '
-        f'{row["Source"]:<9} {row["Note"] or ""}'
+        f'{row["flow_id"]}  {row["trade_date"]}  {row["kind"]:<10} '
+        f'{sign}{float(row["amount"]):>14,.0f}원  {row["status"]:<12} '
+        f'{row["source"]:<9} {row["note"] or ""}'
     )
 
 
@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for name, help_text in (("confirm", "라벨 확정"), ("reclassify", "라벨 정정")):
         sp = sub.add_parser(name, help=help_text)
-        sp.add_argument("--id", required=True, help="FlowId")
+        sp.add_argument("--id", required=True, help="flow_id")
         sp.add_argument("--kind", required=True, choices=journal.FLOW_KINDS)
         sp.add_argument("--note", default=None)
 

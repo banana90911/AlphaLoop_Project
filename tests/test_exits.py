@@ -183,19 +183,19 @@ def test_execute_stop_hit_full_exit(conn):
                               cycle_id="CY2", order_mode="paper")  # 60000 < 손절 65000
     assert order_ids == ["CY2-005930-exit-0"]
     o = conn.execute(
-        'SELECT * FROM "Outcomes" WHERE "SymbolId"=\'005930\''
+        'SELECT * FROM outcomes WHERE symbol_id=\'005930\''
     ).fetchone()
-    assert o["Quantity"] == 3 and o["ExitReason"] == "stopHit"   # 07-model CHECK 값
-    assert o["NetProfitLoss"] < 0 and o["ExitKind"] == "full"
-    assert o["RMultiple"] < 0                                    # 손절이니 −1R 근처
-    pos = conn.execute('SELECT "Status", "Quantity" FROM "Positions"').fetchone()
-    assert pos["Status"] == "closed" and pos["Quantity"] == 0
+    assert o["quantity"] == 3 and o["exit_reason"] == "stopHit"   # 07-model CHECK 값
+    assert o["net_profit_loss"] < 0 and o["exit_kind"] == "full"
+    assert o["r_multiple"] < 0                                    # 손절이니 −1R 근처
+    pos = conn.execute('SELECT status, quantity FROM positions').fetchone()
+    assert pos["status"] == "closed" and pos["quantity"] == 0
     t = conn.execute(
-        'SELECT "Side", "OrderType", "Purpose" FROM "Orders" '
-        'WHERE "ClientOrderId"=\'CY2-005930-exit-0\''
+        'SELECT side, order_type, purpose FROM orders '
+        'WHERE client_order_id=\'CY2-005930-exit-0\''
     ).fetchone()
-    assert t["Side"] == "sell" and t["OrderType"] == "01"   # paper 시장가 보정
-    assert t["Purpose"] == "exit"
+    assert t["side"] == "sell" and t["order_type"] == "01"   # paper 시장가 보정
+    assert t["purpose"] == "exit"
 
 
 def test_execute_forced_sell_invalidation(conn):
@@ -205,11 +205,11 @@ def test_execute_forced_sell_invalidation(conn):
     execute_exits(conn, {"005930": _df(72000.0)}, broker=fb, cycle_id="CY2",
                   forced_sells=["005930"], order_mode="paper")   # 손절 위지만 결정이 sell
     assert conn.execute(
-        'SELECT "ExitReason" FROM "Outcomes"'
-    ).fetchone()["ExitReason"] == "thesisInvalid"
+        'SELECT exit_reason FROM outcomes'
+    ).fetchone()["exit_reason"] == "thesisInvalid"
     assert conn.execute(
-        'SELECT "Status" FROM "Positions"'
-    ).fetchone()["Status"] == "closed"
+        'SELECT status FROM positions'
+    ).fetchone()["status"] == "closed"
 
 
 def test_execute_breakeven_raises_stop_only(conn):
@@ -219,12 +219,12 @@ def test_execute_breakeven_raises_stop_only(conn):
     journal.create_cycle(conn, "CY2")
     execute_exits(conn, {"005930": _df(78000.0)}, broker=fb, cycle_id="CY2", order_mode="paper")
     pos = conn.execute(
-        'SELECT "Quantity", "CurrentStopPrice", "IsBreakevenDone" FROM "Positions"'
+        'SELECT quantity, current_stop_price, is_breakeven_done FROM positions'
     ).fetchone()
-    assert pos["Quantity"] == 3                         # 수량 그대로(매도 없음)
-    assert pos["CurrentStopPrice"] == 70000.0           # 본전으로 상향
-    assert pos["IsBreakevenDone"] is True               # 다음 사이클에 ③이 또 걸리지 않게
-    assert _count(conn, '"Outcomes"') == 0
+    assert pos["quantity"] == 3                         # 수량 그대로(매도 없음)
+    assert pos["current_stop_price"] == 70000.0           # 본전으로 상향
+    assert pos["is_breakeven_done"] is True               # 다음 사이클에 ③이 또 걸리지 않게
+    assert _count(conn, 'outcomes') == 0
 
 
 def test_execute_hold_no_action(conn):
@@ -234,10 +234,10 @@ def test_execute_hold_no_action(conn):
     order_ids = execute_exits(conn, {"005930": _df(70000.0)}, broker=fb,
                               cycle_id="CY2", order_mode="paper")
     assert order_ids == [] and fb.exits == []
-    assert _count(conn, '"Outcomes"') == 0
+    assert _count(conn, 'outcomes') == 0
     assert conn.execute(
-        'SELECT "Status" FROM "Positions"'
-    ).fetchone()["Status"] == "open"
+        'SELECT status FROM positions'
+    ).fetchone()["status"] == "open"
 
 
 # ── 보유일수는 거래일로 센다 (06-sizing 6.2) ──

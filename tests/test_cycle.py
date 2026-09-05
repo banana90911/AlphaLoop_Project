@@ -55,8 +55,8 @@ def _universe() -> dict[str, pd.DataFrame]:
 def test_cycle_reaches_recorded(conn):
     res = cycle.run(conn)
     status = conn.execute(
-        'SELECT "Status" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
-    ).fetchone()["Status"]
+        'SELECT status FROM cycles WHERE cycle_id=%s', (res.cycle_id,)
+    ).fetchone()["status"]
     assert status == "recorded"
     assert res.decision is None          # account 없으면 결정 단계 미실행
 
@@ -66,8 +66,8 @@ def test_recover_marks_pending_failed(conn):
     recovered = journal.recover_pending_cycles(conn)
     assert recovered == ["STUCK"]
     status = conn.execute(
-        'SELECT "Status" FROM "Cycles" WHERE "CycleId"=\'STUCK\''
-    ).fetchone()["Status"]
+        'SELECT status FROM cycles WHERE cycle_id=\'STUCK\''
+    ).fetchone()["status"]
     assert status == "failed"
 
 
@@ -154,26 +154,26 @@ def test_decisions_persisted(conn):
     acc = Account(start_capital=10_000_000, cash=10_000_000)
     res = cycle.run(conn, market_data=_universe(), account=acc, params=p)
     rows = conn.execute(
-        'SELECT "SymbolId", "Action", "Reason", "StopPrice", "Quantity", "TargetPositions" '
-        'FROM "Decisions" WHERE "CycleId"=%s',
+        'SELECT symbol_id, action, reason, stop_price, quantity, target_positions '
+        'FROM decisions WHERE cycle_id=%s',
         (res.cycle_id,),
     ).fetchall()
     assert rows                                        # 결정이 DB에 남음
-    buys = [r for r in rows if r["Action"] == "buy"]
-    assert buys and all(r["Reason"] == "entryThreshold" for r in buys)
-    assert all(r["TargetPositions"] > 0 for r in rows)  # 동일가중 배분의 분모
+    buys = [r for r in rows if r["action"] == "buy"]
+    assert buys and all(r["reason"] == "entryThreshold" for r in buys)
+    assert all(r["target_positions"] > 0 for r in rows)  # 동일가중 배분의 분모
     # buy의 StopPrice·Quantity는 집행 계획(planned)에서 채워짐
     planned_codes = {o.code for o in res.planned_orders}
     for r in buys:
-        if r["SymbolId"] in planned_codes:
-            assert r["StopPrice"] is not None and r["StopPrice"] > 0
-            assert r["Quantity"] > 0
+        if r["symbol_id"] in planned_codes:
+            assert r["stop_price"] is not None and r["stop_price"] > 0
+            assert r["quantity"] > 0
 
 
 def test_no_decision_no_rows(conn):
     res = cycle.run(conn, market_data=_universe())     # account 없음 → 결정 없음
     rows = conn.execute(
-        'SELECT 1 FROM "Decisions" WHERE "CycleId"=%s', (res.cycle_id,)
+        'SELECT 1 FROM decisions WHERE cycle_id=%s', (res.cycle_id,)
     ).fetchall()
     assert rows == []
 
@@ -191,16 +191,16 @@ def test_record_decisions_maps_actions_and_skips_hold(conn):
     )
     assert len(ids) == 3                                       # hold 제외
     rows = {
-        r["SymbolId"]: r for r in conn.execute(
-            'SELECT "SymbolId", "Action", "Reason", "StopPrice", "RiskPerShare" '
-            'FROM "Decisions" WHERE "CycleId"=\'C1\''
+        r["symbol_id"]: r for r in conn.execute(
+            'SELECT symbol_id, action, reason, stop_price, risk_per_share '
+            'FROM decisions WHERE cycle_id=\'C1\''
         )
     }
-    assert rows["A"]["Action"] == "buy" and rows["A"]["StopPrice"] == 95.0
-    assert rows["A"]["RiskPerShare"] == 5.0                    # R = 100 − 95
+    assert rows["A"]["action"] == "buy" and rows["A"]["stop_price"] == 95.0
+    assert rows["A"]["risk_per_share"] == 5.0                    # R = 100 − 95
     # 부분 청산(exitPartial)은 규칙에서 뺐다 — trim도 전량 청산으로 기록된다
-    assert rows["B"]["Action"] == "exitAll" and rows["B"]["Reason"] == "thesisInvalid"
-    assert rows["D"]["Action"] == "exitAll"
+    assert rows["B"]["action"] == "exitAll" and rows["B"]["reason"] == "thesisInvalid"
+    assert rows["D"]["action"] == "exitAll"
     assert "C" not in rows                                     # hold 미적재
 
 
@@ -215,30 +215,30 @@ def test_account_snapshot_recorded(conn):
     acc = _rich_account()
     res = cycle.run(conn, market_data=_universe(), account=acc)
     row = conn.execute(
-        'SELECT * FROM "AccountSnapshots" WHERE "CycleId"=%s', (res.cycle_id,)
+        'SELECT * FROM account_snapshots WHERE cycle_id=%s', (res.cycle_id,)
     ).fetchone()
     assert row is not None
-    assert row["Amount"] == 8_000_000                 # 예수금
-    assert row["PositionValue"] == 2_000_000          # 보유 평가금액
-    assert row["TotalAsset"] == 10_000_000
-    assert row["BaseAsset"] == 10_000_000
-    assert abs(row["DayReturnPercent"]) < 1e-9        # 기준선과 같으면 0%
+    assert row["amount"] == 8_000_000                 # 예수금
+    assert row["position_value"] == 2_000_000          # 보유 평가금액
+    assert row["total_asset"] == 10_000_000
+    assert row["base_asset"] == 10_000_000
+    assert abs(row["day_return_percent"]) < 1e-9        # 기준선과 같으면 0%
 
 
 def test_account_snapshot_computes_day_return(conn):
     acc = Account(start_capital=10_000_000, cash=9_000_000)   # 당일 −10%
     res = cycle.run(conn, market_data=_universe(), account=acc)
     row = conn.execute(
-        'SELECT "DayReturnPercent" FROM "AccountSnapshots" WHERE "CycleId"=%s',
+        'SELECT day_return_percent FROM account_snapshots WHERE cycle_id=%s',
         (res.cycle_id,),
     ).fetchone()
-    assert abs(row["DayReturnPercent"] + 0.10) < 1e-9
+    assert abs(row["day_return_percent"] + 0.10) < 1e-9
 
 
 def test_no_snapshot_without_account(conn):
     res = cycle.run(conn, market_data=_universe())
     assert conn.execute(
-        'SELECT 1 FROM "AccountSnapshots" WHERE "CycleId"=%s', (res.cycle_id,)
+        'SELECT 1 FROM account_snapshots WHERE cycle_id=%s', (res.cycle_id,)
     ).fetchall() == []
 
 
@@ -246,27 +246,27 @@ def test_cycle_scores_recorded_for_watchlist(conn):
     acc = Account(start_capital=10_000_000, cash=10_000_000)
     res = cycle.run(conn, market_data=_universe(), account=acc)
     rows = {
-        r["SymbolId"]: r for r in conn.execute(
-            'SELECT * FROM "CycleScores" WHERE "CycleId"=%s', (res.cycle_id,)
+        r["symbol_id"]: r for r in conn.execute(
+            'SELECT * FROM cycle_scores WHERE cycle_id=%s', (res.cycle_id,)
         )
     }
     assert set(rows) == set(res.watchlist)
     up1 = rows["UP1"]
-    assert up1["Inclusion"] == "topRank"
-    assert up1["LastPrice"] > 0 and up1["Atr"] > 0
+    assert up1["inclusion"] == "topRank"
+    assert up1["last_price"] > 0 and up1["atr"] > 0
     # StopWidth = stop_atr_k × ATR (06-sizing 6.1)
-    assert abs(up1["StopWidth"] - 2.0 * up1["Atr"]) < 1e-6
-    assert up1["TotalScore"] is not None
+    assert abs(up1["stop_width"] - 2.0 * up1["atr"]) < 1e-6
+    assert up1["total_score"] is not None
 
 
 def test_cycle_scores_mark_holdings(conn):
     acc = _rich_account()
     res = cycle.run(conn, market_data=_universe(), account=acc, holdings=("FLAT",))
     row = conn.execute(
-        'SELECT "Inclusion" FROM "CycleScores" WHERE "CycleId"=%s AND "SymbolId"=\'FLAT\'',
+        'SELECT inclusion FROM cycle_scores WHERE cycle_id=%s AND symbol_id=\'FLAT\'',
         (res.cycle_id,),
     ).fetchone()
-    assert row["Inclusion"] == "holding"       # 보유는 점수와 무관하게 편입된다
+    assert row["inclusion"] == "holding"       # 보유는 점수와 무관하게 편입된다
 
 
 def test_cycle_scores_record_block_reason(conn):
@@ -277,31 +277,31 @@ def test_cycle_scores_record_block_reason(conn):
     res = cycle.run(conn, market_data=_universe(), account=acc,
                     holdings=("FLAT",), quotes=quotes)
     rows = {
-        r["SymbolId"]: r for r in conn.execute(
-            'SELECT * FROM "CycleScores" WHERE "CycleId"=%s', (res.cycle_id,)
+        r["symbol_id"]: r for r in conn.execute(
+            'SELECT * FROM cycle_scores WHERE cycle_id=%s', (res.cycle_id,)
         )
     }
-    assert rows["UP1"]["BlockReason"] == "halted" and rows["UP1"]["IsTradable"] is False
-    assert rows["UP2"]["BlockReason"] is None and rows["UP2"]["IsTradable"] is True
+    assert rows["UP1"]["block_reason"] == "halted" and rows["UP1"]["is_tradable"] is False
+    assert rows["UP2"]["block_reason"] is None and rows["UP2"]["is_tradable"] is True
     # 상태를 모르는 종목은 거래 가능으로 적지 않는다
-    assert rows["FLAT"]["IsTradable"] is None
+    assert rows["FLAT"]["is_tradable"] is None
 
 
 # ── 4단계 게이트 판정이 RiskChecks로 남는가 ──
 
 def _checks(conn, cycle_id) -> list[dict]:
     return conn.execute(
-        'SELECT * FROM "RiskChecks" WHERE "CycleId"=%s ORDER BY "CheckOrder"', (cycle_id,)
+        'SELECT * FROM risk_checks WHERE cycle_id=%s ORDER BY check_order', (cycle_id,)
     ).fetchall()
 
 
 def test_cycle_level_pass_recorded(conn):
     acc = Account(start_capital=10_000_000, cash=10_000_000)
     res = cycle.run(conn, market_data=_universe(), account=acc)
-    cycle_rows = [r for r in _checks(conn, res.cycle_id) if r["DecisionId"] is None]
+    cycle_rows = [r for r in _checks(conn, res.cycle_id) if r["decision_id"] is None]
     assert len(cycle_rows) == 1                       # 사이클 단위 판정은 한 줄
-    assert cycle_rows[0]["CheckName"] == "circuitBreaker"
-    assert cycle_rows[0]["Result"] == "pass"
+    assert cycle_rows[0]["check_name"] == "circuitBreaker"
+    assert cycle_rows[0]["result"] == "pass"
 
 
 def test_balance_mismatch_recorded_as_safe_stop(conn):
@@ -309,8 +309,8 @@ def test_balance_mismatch_recorded_as_safe_stop(conn):
     res = cycle.run(conn, market_data=_universe(), account=acc,
                     market_state=MarketState(balance_ok=False))
     row = _checks(conn, res.cycle_id)[0]
-    assert (row["CheckOrder"], row["CheckName"]) == (1, "balanceSync")
-    assert row["Result"] == "safeStop"
+    assert (row["check_order"], row["check_name"]) == (1, "balanceSync")
+    assert row["result"] == "safeStop"
 
 
 def test_stale_data_recorded_as_safe_stop(conn):
@@ -318,8 +318,8 @@ def test_stale_data_recorded_as_safe_stop(conn):
     res = cycle.run(conn, market_data=_universe(), account=acc,
                     market_state=MarketState(prices_ok=False))
     row = _checks(conn, res.cycle_id)[0]
-    assert (row["CheckOrder"], row["CheckName"]) == (3, "dataFreshness")
-    assert row["Result"] == "safeStop" and res.cycle_action == "halt"
+    assert (row["check_order"], row["check_name"]) == (3, "dataFreshness")
+    assert row["result"] == "safeStop" and res.cycle_action == "halt"
 
 
 def test_holiday_skips_cycle(conn):
@@ -328,11 +328,11 @@ def test_holiday_skips_cycle(conn):
                     market_state=MarketState(halted=True))
     assert res.cycle_action == "skip"
     row = _checks(conn, res.cycle_id)[0]
-    assert (row["CheckOrder"], row["CheckName"], row["Result"]) == (2, "marketHalt", "skipCycle")
+    assert (row["check_order"], row["check_name"], row["result"]) == (2, "marketHalt", "skipCycle")
     status = conn.execute(
-        'SELECT "Status", "SkipReason" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
+        'SELECT status, skip_reason FROM cycles WHERE cycle_id=%s', (res.cycle_id,)
     ).fetchone()
-    assert status["Status"] == "skipped" and status["SkipReason"]
+    assert status["status"] == "skipped" and status["skip_reason"]
 
 
 def test_symbol_state_gate_blocks_entry(conn):
@@ -345,12 +345,12 @@ def test_symbol_state_gate_blocks_entry(conn):
     assert "UP1" not in {o.code for o in res.planned_orders}   # VI 종목은 진입 제외
     assert "UP2" in {o.code for o in res.planned_orders}
     rows = {
-        r["DecisionId"]: r for r in _checks(conn, res.cycle_id)
-        if r["DecisionId"] is not None
+        r["decision_id"]: r for r in _checks(conn, res.cycle_id)
+        if r["decision_id"] is not None
     }
     blocked = rows[f"{res.cycle_id}_UP1_buy"]
-    assert blocked["Result"] == "reject" and "VI" in blocked["Reason"]
-    assert blocked["CheckOrder"] == 7
+    assert blocked["result"] == "reject" and "VI" in blocked["reason"]
+    assert blocked["check_order"] == 7
 
 
 def test_unknown_symbol_state_blocks_entry(conn):
@@ -383,11 +383,11 @@ def test_anomaly_records_safe_stop_event(conn):
     res = cycle.run(conn, market_data=_universe(), account=acc, params=p)
     assert res.safe_stop_id
     row = conn.execute(
-        'SELECT * FROM "SafeStopEvents" WHERE "EventId"=%s', (res.safe_stop_id,)
+        'SELECT * FROM safe_stop_events WHERE event_id=%s', (res.safe_stop_id,)
     ).fetchone()
-    assert row["ReleasedDateTime"] is None       # 발생 직후엔 미해제 = 지금 정지 중
-    assert row["Trigger"] == "auto" and row["CycleId"] == res.cycle_id
-    assert journal.active_safe_stop(conn)["EventId"] == res.safe_stop_id
+    assert row["released_date_time"] is None       # 발생 직후엔 미해제 = 지금 정지 중
+    assert row["trigger"] == "auto" and row["cycle_id"] == res.cycle_id
+    assert journal.active_safe_stop(conn)["event_id"] == res.safe_stop_id
 
 
 def test_open_safe_stop_blocks_next_cycle_entries(conn):
@@ -417,9 +417,9 @@ def test_safe_stop_cycle_sends_no_orders(conn):
     res = cycle.run(conn, market_data=_universe(), account=acc, params=p)
     assert res.order_ids == []
     status = conn.execute(
-        'SELECT "Status", "FailedStep" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
+        'SELECT status, failed_step FROM cycles WHERE cycle_id=%s', (res.cycle_id,)
     ).fetchone()
-    assert status["Status"] == "failed" and status["FailedStep"] == 4
+    assert status["status"] == "failed" and status["failed_step"] == 4
 
 
 # ── 유동성 한도 (06-sizing 6.1 — 백테스트 정본과 같은 제약) ──
@@ -430,17 +430,17 @@ def test_liquidity_cap_reduces_quantity(conn):
     acc = Account(start_capital=10_000_000, cash=10_000_000)
     res = cycle.run(conn, market_data=_universe(), account=acc, params=p)
     reduced = [
-        r for r in _checks(conn, res.cycle_id) if r["Result"] == "reduce"
+        r for r in _checks(conn, res.cycle_id) if r["result"] == "reduce"
     ]
-    assert reduced and "유동성 한도" in reduced[0]["Reason"]
-    assert reduced[0]["ActualValue"] > reduced[0]["LimitValue"]
+    assert reduced and "유동성 한도" in reduced[0]["reason"]
+    assert reduced[0]["actual_value"] > reduced[0]["limit_value"]
 
 
 def test_liquidity_cap_off_by_default_shape(conn):
     # 기본값(1%)에서는 이 테스트 데이터의 거래대금이 커서 축소가 걸리지 않는다
     acc = Account(start_capital=10_000_000, cash=10_000_000)
     res = cycle.run(conn, market_data=_universe(), account=acc, params=_entry_params())
-    assert [r for r in _checks(conn, res.cycle_id) if r["Result"] == "reduce"] == []
+    assert [r for r in _checks(conn, res.cycle_id) if r["result"] == "reduce"] == []
     assert res.planned_orders
 
 
@@ -472,25 +472,25 @@ def test_no_trade_recorded_with_reason(conn):
     res = cycle.run(conn, market_data=_flat_universe(), account=acc,
                     params=_entry_params())
     row = conn.execute(
-        'SELECT * FROM "Decisions" WHERE "CycleId"=%s AND "SymbolId"=\'TINY\'',
+        'SELECT * FROM decisions WHERE cycle_id=%s AND symbol_id=\'TINY\'',
         (res.cycle_id,),
     ).fetchone()
-    assert row["Action"] == "noTrade" and row["Reason"] == "costExceedsEdge"
-    assert row["NetEdge"] < 0                     # 음수면 무거래(07-model 7.2)
-    assert row["EstimatedCost"] > 0
+    assert row["action"] == "noTrade" and row["reason"] == "costExceedsEdge"
+    assert row["net_edge"] < 0                     # 음수면 무거래(07-model 7.2)
+    assert row["estimated_cost"] > 0
 
 
 def test_executed_entry_records_edge_columns(conn):
     acc = Account(start_capital=10_000_000, cash=10_000_000)
     res = cycle.run(conn, market_data=_universe(), account=acc, params=_entry_params())
     row = conn.execute(
-        'SELECT * FROM "Decisions" WHERE "CycleId"=%s AND "Action"=\'buy\' '
-        'AND "Quantity" IS NOT NULL LIMIT 1',
+        'SELECT * FROM decisions WHERE cycle_id=%s AND action=\'buy\' '
+        'AND quantity IS NOT NULL LIMIT 1',
         (res.cycle_id,),
     ).fetchone()
-    assert row["NetEdge"] > 0
-    assert row["EstimatedCost"] > 0
-    assert row["RewardRiskRatio"] > 0             # 비용 빼고 남는 R 배수
+    assert row["net_edge"] > 0
+    assert row["estimated_cost"] > 0
+    assert row["reward_risk_ratio"] > 0             # 비용 빼고 남는 R 배수
 
 
 def test_no_trade_gets_no_order(conn):
@@ -498,7 +498,7 @@ def test_no_trade_gets_no_order(conn):
     acc = Account(start_capital=100_000_000, cash=100_000_000)
     cycle.run(conn, market_data=_flat_universe(), account=acc, params=_entry_params())
     assert conn.execute(
-        'SELECT 1 FROM "Orders" WHERE "SymbolId"=\'TINY\''
+        'SELECT 1 FROM orders WHERE symbol_id=\'TINY\''
     ).fetchall() == []
 
 
@@ -525,9 +525,9 @@ def test_atr_ignores_todays_unconfirmed_bar(conn):
 
     def atr_of(res):
         return conn.execute(
-            'SELECT "Atr" FROM "CycleScores" WHERE "CycleId"=%s AND "SymbolId"=\'UP1\'',
+            'SELECT atr FROM cycle_scores WHERE cycle_id=%s AND symbol_id=\'UP1\'',
             (res.cycle_id,),
-        ).fetchone()["Atr"]
+        ).fetchone()["atr"]
 
     assert atr_of(clean) < atr_of(dirty)      # 당일 급등락 봉이 ATR을 부풀린다
 
@@ -547,11 +547,11 @@ def test_stop_uses_quote_price_and_prev_atr(conn):
     res = cycle.run(conn, market_data=_universe(), account=acc,
                     params=_entry_params(), quotes=_quotes(UP1=7500.0, UP2=4200.0))
     row = conn.execute(
-        'SELECT "Atr" FROM "CycleScores" WHERE "CycleId"=%s AND "SymbolId"=\'UP1\'',
+        'SELECT atr FROM cycle_scores WHERE cycle_id=%s AND symbol_id=\'UP1\'',
         (res.cycle_id,),
     ).fetchone()
     up1 = next(o for o in res.planned_orders if o.code == "UP1")
-    assert abs(up1.stop - (7500.0 - 2.0 * row["Atr"])) < 1e-6
+    assert abs(up1.stop - (7500.0 - 2.0 * row["atr"])) < 1e-6
 
 
 def test_quote_without_price_blocks_entry(conn):
@@ -568,10 +568,10 @@ def test_cycle_scores_last_price_is_quote(conn):
     res = cycle.run(conn, market_data=_universe(), account=acc,
                     quotes=_quotes(UP1=7500.0, UP2=4200.0))
     row = conn.execute(
-        'SELECT "LastPrice" FROM "CycleScores" WHERE "CycleId"=%s AND "SymbolId"=\'UP1\'',
+        'SELECT last_price FROM cycle_scores WHERE cycle_id=%s AND symbol_id=\'UP1\'',
         (res.cycle_id,),
     ).fetchone()
-    assert row["LastPrice"] == 7500.0
+    assert row["last_price"] == 7500.0
 
 
 def test_trade_date_separate_from_asof(conn):
@@ -581,6 +581,6 @@ def test_trade_date_separate_from_asof(conn):
     res = cycle.run(conn, market_data=md, account=acc, asof=asof,
                     trade_date=date(2026, 8, 28))
     row = conn.execute(
-        'SELECT "TradeDate" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
+        'SELECT trade_date FROM cycles WHERE cycle_id=%s', (res.cycle_id,)
     ).fetchone()
-    assert row["TradeDate"] == date(2026, 8, 28)   # 지표 기준일이 아니라 사이클 날짜
+    assert row["trade_date"] == date(2026, 8, 28)   # 지표 기준일이 아니라 사이클 날짜

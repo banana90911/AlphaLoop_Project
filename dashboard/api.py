@@ -111,47 +111,47 @@ def health() -> dict:
 def get_account(conn: DbConn) -> dict:
     """총자본·예수금·당일 손익률과 보유 종목(평가 기준 시각 포함)을 반환한다."""
     snap = conn.execute(
-        'SELECT * FROM "AccountSnapshots" ORDER BY "RecordedDateTime" DESC LIMIT 1'
+        'SELECT * FROM account_snapshots ORDER BY recorded_date_time DESC LIMIT 1'
     ).fetchone()
     rows = conn.execute(
-        'SELECT p."PositionId", p."SymbolId", s."Name", p."Quantity", p."AveragePrice", '
-        'p."CurrentStopPrice", p."InitialStopPrice", p."EntryDate", p."Status", '
-        '  (SELECT c."LastPrice" FROM "CycleScores" c '
-        '   WHERE c."SymbolId" = p."SymbolId" AND c."LastPrice" IS NOT NULL '
-        '   ORDER BY c."ScoredDateTime" DESC LIMIT 1) AS "LastPrice", '
-        '  (SELECT c."ScoredDateTime" FROM "CycleScores" c '
-        '   WHERE c."SymbolId" = p."SymbolId" AND c."LastPrice" IS NOT NULL '
-        '   ORDER BY c."ScoredDateTime" DESC LIMIT 1) AS "PricedAt" '
-        'FROM "Positions" p LEFT JOIN "Symbols" s ON s."SymbolId" = p."SymbolId" '
-        "WHERE p.\"Status\" = 'open' ORDER BY p.\"EntryDate\"",
+        'SELECT p.position_id, p.symbol_id, s.name, p.quantity, p.average_price, '
+        'p.current_stop_price, p.initial_stop_price, p.entry_date, p.status, '
+        '  (SELECT c.last_price FROM cycle_scores c '
+        '   WHERE c.symbol_id = p.symbol_id AND c.last_price IS NOT NULL '
+        '   ORDER BY c.scored_date_time DESC LIMIT 1) AS last_price, '
+        '  (SELECT c.scored_date_time FROM cycle_scores c '
+        '   WHERE c.symbol_id = p.symbol_id AND c.last_price IS NOT NULL '
+        '   ORDER BY c.scored_date_time DESC LIMIT 1) AS priced_at '
+        'FROM positions p LEFT JOIN symbols s ON s.symbol_id = p.symbol_id '
+        "WHERE p.status = 'open' ORDER BY p.entry_date",
     ).fetchall()
     today = kst_today()
     holdings = []
     for r in rows:
-        last, avg = r["LastPrice"], r["AveragePrice"]
+        last, avg = r["last_price"], r["average_price"]
         holdings.append({
-            **{k: r[k] for k in ("PositionId", "SymbolId", "Name", "Quantity",
-                                 "AveragePrice", "CurrentStopPrice", "InitialStopPrice",
-                                 "EntryDate", "LastPrice", "PricedAt")},
-            "ProfitLoss": (last - avg) * r["Quantity"] if last is not None else None,
-            "ReturnPercent": (last / avg - 1) if last is not None and avg else None,
+            **{k: r[k] for k in ("position_id", "symbol_id", "name", "quantity",
+                                 "average_price", "current_stop_price", "initial_stop_price",
+                                 "entry_date", "last_price", "priced_at")},
+            "profit_loss": (last - avg) * r["quantity"] if last is not None else None,
+            "return_percent": (last / avg - 1) if last is not None and avg else None,
             # 보유일수는 거래일로 센다 — 청산 규칙과 같은 단위여야 화면과 규칙이 어긋나지 않는다
-            "HoldingDays": (
-                trading_days_between(r["EntryDate"], today) if r["EntryDate"] else None
+            "holding_days": (
+                trading_days_between(r["entry_date"], today) if r["entry_date"] else None
             ),
         })
     return {
         "snapshot": dict(snap) if snap else None,
         "holdings": holdings,
         # 개시 이후 누적 순입금. `TotalAsset − 이 값 = 누적 순손익`으로 검산된다(07-model)
-        "cumulativeNetFlow": float(snap["CumulativeNetFlow"]) if snap else 0.0,
+        "cumulative_net_flow": float(snap["cumulative_net_flow"]) if snap else 0.0,
         # TWR 지수를 수익률로 환산 — 이체가 섞여도 안 흔들리는 유일한 비율 지표(09-eval)
-        "twrReturn": (
-            float(snap["TwrIndex"]) - 1.0
-            if snap and snap["TwrIndex"] is not None else None
+        "twr_return": (
+            float(snap["twr_index"]) - 1.0
+            if snap and snap["twr_index"] is not None else None
         ),
         # 이체 전에 폰에서 이 숫자를 보는 게 미수를 막는 실질적 유일한 수단(08-dashboard 8.4)
-        "safeWithdrawable": _safe_withdrawable(conn, snap),
+        "safe_withdrawable": _safe_withdrawable(conn, snap),
     }
 
 
@@ -164,11 +164,11 @@ def _safe_withdrawable(conn, snap) -> float | None:
     if snap is None:
         return None
     row = conn.execute(
-        'SELECT COALESCE(SUM(("OrderQuantity" - "FilledQuantity") * "OrderPrice"), 0) AS v '
-        'FROM "Orders" WHERE "Side" = \'buy\' AND "OrderPrice" IS NOT NULL '
-        "AND \"Status\" IN ('submitted','partial')"
+        'SELECT COALESCE(SUM((order_quantity - filled_quantity) * order_price), 0) AS v '
+        'FROM orders WHERE side = \'buy\' AND order_price IS NOT NULL '
+        "AND status IN ('submitted','partial')"
     ).fetchone()
-    return max(0.0, float(snap["Amount"]) - float(row["v"] or 0))
+    return max(0.0, float(snap["amount"]) - float(row["v"] or 0))
 
 
 # ── ② 수익 그래프 ────────────────────────────────────────────────
@@ -209,44 +209,44 @@ def get_equity_curve(conn: DbConn, start: date | None = None,
 def _realized_points(conn, start: date | None, end: date | None) -> list[dict]:
     """청산일 순 누적 실현손익(원). 이체가 절대 섞이지 않는 축이다."""
     sql = (
-        'SELECT o."OutcomeId", o."SymbolId", s."Name", o."ExitDate", o."NetProfitLoss", '
-        'o."RMultiple", o."ExitReason", o."ReturnPercent" '
-        'FROM "Outcomes" o LEFT JOIN "Symbols" s ON s."SymbolId" = o."SymbolId" WHERE 1=1'
+        'SELECT o.outcome_id, o.symbol_id, s.name, o.exit_date, o.net_profit_loss, '
+        'o.r_multiple, o.exit_reason, o.return_percent '
+        'FROM outcomes o LEFT JOIN symbols s ON s.symbol_id = o.symbol_id WHERE 1=1'
     )
     params: list[Any] = []
     if start:
-        sql += ' AND o."ExitDate" >= %s'
+        sql += ' AND o.exit_date >= %s'
         params.append(start)
     if end:
-        sql += ' AND o."ExitDate" <= %s'
+        sql += ' AND o.exit_date <= %s'
         params.append(end)
-    rows = conn.execute(sql + ' ORDER BY o."ExitDate", o."ClosedDateTime"', params).fetchall()
+    rows = conn.execute(sql + ' ORDER BY o.exit_date, o.closed_date_time', params).fetchall()
 
     cum, points = 0.0, []
     for r in rows:
-        cum += float(r["NetProfitLoss"] or 0)
-        points.append({**dict(r), "Cumulative": cum})
+        cum += float(r["net_profit_loss"] or 0)
+        points.append({**dict(r), "cumulative": cum})
     return points
 
 
 def _snapshot_points(conn, start: date | None, end: date | None, axis: str) -> list[dict]:
     """스냅샷 시계열에서 총자산 또는 TWR 지수를 뽑는다."""
     sql = (
-        'SELECT "TradeDate", "TotalAsset", "CumulativeNetFlow", "TwrIndex", '
-        '"DayReturnPercent", "RecordedDateTime" FROM "AccountSnapshots" WHERE 1=1'
+        'SELECT trade_date, total_asset, cumulative_net_flow, twr_index, '
+        'day_return_percent, recorded_date_time FROM account_snapshots WHERE 1=1'
     )
     params: list[Any] = []
     if start:
-        sql += ' AND "TradeDate" >= %s'
+        sql += ' AND trade_date >= %s'
         params.append(start)
     if end:
-        sql += ' AND "TradeDate" <= %s'
+        sql += ' AND trade_date <= %s'
         params.append(end)
     params.append(BENCH_LIMIT)
-    rows = conn.execute(sql + ' ORDER BY "RecordedDateTime" LIMIT %s', params).fetchall()
-    key = "TotalAsset" if axis == "totalAsset" else "TwrIndex"
+    rows = conn.execute(sql + ' ORDER BY recorded_date_time LIMIT %s', params).fetchall()
+    key = "total_asset" if axis == "totalAsset" else "twr_index"
     return [
-        {**dict(r), "Cumulative": float(r[key]) if r[key] is not None else None}
+        {**dict(r), "cumulative": float(r[key]) if r[key] is not None else None}
         for r in rows
     ]
 
@@ -255,56 +255,56 @@ def _flow_markers(conn, start: date | None, end: date | None) -> list[dict]:
     """곡선 위에 찍을 입출금 시점. 매수·매도 점과 구분되게 화면에서 회색 삼각형으로 그린다."""
     marks = ", ".join(["%s"] * len(journal.EXTERNAL_KINDS))
     sql = (
-        f'SELECT "FlowId", "TradeDate", "Kind", "Amount", "Status", "Source", '
-        f'"ExpectedCash", "ActualCash", "DetectedDateTime" FROM "CashFlows" '
-        f'WHERE "Kind" IN ({marks})'
+        f'SELECT flow_id, trade_date, kind, amount, status, source, '
+        f'expected_cash, actual_cash, detected_date_time FROM cash_flows '
+        f'WHERE kind IN ({marks})'
     )
     params: list[Any] = list(journal.EXTERNAL_KINDS)
     if start:
-        sql += ' AND "TradeDate" >= %s'
+        sql += ' AND trade_date >= %s'
         params.append(start)
     if end:
-        sql += ' AND "TradeDate" <= %s'
+        sql += ' AND trade_date <= %s'
         params.append(end)
     params.append(MAX_LIMIT)
-    rows = conn.execute(sql + ' ORDER BY "DetectedDateTime" LIMIT %s', params).fetchall()
+    rows = conn.execute(sql + ' ORDER BY detected_date_time LIMIT %s', params).fetchall()
     return [
-        {**dict(r), "Direction": "deposit" if float(r["Amount"]) >= 0 else "withdrawal"}
+        {**dict(r), "direction": "deposit" if float(r["amount"]) >= 0 else "withdrawal"}
         for r in rows
     ]
 
 
 def _benchmarks(conn, start: date | None, end: date | None) -> list[dict]:
     """코스피·코스닥 지수 시계열을 반환한다(기간으로 좁힘)."""
-    sql = 'SELECT "IndexCode", "TradeDate", "Close" FROM "MarketIndices" WHERE 1=1'
+    sql = 'SELECT index_code, trade_date, close FROM market_indices WHERE 1=1'
     params: list[Any] = []
     if start:
-        sql += ' AND "TradeDate" >= %s'
+        sql += ' AND trade_date >= %s'
         params.append(start)
     if end:
-        sql += ' AND "TradeDate" <= %s'
+        sql += ' AND trade_date <= %s'
         params.append(end)
     params.append(BENCH_LIMIT)
-    rows = conn.execute(sql + ' ORDER BY "TradeDate" LIMIT %s', params).fetchall()
+    rows = conn.execute(sql + ' ORDER BY trade_date LIMIT %s', params).fetchall()
     return [dict(r) for r in rows]
 
 
 def _fill_markers(conn, start: date | None, end: date | None) -> list[dict]:
     """체결된 진입·청산 시점(매수 초록·매도 빨강으로 찍을 점)을 반환한다."""
     sql = (
-        'SELECT "ClientOrderId", "SymbolId", "Side", "Purpose", "FilledQuantity", '
-        '"AverageFillPrice", "FilledDateTime" FROM "Orders" '
-        "WHERE \"FilledQuantity\" > 0 AND \"Purpose\" IN ('entry','exit')"
+        'SELECT client_order_id, symbol_id, side, purpose, filled_quantity, '
+        'average_fill_price, filled_date_time FROM orders '
+        "WHERE filled_quantity > 0 AND purpose IN ('entry','exit')"
     )
     params: list[Any] = []
     if start:
-        sql += ' AND "FilledDateTime" >= %s'
+        sql += ' AND filled_date_time >= %s'
         params.append(kst_day_bounds(start)[0])
     if end:
-        sql += ' AND "FilledDateTime" < %s'
+        sql += ' AND filled_date_time < %s'
         params.append(kst_day_bounds(end)[1])
     params.append(MAX_LIMIT)
-    rows = conn.execute(sql + ' ORDER BY "FilledDateTime" LIMIT %s', params).fetchall()
+    rows = conn.execute(sql + ' ORDER BY filled_date_time LIMIT %s', params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -319,35 +319,35 @@ def get_watchlist_benchmark(conn: DbConn, start: date | None = None,
     top_n = int(load_params("risk_params").get("screener", {}).get("top_n", 40))
     sql = (
         'WITH picks AS ('
-        '  SELECT "TradeDate", "SymbolId" FROM "DailyScores" '
-        '  WHERE "PassedFilter" AND "Rank" IS NOT NULL AND "Rank" <= %s'
+        '  SELECT trade_date, symbol_id FROM daily_scores '
+        '  WHERE passed_filter AND rank IS NOT NULL AND rank <= %s'
         ')'
-        ' SELECT p."TradeDate", '
-        '        avg(nb."Close" / b."Close" - 1.0) AS "DayReturn", '
-        '        count(*) AS "Names" '
+        ' SELECT p.trade_date, '
+        '        avg(nb.close / b.close - 1.0) AS day_return, '
+        '        count(*) AS names '
         ' FROM picks p '
-        ' JOIN "DailyBars" b ON b."SymbolId" = p."SymbolId" AND b."TradeDate" = p."TradeDate" '
+        ' JOIN daily_bars b ON b.symbol_id = p.symbol_id AND b.trade_date = p.trade_date '
         ' JOIN LATERAL ('
-        '   SELECT "Close" FROM "DailyBars" x '
-        '   WHERE x."SymbolId" = p."SymbolId" AND x."TradeDate" > p."TradeDate" '
-        '   ORDER BY x."TradeDate" LIMIT 1'
+        '   SELECT close FROM daily_bars x '
+        '   WHERE x.symbol_id = p.symbol_id AND x.trade_date > p.trade_date '
+        '   ORDER BY x.trade_date LIMIT 1'
         ' ) nb ON true '
-        ' WHERE b."Close" > 0'
+        ' WHERE b.close > 0'
     )
     params: list[Any] = [top_n]
     if start:
-        sql += ' AND p."TradeDate" >= %s'
+        sql += ' AND p.trade_date >= %s'
         params.append(start)
     if end:
-        sql += ' AND p."TradeDate" <= %s'
+        sql += ' AND p.trade_date <= %s'
         params.append(end)
-    rows = conn.execute(sql + ' GROUP BY p."TradeDate" ORDER BY p."TradeDate"', params).fetchall()
+    rows = conn.execute(sql + ' GROUP BY p.trade_date ORDER BY p.trade_date', params).fetchall()
 
     cum, series = 1.0, []
     for r in rows:
-        cum *= 1.0 + float(r["DayReturn"] or 0.0)
-        series.append({"TradeDate": r["TradeDate"], "Names": r["Names"],
-                       "Cumulative": cum - 1.0})
+        cum *= 1.0 + float(r["day_return"] or 0.0)
+        series.append({"trade_date": r["trade_date"], "names": r["names"],
+                       "cumulative": cum - 1.0})
     return {"top_n": top_n, "series": series}
 
 
@@ -363,32 +363,32 @@ def get_trades(conn: DbConn, start: date | None = None, end: date | None = None,
     설명하기 위해서다 — 매매와 이체가 따로 놀면 그 인과를 사람이 못 잇는다.
     """
     capped = max(1, min(limit, MAX_LIMIT))
-    # 목록이 요구하는 열 중 둘은 "Orders"에 없다(08-dashboard 8.4 ③) —
-    #   손절가: 그 주문을 낳은 결정의 "StopPrice"
+    # 목록이 요구하는 열 중 둘은 "orders"에 없다(08-dashboard 8.4 ③) —
+    #   손절가: 그 주문을 낳은 결정의 "stop_price"
     #   상태(보유/청산): 그 진입이 만든 포지션이 아직 열려 있는지
     # 화면에서 종목코드로 짐작하면 같은 종목을 재진입했을 때 옛 매수가 "보유"로 보인다.
     sql = (
-        'SELECT o.*, s."Name", d."StopPrice", p."Status" AS "PositionStatus" '
-        'FROM "Orders" o '
-        'LEFT JOIN "Symbols" s ON s."SymbolId" = o."SymbolId" '
-        'LEFT JOIN "Decisions" d ON d."DecisionId" = o."DecisionId" '
-        'LEFT JOIN "Positions" p ON p."EntryDecisionId" = o."DecisionId" WHERE 1=1'
+        'SELECT o.*, s.name, d.stop_price, p.status AS position_status '
+        'FROM orders o '
+        'LEFT JOIN symbols s ON s.symbol_id = o.symbol_id '
+        'LEFT JOIN decisions d ON d.decision_id = o.decision_id '
+        'LEFT JOIN positions p ON p.entry_decision_id = o.decision_id WHERE 1=1'
     )
     params: list[Any] = []
     # OrderedDateTime은 timestamptz(UTC)다. KST 날짜를 UTC 구간으로 바꿔 거른다
     if start:
-        sql += ' AND o."OrderedDateTime" >= %s'
+        sql += ' AND o.ordered_date_time >= %s'
         params.append(kst_day_bounds(start)[0])
     if end:
-        sql += ' AND o."OrderedDateTime" < %s'
+        sql += ' AND o.ordered_date_time < %s'
         params.append(kst_day_bounds(end)[1])
     if side in ("buy", "sell"):
-        sql += ' AND o."Side" = %s'
+        sql += ' AND o.side = %s'
         params.append(side)
     if not include_stops:
         # 손절 예약(stop)은 걸어둔 것이지 오간 거래가 아니다 — 기본은 뺀다
-        sql += " AND o.\"Purpose\" <> 'stop'"
-    sql += ' ORDER BY o."OrderedDateTime" DESC LIMIT %s'
+        sql += " AND o.purpose <> 'stop'"
+    sql += ' ORDER BY o.ordered_date_time DESC LIMIT %s'
     params.append(capped)
 
     orders = [] if side == "flow" else [
@@ -410,19 +410,19 @@ def get_cash_flows(conn: DbConn, start: date | None = None, end: date | None = N
     라벨을 붙이는 것은 쓰기라서 여기 없다. `python -m ops.cashflow`가 그 일을 한다
     (08-dashboard 8.1 읽기 전용 경계).
     """
-    sql = 'SELECT * FROM "CashFlows" WHERE 1=1'
+    sql = 'SELECT * FROM cash_flows WHERE 1=1'
     params: list[Any] = []
     if start:
-        sql += ' AND "TradeDate" >= %s'
+        sql += ' AND trade_date >= %s'
         params.append(start)
     if end:
-        sql += ' AND "TradeDate" <= %s'
+        sql += ' AND trade_date <= %s'
         params.append(end)
     if status_filter:
-        sql += ' AND "Status" = %s'
+        sql += ' AND status = %s'
         params.append(status_filter)
     params.append(max(1, min(limit, MAX_LIMIT)))
-    rows = conn.execute(sql + ' ORDER BY "DetectedDateTime" DESC LIMIT %s', params).fetchall()
+    rows = conn.execute(sql + ' ORDER BY detected_date_time DESC LIMIT %s', params).fetchall()
     return {"flows": [dict(r) for r in rows]}
 
 
@@ -430,27 +430,27 @@ def get_cash_flows(conn: DbConn, start: date | None = None, end: date | None = N
 def get_trade_detail(client_order_id: str, conn: DbConn) -> dict:
     """한 거래의 진입 근거·게이트 결과·청산 결과를 모아 반환한다."""
     order = conn.execute(
-        'SELECT * FROM "Orders" WHERE "ClientOrderId" = %s', (client_order_id,)
+        'SELECT * FROM orders WHERE client_order_id = %s', (client_order_id,)
     ).fetchone()
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "주문을 찾을 수 없습니다")
-    did, cid, sym = order["DecisionId"], order["CycleId"], order["SymbolId"]
+    did, cid, sym = order["decision_id"], order["cycle_id"], order["symbol_id"]
     decision = conn.execute(
-        'SELECT * FROM "Decisions" WHERE "DecisionId" = %s', (did,)
+        'SELECT * FROM decisions WHERE decision_id = %s', (did,)
     ).fetchone() if did else None
     scores = conn.execute(
-        'SELECT * FROM "CycleScores" WHERE "CycleId" = %s AND "SymbolId" = %s',
+        'SELECT * FROM cycle_scores WHERE cycle_id = %s AND symbol_id = %s',
         (cid, sym),
     ).fetchone() if cid else None
-    # 게이트 판정은 결정 단위(DecisionId)와 사이클 단위(NULL) 둘 다 보여준다
+    # 게이트 판정은 결정 단위(decision_id)와 사이클 단위(NULL) 둘 다 보여준다
     checks = conn.execute(
-        'SELECT * FROM "RiskChecks" WHERE "CycleId" = %s '
-        '  AND ("DecisionId" = %s OR "DecisionId" IS NULL) ORDER BY "CheckOrder"',
+        'SELECT * FROM risk_checks WHERE cycle_id = %s '
+        '  AND (decision_id = %s OR decision_id IS NULL) ORDER BY check_order',
         (cid, did),
     ).fetchall() if cid else []
     outcome = conn.execute(
-        'SELECT * FROM "Outcomes" WHERE "EntryDecisionId" = %s '
-        'OR "ExitDecisionId" = %s ORDER BY "ClosedDateTime" DESC LIMIT 1', (did, did)
+        'SELECT * FROM outcomes WHERE entry_decision_id = %s '
+        'OR exit_decision_id = %s ORDER BY closed_date_time DESC LIMIT 1', (did, did)
     ).fetchone() if did else None
     return {
         "order": dict(order),
@@ -470,26 +470,26 @@ def get_alerts(conn: DbConn) -> dict:
     안 붙었다는 안내일 뿐이다. 여기 뜨는 진짜 차단은 미수·대형 유출 SafeStop 둘뿐이다.
     """
     safe_stops = conn.execute(
-        'SELECT * FROM "SafeStopEvents" ORDER BY "OccurredDateTime" DESC LIMIT 50'
+        'SELECT * FROM safe_stop_events ORDER BY occurred_date_time DESC LIMIT 50'
     ).fetchall()
     cycles = conn.execute(
-        'SELECT "CycleId", "TradeDate", "Status", "FailedStep", "SkipReason", '
-        '"StartedDateTime" FROM "Cycles" '
-        "WHERE \"Status\" IN ('failed','skipped') "
-        'ORDER BY "StartedDateTime" DESC LIMIT 50'
+        'SELECT cycle_id, trade_date, status, failed_step, skip_reason, '
+        'started_date_time FROM cycles '
+        "WHERE status IN ('failed','skipped') "
+        'ORDER BY started_date_time DESC LIMIT 50'
     ).fetchall()
     ingests = conn.execute(
-        'SELECT * FROM "IngestRuns" WHERE "Status" <> \'ok\' '
-        'ORDER BY "StartedDateTime" DESC LIMIT 50'
+        'SELECT * FROM ingest_runs WHERE status <> \'ok\' '
+        'ORDER BY started_date_time DESC LIMIT 50'
     ).fetchall()
     unlabeled = conn.execute(
-        'SELECT * FROM "CashFlows" WHERE "Status" = \'unconfirmed\' '
-        'ORDER BY "DetectedDateTime" DESC LIMIT 50'
+        'SELECT * FROM cash_flows WHERE status = \'unconfirmed\' '
+        'ORDER BY detected_date_time DESC LIMIT 50'
     ).fetchall()
     return {
         "safe_stops": [dict(r) for r in safe_stops],
         # 비어 있는 ReleasedDateTime이 곧 "지금 정지 중"이다(08-dashboard 8.4 ④)
-        "active_stop": any(r["ReleasedDateTime"] is None for r in safe_stops),
+        "active_stop": any(r["released_date_time"] is None for r in safe_stops),
         "failed_cycles": [dict(r) for r in cycles],
         "failed_ingests": [dict(r) for r in ingests],
         # 대시보드는 읽기 전용이라 라벨을 못 붙인다 — 붙이는 방법만 알려준다

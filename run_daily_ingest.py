@@ -65,7 +65,7 @@ def ingest_symbols(conn) -> StepResult:
     try:
         df = universe.fetch_universe(common_only=True)
     except Exception as e:
-        return StepResult("Symbols", "kis_mst", "failed",
+        return StepResult("symbols", "kis_mst", "failed",
                           error_message=f"{type(e).__name__}: {e}")
     rows = [
         {"code": r.code, "name": r.name, "market": r.market,
@@ -73,7 +73,7 @@ def ingest_symbols(conn) -> StepResult:
         for r in df.itertuples()
     ]
     n = journal.upsert_symbols(conn, rows)
-    return StepResult("Symbols", "kis_mst", "ok", len(rows), len(rows), n)
+    return StepResult("symbols", "kis_mst", "ok", len(rows), len(rows), n)
 
 
 # ── ② 일봉·수급 ──────────────────────────────────────────────────
@@ -114,9 +114,9 @@ def ingest_bars_and_flows(
 
     msg = "; ".join(errors[:20]) or None
     return (
-        StepResult("DailyBars", "kis_daily_chart", status(bar_ok),
+        StepResult("daily_bars", "kis_daily_chart", status(bar_ok),
                    len(targets), bar_ok, bar_rows, msg),
-        StepResult("DailyFlows", "kis_investor", status(flow_ok),
+        StepResult("daily_flows", "kis_investor", status(flow_ok),
                    len(targets), flow_ok, flow_rows, msg),
     )
 
@@ -166,7 +166,7 @@ def ingest_indices(conn, *, start: date, end: date) -> StepResult:
         written += journal.upsert_market_index(conn, market, rows)
         ok += 1
     status = "ok" if ok == 2 else ("partial" if ok else "failed")
-    return StepResult("MarketIndices", "yfinance", status, 2, ok, written,
+    return StepResult("market_indices", "yfinance", status, 2, ok, written,
                       "; ".join(errors) or None)
 
 
@@ -177,12 +177,12 @@ def compute_daily_scores(conn, *, trade_date: date) -> StepResult:
         conn, start=trade_date - timedelta(days=SCORE_LOOKBACK_DAYS), end=trade_date
     )
     if not hist:
-        return StepResult("DailyScores", "journal", "failed",
+        return StepResult("daily_scores", "journal", "failed",
                           error_message="DailyBars가 비어 있다 — 먼저 --backfill")
 
     panel = build_panel(hist, asof=trade_date)
     if panel.empty:
-        return StepResult("DailyScores", "journal", "failed", len(hist), 0, 0,
+        return StepResult("daily_scores", "journal", "failed", len(hist), 0, 0,
                           "패널이 비었다(전 종목 워밍업 미완 의심)")
 
     passed = eligible(panel)
@@ -219,7 +219,7 @@ def compute_daily_scores(conn, *, trade_date: date) -> StepResult:
                     else int(ranks[code]),
         })
     n = journal.upsert_daily_scores(conn, trade_date, rows)
-    return StepResult("DailyScores", "journal", "ok", len(panel), len(passed), n)
+    return StepResult("daily_scores", "journal", "ok", len(panel), len(passed), n)
 
 
 def _pct(pool: pd.DataFrame, col: str, higher_better: bool) -> pd.Series:
@@ -329,9 +329,9 @@ def main() -> None:
 def _already_done(conn, trade_date: date) -> set[str]:
     """그날 일봉이 이미 들어간 종목코드 집합을 반환한다."""
     rows = conn.execute(
-        'SELECT "SymbolId" FROM "DailyBars" WHERE "TradeDate"=%s', (trade_date,)
+        'SELECT symbol_id FROM daily_bars WHERE trade_date=%s', (trade_date,)
     ).fetchall()
-    return {r["SymbolId"] for r in rows}
+    return {r["symbol_id"] for r in rows}
 
 
 if __name__ == "__main__":

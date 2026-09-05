@@ -156,13 +156,13 @@ def execute_exits(
     prices_now = last_prices or {}
     day = trade_date or kst_today()
     rows = conn.execute(
-        'SELECT * FROM "Positions" WHERE "Status" = \'open\''
+        'SELECT * FROM positions WHERE status = \'open\''
     ).fetchall()
     order_ids: list[str] = []
     for r in rows:
-        if r["Quantity"] <= 0:
+        if r["quantity"] <= 0:
             continue
-        code = r["SymbolId"]
+        code = r["symbol_id"]
         df = market_data.get(code)
         if df is None or df.empty:
             continue
@@ -175,12 +175,12 @@ def execute_exits(
         if pd.isna(price) or pd.isna(atr):
             continue
         pos = Position(
-            entry_price=r["AveragePrice"],
-            initial_stop=r["InitialStopPrice"]
-            if r["InitialStopPrice"] is not None else r["CurrentStopPrice"],
-            current_stop=r["CurrentStopPrice"],
-            days_held=_days_held(r["EntryDate"], day),
-            breakeven_done=bool(r["IsBreakevenDone"]),
+            entry_price=r["average_price"],
+            initial_stop=r["initial_stop_price"]
+            if r["initial_stop_price"] is not None else r["current_stop_price"],
+            current_stop=r["current_stop_price"],
+            days_held=_days_held(r["entry_date"], day),
+            breakeven_done=bool(r["is_breakeven_done"]),
             thesis_valid=code not in sells,
         )
         act = decide_exit(pos, float(price), float(atr), params=p)
@@ -189,13 +189,13 @@ def execute_exits(
         if act.action == "raise_stop":
             # 본전 상향이면 완료 표시까지 남긴다 — 안 남기면 다음 사이클에 ③이 또 걸린다.
             journal.update_stop(
-                conn, r["PositionId"], act.new_stop,
+                conn, r["position_id"], act.new_stop,
                 breakeven_done=True if act.reason == "breakeven" else None,
             )
             continue
         sell_qty = (
-            r["Quantity"] if act.action == "exit_full"
-            else min(r["Quantity"], max(1, int(r["Quantity"] * act.fraction)))
+            r["quantity"] if act.action == "exit_full"
+            else min(r["quantity"], max(1, int(r["quantity"] * act.fraction)))
         )
         order_ids.append(
             _settle_exit(conn, broker, r, sell_qty, float(price), act,
@@ -210,7 +210,7 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,
 
     `trade_date`는 청산이 일어난 날 — 거래세율·보유일수 산정의 기준이다.
     """
-    code = r["SymbolId"]
+    code = r["symbol_id"]
     coid = f"{cycle_id}-{code}-exit-0"
     fill = broker.place_exit(
         code=code, qty=sell_qty, ord_dvsn=EXIT_ORD_DVSN[order_mode], client_order_id=coid,
@@ -218,7 +218,7 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,
     filled = fill.filled_qty
     exit_price = fill.fill_price if fill.fill_price is not None else price
     journal.record_order(
-        conn, client_order_id=coid, cycle_id=cycle_id, decision_id=r["EntryDecisionId"],
+        conn, client_order_id=coid, cycle_id=cycle_id, decision_id=r["entry_decision_id"],
         symbol_id=code, side="sell", purpose="exit", order_type=EXIT_ORD_DVSN[order_mode],
         order_quantity=sell_qty, filled_quantity=filled, order_price=0.0,
         average_fill_price=fill.fill_price, kis_order_no=fill.broker_order_id,
@@ -227,22 +227,22 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,
     )
     if filled <= 0:                                   # 미체결 → 포지션 유지(에스컬레이션은 후속)
         return coid
-    entry = float(r["AveragePrice"])
-    mkt = r["Market"] or "KOSPI"                       # 종목→시장 매핑 부재 시 기본(TODO)
+    entry = float(r["average_price"])
+    mkt = r["market"] or "KOSPI"                       # 종목→시장 매핑 부재 시 기본(TODO)
     end = trade_date or kst_today()
-    entry_date = _as_date(r["EntryDate"], end)
+    entry_date = _as_date(r["entry_date"], end)
     buy_cost = costs.trade_cost(entry, filled, "buy", mkt, entry_date, params=tax_params)
     sell_cost = costs.trade_cost(exit_price, filled, "sell", mkt, end, params=tax_params)
     gross = (exit_price - entry) * filled
     net = gross - buy_cost["total"] - sell_cost["total"]
-    risk = r["InitialStopPrice"]
+    risk = r["initial_stop_price"]
     r_per_share = entry - float(risk) if risk is not None else None
     journal.record_outcome(
-        conn, outcome_id=f"{coid}-out", position_id=r["PositionId"],
-        entry_decision_id=r["EntryDecisionId"], symbol_id=code, entry_price=entry,
+        conn, outcome_id=f"{coid}-out", position_id=r["position_id"],
+        entry_decision_id=r["entry_decision_id"], symbol_id=code, entry_price=entry,
         exit_price=exit_price, quantity=filled,
         entry_date=entry_date, exit_date=end,
-        holding_days=_days_held(r["EntryDate"], end),
+        holding_days=_days_held(r["entry_date"], end),
         gross_profit_loss=gross, net_profit_loss=net,
         fee=buy_cost["commission"] + sell_cost["commission"], tax=sell_cost["tax"],
         return_percent=net / (entry * filled) if entry * filled else 0.0,
@@ -250,11 +250,11 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,
         exit_kind="full" if act.action == "exit_full" else "partial",
         exit_reason=EXIT_REASONS[act.reason], mode=mode,
     )
-    if act.action == "exit_full" or filled >= r["Quantity"]:
-        journal.close_position(conn, r["PositionId"])
+    if act.action == "exit_full" or filled >= r["quantity"]:
+        journal.close_position(conn, r["position_id"])
     else:
         journal.reduce_position(
-            conn, r["PositionId"], sell_quantity=filled, new_stop=act.new_stop,
+            conn, r["position_id"], sell_quantity=filled, new_stop=act.new_stop,
         )
     return coid
 

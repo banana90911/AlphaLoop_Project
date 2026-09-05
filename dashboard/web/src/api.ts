@@ -39,41 +39,41 @@ const qs = (params: Record<string, string | number | boolean | undefined>) => {
 
 // ── ① 나의 정보 ────────────────────────────────────────────────
 export type Snapshot = {
-  SnapshotId: string
-  CycleId: string
-  TradeDate: string
-  Amount: number            // 예수금
-  PositionValue: number
-  TotalAsset: number
-  BaseAsset: number | null
-  CumulativeNetFlow: number
-  TwrIndex: number | null
-  DayReturnPercent: number | null
-  RecordedDateTime: string
+  snapshot_id: string
+  cycle_id: string
+  trade_date: string
+  amount: number            // 예수금
+  position_value: number
+  total_asset: number
+  base_asset: number | null
+  cumulative_net_flow: number
+  twr_index: number | null
+  day_return_percent: number | null
+  recorded_date_time: string
 }
 
 export type Holding = {
-  PositionId: string
-  SymbolId: string
-  Name: string | null
-  Quantity: number
-  AveragePrice: number
-  CurrentStopPrice: number | null
-  InitialStopPrice: number | null
-  EntryDate: string | null
-  LastPrice: number | null
-  PricedAt: string | null
-  ProfitLoss: number | null
-  ReturnPercent: number | null
-  HoldingDays: number | null
+  position_id: string
+  symbol_id: string
+  name: string | null
+  quantity: number
+  average_price: number
+  current_stop_price: number | null
+  initial_stop_price: number | null
+  entry_date: string | null
+  last_price: number | null
+  priced_at: string | null
+  profit_loss: number | null
+  return_percent: number | null
+  holding_days: number | null
 }
 
 export type AccountResponse = {
   snapshot: Snapshot | null
   holdings: Holding[]
-  cumulativeNetFlow: number
-  twrReturn: number | null
-  safeWithdrawable: number | null
+  cumulative_net_flow: number
+  twr_return: number | null
+  safe_withdrawable: number | null
 }
 
 export const getAccount = () => request<AccountResponse>('/api/account')
@@ -82,48 +82,48 @@ export const getAccount = () => request<AccountResponse>('/api/account')
 export type Axis = 'realized' | 'totalAsset' | 'twr'
 
 export type CurvePoint = {
-  Cumulative: number | null
+  cumulative: number | null
   // realized 축
-  OutcomeId?: string
-  SymbolId?: string
-  Name?: string | null
-  ExitDate?: string
-  NetProfitLoss?: number
-  RMultiple?: number | null
-  ExitReason?: string | null
-  ReturnPercent?: number | null
+  outcome_id?: string
+  symbol_id?: string
+  name?: string | null
+  exit_date?: string
+  net_profit_loss?: number
+  r_multiple?: number | null
+  exit_reason?: string | null
+  return_percent?: number | null
   // totalAsset·twr 축
-  TradeDate?: string
-  TotalAsset?: number
-  TwrIndex?: number | null
-  DayReturnPercent?: number | null
-  RecordedDateTime?: string
+  trade_date?: string
+  total_asset?: number
+  twr_index?: number | null
+  day_return_percent?: number | null
+  recorded_date_time?: string
 }
 
 export type FillMarker = {
-  ClientOrderId: string
-  SymbolId: string
-  Side: 'buy' | 'sell'
-  Purpose: string
-  FilledQuantity: number
-  AverageFillPrice: number | null
-  FilledDateTime: string
+  client_order_id: string
+  symbol_id: string
+  side: 'buy' | 'sell'
+  purpose: string
+  filled_quantity: number
+  average_fill_price: number | null
+  filled_date_time: string
 }
 
 export type FlowMarker = {
-  FlowId: string
-  TradeDate: string
-  Kind: string
-  Amount: number
-  Status: string
-  Source: string
-  ExpectedCash: number
-  ActualCash: number
-  DetectedDateTime: string
-  Direction: 'deposit' | 'withdrawal'
+  flow_id: string
+  trade_date: string
+  kind: string
+  amount: number
+  status: string
+  source: string
+  expected_cash: number
+  actual_cash: number
+  detected_date_time: string
+  direction: 'deposit' | 'withdrawal'
 }
 
-export type Benchmark = { IndexCode: 'KOSPI' | 'KOSDAQ'; TradeDate: string; Close: number }
+export type Benchmark = { index_code: 'KOSPI' | 'KOSDAQ'; trade_date: string; close: number }
 
 export type EquityCurveResponse = {
   axis: Axis
@@ -138,7 +138,7 @@ export const getEquityCurve = (p: { axis: Axis; start?: string; end?: string }) 
 
 export type WatchlistBenchmark = {
   top_n: number
-  series: { TradeDate: string; Names: number; Cumulative: number }[]
+  series: { trade_date: string; names: number; cumulative: number }[]
 }
 
 export const getWatchlistBenchmark = (p: { start?: string; end?: string }) =>
@@ -146,46 +146,46 @@ export const getWatchlistBenchmark = (p: { start?: string; end?: string }) =>
 
 // ── ③ 거래 리포트 ──────────────────────────────────────────────
 export type Order = {
-  ClientOrderId: string
-  CycleId: string | null
-  DecisionId: string | null
-  KisOrderNo: string | null
-  SymbolId: string
-  Name: string | null
-  Side: 'buy' | 'sell'
-  Purpose: 'entry' | 'stop' | 'stopAmend' | 'exit'
-  OrderType: string
-  OrderQuantity: number
-  OrderPrice: number | null
-  TriggerPrice: number | null
-  FilledQuantity: number
-  AverageFillPrice: number | null
-  Fee: number | null
-  Tax: number | null
-  Status: 'submitted' | 'partial' | 'filled' | 'cancelled' | 'rejected'
-  OrderedDateTime: string
-  FilledDateTime: string | null
-  Mode: string
+  client_order_id: string
+  cycle_id: string | null
+  decision_id: string | null
+  kis_order_no: string | null
+  symbol_id: string
+  name: string | null
+  side: 'buy' | 'sell'
+  purpose: 'entry' | 'stop' | 'stopAmend' | 'exit'
+  order_type: string
+  order_quantity: number
+  order_price: number | null
+  trigger_price: number | null
+  filled_quantity: number
+  average_fill_price: number | null
+  fee: number | null
+  tax: number | null
+  status: 'submitted' | 'partial' | 'filled' | 'cancelled' | 'rejected'
+  ordered_date_time: string
+  filled_date_time: string | null
+  mode: string
   // 아래 둘은 "Orders"에 없고 조회가 조인해 붙여 준다(손절가·보유 여부)
-  StopPrice: number | null
-  PositionStatus: 'open' | 'closed' | 'frozen' | null
+  stop_price: number | null
+  position_status: 'open' | 'closed' | 'frozen' | null
 }
 
 export type CashFlow = {
-  FlowId: string
-  DetectedCycleId: string | null
-  TradeDate: string
-  Kind: string
-  Amount: number
-  Status: 'unconfirmed' | 'confirmed' | 'reclassified'
-  Source: string
-  ExpectedCash: number
-  ActualCash: number
-  Note: string | null
-  DetectedDateTime: string
-  ConfirmedDateTime: string | null
-  ConfirmedBy: string | null
-  Mode: string
+  flow_id: string
+  detected_cycle_id: string | null
+  trade_date: string
+  kind: string
+  amount: number
+  status: 'unconfirmed' | 'confirmed' | 'reclassified'
+  source: string
+  expected_cash: number
+  actual_cash: number
+  note: string | null
+  detected_date_time: string
+  confirmed_date_time: string | null
+  confirmed_by: string | null
+  mode: string
 }
 
 export type TradesResponse = { orders: Order[]; flows: CashFlow[] }
@@ -198,66 +198,66 @@ export const getTrades = (p: {
 }) => request<TradesResponse>('/api/trades' + qs(p))
 
 export type Decision = {
-  DecisionId: string
-  Action: string
-  Reason: string
-  Score: number | null
-  Threshold: number | null
-  EntryPrice: number | null
-  StopPrice: number | null
-  RiskPerShare: number | null
-  TargetPositions: number | null
-  Quantity: number | null
-  RewardRiskRatio: number | null
-  EstimatedCost: number | null
-  NetEdge: number | null
-  Regime: string | null
-  DecidedDateTime: string
+  decision_id: string
+  action: string
+  reason: string
+  score: number | null
+  threshold: number | null
+  entry_price: number | null
+  stop_price: number | null
+  risk_per_share: number | null
+  target_positions: number | null
+  quantity: number | null
+  reward_risk_ratio: number | null
+  estimated_cost: number | null
+  net_edge: number | null
+  regime: string | null
+  decided_date_time: string
 }
 
 export type CycleScore = {
-  Inclusion: string
-  BaseScore: number | null
-  FlowPercentileLive: number | null
-  TotalScore: number | null
-  LastPrice: number | null
-  Atr: number | null
-  StopWidth: number | null
-  IsTradable: boolean | null
-  BlockReason: string | null
-  ScoredDateTime: string
+  inclusion: string
+  base_score: number | null
+  flow_percentile_live: number | null
+  total_score: number | null
+  last_price: number | null
+  atr: number | null
+  stop_width: number | null
+  is_tradable: boolean | null
+  block_reason: string | null
+  scored_date_time: string
 }
 
 export type RiskCheck = {
-  CheckId: string
-  CheckOrder: number
-  CheckName: string
-  Result: 'pass' | 'reject' | 'reduce' | 'skipCycle' | 'safeStop' | 'flowDetected'
-  Reason: string | null
-  LimitValue: number | null
-  ActualValue: number | null
-  CheckedDateTime: string
+  check_id: string
+  check_order: number
+  check_name: string
+  result: 'pass' | 'reject' | 'reduce' | 'skipCycle' | 'safeStop' | 'flowDetected'
+  reason: string | null
+  limit_value: number | null
+  actual_value: number | null
+  checked_date_time: string
 }
 
 export type Outcome = {
-  OutcomeId: string
-  SymbolId: string
-  EntryPrice: number | null
-  ExitPrice: number | null
-  Quantity: number | null
-  EntryDate: string | null
-  ExitDate: string | null
-  HoldingDays: number | null
-  GrossProfitLoss: number | null
-  Fee: number | null
-  Tax: number | null
-  NetProfitLoss: number | null
-  ReturnPercent: number | null
-  RMultiple: number | null
-  ExitReason: string | null
-  EntryScore: number | null
-  EntryRegime: string | null
-  ClosedDateTime: string
+  outcome_id: string
+  symbol_id: string
+  entry_price: number | null
+  exit_price: number | null
+  quantity: number | null
+  entry_date: string | null
+  exit_date: string | null
+  holding_days: number | null
+  gross_profit_loss: number | null
+  fee: number | null
+  tax: number | null
+  net_profit_loss: number | null
+  return_percent: number | null
+  r_multiple: number | null
+  exit_reason: string | null
+  entry_score: number | null
+  entry_regime: string | null
+  closed_date_time: string
 }
 
 export type TradeDetail = {
@@ -273,36 +273,36 @@ export const getTradeDetail = (clientOrderId: string) =>
 
 // ── ④ 오류·정지 ────────────────────────────────────────────────
 export type SafeStopEvent = {
-  EventId: string
-  CycleId: string | null
-  OccurredDateTime: string
-  Cause: string
-  Trigger: 'auto' | 'manual'
-  ReleasedDateTime: string | null
-  ReleasedBy: string | null
-  ReleaseReason: string | null
+  event_id: string
+  cycle_id: string | null
+  occurred_date_time: string
+  cause: string
+  trigger: 'auto' | 'manual'
+  released_date_time: string | null
+  released_by: string | null
+  release_reason: string | null
 }
 
 export type FailedCycle = {
-  CycleId: string
-  TradeDate: string
-  Status: 'failed' | 'skipped'
-  FailedStep: number | null
-  SkipReason: string | null
-  StartedDateTime: string
+  cycle_id: string
+  trade_date: string
+  status: 'failed' | 'skipped'
+  failed_step: number | null
+  skip_reason: string | null
+  started_date_time: string
 }
 
 export type IngestRun = {
-  RunId: string
-  TargetTable: string
-  Source: string
-  Status: 'ok' | 'partial' | 'failed'
-  TargetCount: number | null
-  SuccessCount: number | null
-  RowsWritten: number | null
-  ErrorMessage: string | null
-  StartedDateTime: string
-  FinishedDateTime: string | null
+  run_id: string
+  target_table: string
+  source: string
+  status: 'ok' | 'partial' | 'failed'
+  target_count: number | null
+  success_count: number | null
+  rows_written: number | null
+  error_message: string | null
+  started_date_time: string
+  finished_date_time: string | null
 }
 
 export type AlertsResponse = {

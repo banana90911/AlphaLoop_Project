@@ -52,29 +52,29 @@ def test_entry_fill_records_order_and_position(conn):
     )
     assert order_ids == ["CY1-005930-buy-0", "CY1-005930-stop-0"]   # 진입 + 손절 스톱
     t = conn.execute(
-        'SELECT * FROM "Orders" WHERE "ClientOrderId"=\'CY1-005930-buy-0\''
+        'SELECT * FROM orders WHERE client_order_id=\'CY1-005930-buy-0\''
     ).fetchone()
-    assert t["Status"] == "filled" and t["FilledQuantity"] == 3
-    assert t["OrderType"] == "00"                      # paper = IOC 미지원 보정
-    assert t["Purpose"] == "entry" and t["Mode"] == "paper"
+    assert t["status"] == "filled" and t["filled_quantity"] == 3
+    assert t["order_type"] == "00"                      # paper = IOC 미지원 보정
+    assert t["purpose"] == "entry" and t["mode"] == "paper"
     p = conn.execute(
-        'SELECT "PositionId", "Quantity", "AveragePrice", "CurrentStopPrice", "Market", '
-        '"InitialStopPrice", "RiskPerShare", "ActiveStopOrderId" '
-        'FROM "Positions" WHERE "SymbolId"=\'005930\''
+        'SELECT position_id, quantity, average_price, current_stop_price, market, '
+        'initial_stop_price, risk_per_share, active_stop_order_id '
+        'FROM positions WHERE symbol_id=\'005930\''
     ).fetchone()
-    assert p["Quantity"] == 3 and p["AveragePrice"] == 70000.0
-    assert p["CurrentStopPrice"] == 65000.0
-    assert p["Market"] == "KOSPI" and p["InitialStopPrice"] == 65000.0   # 시장 매핑·R고정
-    assert p["RiskPerShare"] == 5000.0                                   # R = 70000 − 65000
-    assert p["ActiveStopOrderId"] == "CY1-005930-stop-0"                 # 상주 스톱 연결
+    assert p["quantity"] == 3 and p["average_price"] == 70000.0
+    assert p["current_stop_price"] == 65000.0
+    assert p["market"] == "KOSPI" and p["initial_stop_price"] == 65000.0   # 시장 매핑·R고정
+    assert p["risk_per_share"] == 5000.0                                   # R = 70000 − 65000
+    assert p["active_stop_order_id"] == "CY1-005930-stop-0"                 # 상주 스톱 연결
     # 손절 스톱(22)이 체결 수량만큼 등록됨(맨몸 포지션 방지 10-ops 10.3)
     s = conn.execute(
-        'SELECT * FROM "Orders" WHERE "ClientOrderId"=\'CY1-005930-stop-0\''
+        'SELECT * FROM orders WHERE client_order_id=\'CY1-005930-stop-0\''
     ).fetchone()
-    assert s["Side"] == "sell" and s["OrderType"] == "22" and s["OrderQuantity"] == 3
-    assert s["Purpose"] == "stop"
-    assert s["TriggerPrice"] == 65000.0 and s["FilledQuantity"] == 0
-    assert s["Status"] == "submitted"
+    assert s["side"] == "sell" and s["order_type"] == "22" and s["order_quantity"] == 3
+    assert s["purpose"] == "stop"
+    assert s["trigger_price"] == 65000.0 and s["filled_quantity"] == 0
+    assert s["status"] == "submitted"
     assert fb.stops[0]["trigger"] == 65000 and fb.stops[0]["qty"] == 3
 
 
@@ -93,12 +93,12 @@ def test_no_fill_no_position(conn):
     fb = FakeBroker({"A": Fill(0, None, "rejected")})
     execute_entries(conn, [PlannedOrder("A", 2, 100.0, 90.0)], broker=fb, cycle_id="CY1")
     t = conn.execute(
-        'SELECT "Status", "FilledQuantity", "FilledDateTime" FROM "Orders"'
+        'SELECT status, filled_quantity, filled_date_time FROM orders'
     ).fetchone()
-    assert t["Status"] == "rejected" and t["FilledQuantity"] == 0
-    assert t["FilledDateTime"] is None
-    assert _count(conn, '"Positions"') == 0
-    assert _count(conn, '"Orders"') == 1                # 미체결 → 스톱 없음
+    assert t["status"] == "rejected" and t["filled_quantity"] == 0
+    assert t["filled_date_time"] is None
+    assert _count(conn, 'positions') == 0
+    assert _count(conn, 'orders') == 1                # 미체결 → 스톱 없음
     assert fb.stops == []
 
 
@@ -107,17 +107,17 @@ def test_partial_fill(conn):
     fb = FakeBroker({"A": Fill(1, 100.0, "partial")})
     execute_entries(conn, [PlannedOrder("A", 3, 100.0, 90.0)], broker=fb, cycle_id="CY1")
     t = conn.execute(
-        'SELECT "Status", "OrderQuantity", "FilledQuantity" FROM "Orders" '
-        'WHERE "Side"=\'buy\''
+        'SELECT status, order_quantity, filled_quantity FROM orders '
+        'WHERE side=\'buy\''
     ).fetchone()
-    assert t["Status"] == "partial" and t["OrderQuantity"] == 3 and t["FilledQuantity"] == 1
+    assert t["status"] == "partial" and t["order_quantity"] == 3 and t["filled_quantity"] == 1
     assert conn.execute(
-        'SELECT "Quantity" FROM "Positions" WHERE "SymbolId"=\'A\''
-    ).fetchone()["Quantity"] == 1
+        'SELECT quantity FROM positions WHERE symbol_id=\'A\''
+    ).fetchone()["quantity"] == 1
     # 스톱은 체결 수량(1)만큼만 등록
     assert conn.execute(
-        'SELECT "OrderQuantity" FROM "Orders" WHERE "Purpose"=\'stop\''
-    ).fetchone()["OrderQuantity"] == 1
+        'SELECT order_quantity FROM orders WHERE purpose=\'stop\''
+    ).fetchone()["order_quantity"] == 1
 
 
 def test_fill_without_price_falls_back_to_order_price(conn):
@@ -131,21 +131,21 @@ def test_fill_without_price_falls_back_to_order_price(conn):
     fb = FakeBroker({"A": Fill(2, None, "filled")})       # 체결 2주, 체결가 없음
     execute_entries(conn, [PlannedOrder("A", 2, 100.0, 90.0)], broker=fb, cycle_id="CY1")
     p = conn.execute(
-        'SELECT "Quantity", "AveragePrice", "CurrentStopPrice" FROM "Positions" '
-        'WHERE "SymbolId"=\'A\''
+        'SELECT quantity, average_price, current_stop_price FROM positions '
+        'WHERE symbol_id=\'A\''
     ).fetchone()
-    assert p is not None and p["Quantity"] == 2           # 포지션이 누락되지 않음
-    assert p["AveragePrice"] == 100.0                     # 주문가로 폴백
-    assert p["CurrentStopPrice"] == 90.0
+    assert p is not None and p["quantity"] == 2           # 포지션이 누락되지 않음
+    assert p["average_price"] == 100.0                     # 주문가로 폴백
+    assert p["current_stop_price"] == 90.0
     # Orders엔 broker 원값(None) 보존
     t = conn.execute(
-        'SELECT "AverageFillPrice", "FilledQuantity" FROM "Orders" WHERE "Side"=\'buy\''
+        'SELECT average_fill_price, filled_quantity FROM orders WHERE side=\'buy\''
     ).fetchone()
-    assert t["AverageFillPrice"] is None and t["FilledQuantity"] == 2
+    assert t["average_fill_price"] is None and t["filled_quantity"] == 2
     # 손절 스톱(22)도 체결 수량만큼 등록됨
     assert conn.execute(
-        'SELECT "OrderQuantity" FROM "Orders" WHERE "Purpose"=\'stop\''
-    ).fetchone()["OrderQuantity"] == 2
+        'SELECT order_quantity FROM orders WHERE purpose=\'stop\''
+    ).fetchone()["order_quantity"] == 2
     assert fb.stops and fb.stops[0]["qty"] == 2
 
 
@@ -161,9 +161,9 @@ def test_add_position_weighted_avg(conn):
         broker=FakeBroker({"A": Fill(2, 200.0, "filled")}), cycle_id="CY2",
     )
     p = conn.execute(
-        'SELECT "Quantity", "AveragePrice" FROM "Positions" WHERE "SymbolId"=\'A\''
+        'SELECT quantity, average_price FROM positions WHERE symbol_id=\'A\''
     ).fetchone()
-    assert p["Quantity"] == 4 and p["AveragePrice"] == 150.0   # (2·100+2·200)/4
-    assert _count(conn, '"Positions"') == 1
-    assert _count(conn, '"Orders"', 'WHERE "Side"=\'buy\'') == 2
-    assert _count(conn, '"Orders"', 'WHERE "Purpose"=\'stop\'') == 2
+    assert p["quantity"] == 4 and p["average_price"] == 150.0   # (2·100+2·200)/4
+    assert _count(conn, 'positions') == 1
+    assert _count(conn, 'orders', 'WHERE side=\'buy\'') == 2
+    assert _count(conn, 'orders', 'WHERE purpose=\'stop\'') == 2

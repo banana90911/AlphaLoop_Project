@@ -426,7 +426,7 @@ def run(
         held_stop = journal.active_safe_stop(conn)
         if held_stop is not None and verdict.action == "proceed":
             verdict.action, verdict.result = "new_blocked", "reject"
-            verdict.reason = f"미해제 SafeStop({held_stop['Cause']})"
+            verdict.reason = f"미해제 SafeStop({held_stop['cause']})"
             verdict.check = "circuitBreaker"
 
         cycle_action, blocked_reason = verdict.action, verdict.reason

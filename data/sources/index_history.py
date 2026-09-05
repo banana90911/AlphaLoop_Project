@@ -13,8 +13,8 @@ import yfinance as yf
 
 # 시장 → yfinance 심볼
 _SYMBOLS = {"KOSPI": "^KS11", "KOSDAQ": "^KQ11"}
-_COLS = {"Open": "open", "High": "high", "Low": "low", "Close": "close",
-         "Volume": "volume"}
+_COLS = {"open": "open", "high": "high", "low": "low", "close": "close",
+         "volume": "volume"}
 
 
 class IndexHistoryError(RuntimeError):

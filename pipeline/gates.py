@@ -102,10 +102,10 @@ def reconcile_balance(conn, kis_holdings: dict[str, int]) -> tuple[bool, str]:
     보유와 실제 보유가 다르면 손절 수량·청산 판단이 전부 틀리기 때문이다.
     """
     rows = conn.execute(
-        'SELECT "SymbolId", "Quantity" FROM "Positions" '
-        "WHERE \"Status\" = 'open' AND \"Quantity\" > 0"
+        'SELECT symbol_id, quantity FROM positions '
+        "WHERE status = 'open' AND quantity > 0"
     ).fetchall()
-    book = {r["SymbolId"]: int(r["Quantity"]) for r in rows}
+    book = {r["symbol_id"]: int(r["quantity"]) for r in rows}
     live = {c: int(q) for c, q in kis_holdings.items() if q > 0}
     if book == live:
         return True, ""

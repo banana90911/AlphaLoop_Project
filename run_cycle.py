@@ -113,8 +113,8 @@ def main() -> None:
     )
 
     status = conn.execute(
-        'SELECT "Status" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
-    ).fetchone()["Status"]
+        'SELECT status FROM cycles WHERE cycle_id=%s', (res.cycle_id,)
+    ).fetchone()["status"]
     print(f"\n사이클 {res.cycle_id} → {status} ({res.cycle_action}"
           f"{': ' + res.blocked_reason if res.blocked_reason else ''})")
 

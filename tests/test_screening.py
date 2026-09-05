@@ -53,7 +53,7 @@ def test_empty_prices_returns_empty():
 def test_cycle_step1_runs_with_market_data(conn):
     res = cycle.run(conn, market_data=_universe())
     status = conn.execute(
-        'SELECT "Status" FROM "Cycles" WHERE "CycleId"=%s', (res.cycle_id,)
-    ).fetchone()["Status"]
+        'SELECT status FROM cycles WHERE cycle_id=%s', (res.cycle_id,)
+    ).fetchone()["status"]
     assert status == "recorded"
     assert set(res.watchlist)                      # 워치리스트 채워짐

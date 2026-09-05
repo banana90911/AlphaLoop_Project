@@ -35,11 +35,11 @@ export function AccountPanel({
 
   // 총자본 − 누적 순입금 = 누적 손익. 두 숫자가 서로를 검산한다(8.4 ①)
   const cumulativeProfit =
-    snap && data ? Number(snap.TotalAsset) - Number(data.cumulativeNetFlow) : null
-  const evaluated = data?.holdings.reduce((s, h) => s + (h.ProfitLoss ?? 0), 0) ?? null
+    snap && data ? Number(snap.total_asset) - Number(data.cumulative_net_flow) : null
+  const evaluated = data?.holdings.reduce((s, h) => s + (h.profit_loss ?? 0), 0) ?? null
   // 평가 기준 시각 = 마지막 사이클이 가격을 본 시점. 가장 낡은 것을 대표로 쓴다
   const pricedAt = data?.holdings
-    .map((h) => h.PricedAt)
+    .map((h) => h.priced_at)
     .filter((v): v is string => !!v)
     .sort()[0]
 
@@ -53,7 +53,7 @@ export function AccountPanel({
       right={
         snap && (
           <span className="font-mono text-[11px] text-ink-400">
-            {fmtDate(snap.TradeDate)} 기준
+            {fmtDate(snap.trade_date)} 기준
           </span>
         )
       }
@@ -77,17 +77,17 @@ export function AccountPanel({
             <Stat
               label="총자본"
               size="lg"
-              value={`${fmtWon(snap.TotalAsset)}원`}
-              hint={`예수금 ${fmtWonShort(snap.Amount)} · 평가금액 ${fmtWonShort(snap.PositionValue)}`}
+              value={`${fmtWon(snap.total_asset)}원`}
+              hint={`예수금 ${fmtWonShort(snap.amount)} · 평가금액 ${fmtWonShort(snap.position_value)}`}
             />
             <Stat
               label="당일 손익률"
               size="lg"
-              value={fmtPercent(snap.DayReturnPercent)}
-              tone={signColor(snap.DayReturnPercent)}
+              value={fmtPercent(snap.day_return_percent)}
+              tone={signColor(snap.day_return_percent)}
               hint={
-                snap.BaseAsset
-                  ? `직전 거래일 ${fmtWonShort(snap.BaseAsset)} 대비`
+                snap.base_asset
+                  ? `직전 거래일 ${fmtWonShort(snap.base_asset)} 대비`
                   : '기준선 없음'
               }
             />
@@ -101,19 +101,19 @@ export function AccountPanel({
             <Stat
               label="누적 손익 (TWR)"
               size="lg"
-              value={fmtPercent(data?.twrReturn)}
-              tone={signColor(data?.twrReturn)}
+              value={fmtPercent(data?.twr_return)}
+              tone={signColor(data?.twr_return)}
               hint="이체 효과를 뺀 시간가중수익률"
             />
 
             <Stat
               label="안전 출금 가능액"
-              value={`${fmtWon(data?.safeWithdrawable)}원`}
+              value={`${fmtWon(data?.safe_withdrawable)}원`}
               hint="예수금 − 미체결 매수"
             />
             <Stat
               label="누적 순입금"
-              value={`${fmtWonSigned(data?.cumulativeNetFlow)}원`}
+              value={`${fmtWonSigned(data?.cumulative_net_flow)}원`}
             />
             <Stat
               label="누적 손익"
@@ -123,7 +123,7 @@ export function AccountPanel({
             <Stat
               label="보유 종목"
               value={`${holdings.length}`}
-              hint={`평가금액 ${fmtWonShort(snap.PositionValue)}`}
+              hint={`평가금액 ${fmtWonShort(snap.position_value)}`}
             />
           </div>
 
@@ -132,7 +132,7 @@ export function AccountPanel({
           ) : (
             <ul className="divide-y divide-ink-800">
               {shown.map((h) => (
-                <HoldingRow key={h.PositionId} h={h} />
+                <HoldingRow key={h.position_id} h={h} />
               ))}
             </ul>
           )}
@@ -155,43 +155,43 @@ export function AccountPanel({
 }
 
 function HoldingRow({ h }: { h: Holding }) {
-  const ret = h.ReturnPercent
+  const ret = h.return_percent
   // 손절가까지 남은 거리 — 지금 손절이 걸리면 얼마를 잃는지가 이 한 줄에 있다
   const toStop =
-    h.LastPrice && h.CurrentStopPrice ? h.CurrentStopPrice / h.LastPrice - 1 : null
+    h.last_price && h.current_stop_price ? h.current_stop_price / h.last_price - 1 : null
 
   return (
     <li className="flex items-center gap-4 px-5 py-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="truncate text-sm font-medium">{h.Name ?? h.SymbolId}</span>
-          <span className="font-mono text-[11px] text-ink-400">{h.SymbolId}</span>
+          <span className="truncate text-sm font-medium">{h.name ?? h.symbol_id}</span>
+          <span className="font-mono text-[11px] text-ink-400">{h.symbol_id}</span>
         </div>
         <div className="mt-0.5 flex flex-wrap gap-x-3 font-mono text-[11px] text-ink-400">
-          <span>평단 {fmtWon(h.AveragePrice)}</span>
-          <span>{h.Quantity}주</span>
-          <span>{h.HoldingDays ?? '—'}일</span>
+          <span>평단 {fmtWon(h.average_price)}</span>
+          <span>{h.quantity}주</span>
+          <span>{h.holding_days ?? '—'}일</span>
           <span>
-            손절 {fmtWon(h.CurrentStopPrice)}
+            손절 {fmtWon(h.current_stop_price)}
             {toStop !== null && (
               <span className="text-ink-700"> ({fmtPercent(toStop, 1)})</span>
             )}
           </span>
-          {h.EntryDate && <span className="text-ink-700">{fmtDate(h.EntryDate)} 진입</span>}
+          {h.entry_date && <span className="text-ink-700">{fmtDate(h.entry_date)} 진입</span>}
         </div>
       </div>
       <div className="text-right">
         <div className={`font-mono text-sm font-semibold ${signColor(ret)}`}>
           {fmtPercent(ret)}
         </div>
-        <div className={`font-mono text-[11px] ${signColor(h.ProfitLoss)}`}>
-          {fmtWonSigned(h.ProfitLoss)}
+        <div className={`font-mono text-[11px] ${signColor(h.profit_loss)}`}>
+          {fmtWonSigned(h.profit_loss)}
         </div>
       </div>
       <div className="hidden w-24 text-right sm:block">
-        <div className="font-mono text-sm">{fmtWon(h.LastPrice)}</div>
+        <div className="font-mono text-sm">{fmtWon(h.last_price)}</div>
         <div className="text-[11px] text-ink-400">
-          {h.LastPrice ? '현재가' : <Badge tone="warn">가격 없음</Badge>}
+          {h.last_price ? '현재가' : <Badge tone="warn">가격 없음</Badge>}
         </div>
       </div>
     </li>

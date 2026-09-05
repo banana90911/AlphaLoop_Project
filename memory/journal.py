@@ -36,7 +36,7 @@ def create_cycle(
 ) -> None:
     """`intent` 상태로 사이클 1행 생성(모든 산출물의 부모 키)."""
     conn.execute(
-        'INSERT INTO "Cycles"("CycleId", "TradeDate", "Status", "Mode", "StartedDateTime") '
+        'INSERT INTO cycles(cycle_id, trade_date, status, mode, started_date_time) '
         "VALUES(%s, %s, %s, %s, %s)",
         (cycle_id, trade_date or kst_today(), "intent", mode, now_utc()),
     )
@@ -56,14 +56,14 @@ def advance_status(
         raise ValueError(f"unknown cycle status: {status}")
     if status in ("recorded", "failed", "skipped"):
         conn.execute(
-            'UPDATE "Cycles" SET "Status"=%s, "FinishedDateTime"=%s, '
-            '"FailedStep"=COALESCE(%s, "FailedStep"), "SkipReason"=COALESCE(%s, "SkipReason") '
-            'WHERE "CycleId"=%s',
+            'UPDATE cycles SET status=%s, finished_date_time=%s, '
+            'failed_step=COALESCE(%s, failed_step), skip_reason=COALESCE(%s, skip_reason) '
+            'WHERE cycle_id=%s',
             (status, now_utc(), failed_step, skip_reason, cycle_id),
         )
     else:
         conn.execute(
-            'UPDATE "Cycles" SET "Status"=%s WHERE "CycleId"=%s', (status, cycle_id)
+            'UPDATE cycles SET status=%s WHERE cycle_id=%s', (status, cycle_id)
         )
     conn.commit()
 
@@ -71,7 +71,7 @@ def advance_status(
 def last_account_snapshot(conn: psycopg.Connection) -> dict[str, Any] | None:
     """가장 최근 계좌 스냅샷 1행(없으면 None). 기준선·누적값을 이어받는 출발점."""
     row = conn.execute(
-        'SELECT * FROM "AccountSnapshots" ORDER BY "RecordedDateTime" DESC LIMIT 1'
+        'SELECT * FROM account_snapshots ORDER BY recorded_date_time DESC LIMIT 1'
     ).fetchone()
     return dict(row) if row else None
 
@@ -100,17 +100,17 @@ def record_account_snapshot(
     prev = last_account_snapshot(conn)
 
     if base_asset is None:
-        base_asset = float(prev["TotalAsset"]) if prev else total_asset
+        base_asset = float(prev["total_asset"]) if prev else total_asset
     adjusted = base_asset + net_flow_since_base
     day_return = total_asset / adjusted - 1.0 if adjusted else None
 
-    prev_cum = float(prev["CumulativeNetFlow"]) if prev else 0.0
+    prev_cum = float(prev["cumulative_net_flow"]) if prev else 0.0
     cumulative = prev_cum + flow_this_snapshot
 
     # TWR 구간수익률 — 기초자산에 이번 구간의 흐름을 얹은 값이 분모다.
     # 흐름을 빼지 않으면 입금이 그대로 "수익"으로 잡힌다(09-eval).
-    prev_index = float(prev["TwrIndex"]) if prev and prev["TwrIndex"] is not None else 1.0
-    prev_total = float(prev["TotalAsset"]) if prev else None
+    prev_index = float(prev["twr_index"]) if prev and prev["twr_index"] is not None else 1.0
+    prev_total = float(prev["total_asset"]) if prev else None
     if prev_total is None:
         twr_index = 1.0
     else:
@@ -121,10 +121,10 @@ def record_account_snapshot(
 
     sid = f"{cycle_id}_snap"
     conn.execute(
-        'INSERT INTO "AccountSnapshots"("SnapshotId", "CycleId", "TradeDate", "Amount", '
-        '"PositionValue", "TotalAsset", "BaseAsset", "NetFlowSinceBase", '
-        '"AdjustedBaseAsset", "CumulativeNetFlow", "TwrIndex", "DayReturnPercent", '
-        '"RecordedDateTime") VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+        'INSERT INTO account_snapshots(snapshot_id, cycle_id, trade_date, amount, '
+        'position_value, total_asset, base_asset, net_flow_since_base, '
+        'adjusted_base_asset, cumulative_net_flow, twr_index, day_return_percent, '
+        'recorded_date_time) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
         (sid, cycle_id, trade_date or kst_today(), cash, position_value, total_asset,
          base_asset, net_flow_since_base, adjusted, cumulative, twr_index,
          day_return, now_utc()),
@@ -141,12 +141,12 @@ def record_cycle_scores(
     n = 0
     for r in rows:
         conn.execute(
-            'INSERT INTO "CycleScores"("CycleId", "SymbolId", "Inclusion", "BaseScore", '
-            '"FlowPercentileLive", "TotalScore", "LastPrice", "BuyQuantity", '
-            '"SellQuantity", "Atr", "StopWidth", "IsTradable", "BlockReason", '
-            '"ScoredDateTime") '
+            'INSERT INTO cycle_scores(cycle_id, symbol_id, inclusion, base_score, '
+            'flow_percentile_live, total_score, last_price, buy_quantity, '
+            'sell_quantity, atr, stop_width, is_tradable, block_reason, '
+            'scored_date_time) '
             "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-            'ON CONFLICT ("CycleId", "SymbolId") DO NOTHING',
+            'ON CONFLICT (cycle_id, symbol_id) DO NOTHING',
             (cycle_id, r["symbol_id"], r.get("inclusion", "topRank"),
              r.get("base_score"), r.get("flow_percentile_live"), r.get("total_score"),
              r.get("last_price"), r.get("buy_quantity"), r.get("sell_quantity"),
@@ -174,10 +174,10 @@ def record_risk_check(
     suffix = decision_id or "cycle"
     check_id = f"{cycle_id}_{suffix}_{check_name}"
     conn.execute(
-        'INSERT INTO "RiskChecks"("CheckId", "CycleId", "DecisionId", "CheckOrder", '
-        '"CheckName", "Result", "Reason", "LimitValue", "ActualValue", "CheckedDateTime") '
+        'INSERT INTO risk_checks(check_id, cycle_id, decision_id, check_order, '
+        'check_name, result, reason, limit_value, actual_value, checked_date_time) '
         "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-        'ON CONFLICT ("CheckId") DO NOTHING',
+        'ON CONFLICT (check_id) DO NOTHING',
         (check_id, cycle_id, decision_id, check_order, check_name, result,
          reason or None, limit_value, actual_value, now_utc()),
     )
@@ -210,30 +210,30 @@ def expected_cash(conn: psycopg.Connection, *, mode: str | None = None) -> dict[
     if prev is None:
         return None
     sql = (
-        'SELECT "Side", COALESCE(SUM("FilledQuantity" * "AverageFillPrice"), 0) AS gross, '
-        'COALESCE(SUM(COALESCE("Fee", 0) + COALESCE("Tax", 0)), 0) AS charges '
-        'FROM "Orders" WHERE "FilledQuantity" > 0 AND "AverageFillPrice" IS NOT NULL '
-        'AND "FilledDateTime" > %s'
+        'SELECT side, COALESCE(SUM(filled_quantity * average_fill_price), 0) AS gross, '
+        'COALESCE(SUM(COALESCE(fee, 0) + COALESCE(tax, 0)), 0) AS charges '
+        'FROM orders WHERE filled_quantity > 0 AND average_fill_price IS NOT NULL '
+        'AND filled_date_time > %s'
     )
-    args: list[Any] = [prev["RecordedDateTime"]]
+    args: list[Any] = [prev["recorded_date_time"]]
     if mode:
-        sql += ' AND "Mode" = %s'
+        sql += ' AND mode = %s'
         args.append(mode)
-    rows = conn.execute(sql + ' GROUP BY "Side"', args).fetchall()
+    rows = conn.execute(sql + ' GROUP BY side', args).fetchall()
 
     delta = 0.0
     for r in rows:
         gross, charges = float(r["gross"] or 0), float(r["charges"] or 0)
         # 매도는 세금·수수료를 뗀 만큼 들어오고, 매수는 수수료를 얹은 만큼 나간다.
-        delta += (gross - charges) if r["Side"] == "sell" else -(gross + charges)
+        delta += (gross - charges) if r["side"] == "sell" else -(gross + charges)
 
     return {
-        "expected": float(prev["Amount"]) + delta,
-        "prev_cash": float(prev["Amount"]),
+        "expected": float(prev["amount"]) + delta,
+        "prev_cash": float(prev["amount"]),
         "fills_delta": delta,
-        "since": prev["RecordedDateTime"],
-        "prev_total_asset": float(prev["TotalAsset"]),
-        "prev_snapshot_id": prev["SnapshotId"],
+        "since": prev["recorded_date_time"],
+        "prev_total_asset": float(prev["total_asset"]),
+        "prev_snapshot_id": prev["snapshot_id"],
     }
 
 
@@ -263,9 +263,9 @@ def record_cash_flow(
     now = now_utc()
     flow_id = f"F{now:%Y%m%dT%H%M%S%f}"
     conn.execute(
-        'INSERT INTO "CashFlows"("FlowId", "DetectedCycleId", "TradeDate", "Kind", '
-        '"Amount", "Status", "Source", "ExpectedCash", "ActualCash", "Note", '
-        '"DetectedDateTime", "Mode") VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+        'INSERT INTO cash_flows(flow_id, detected_cycle_id, trade_date, kind, '
+        'amount, status, source, expected_cash, actual_cash, note, '
+        'detected_date_time, mode) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
         (flow_id, cycle_id, trade_date or kst_today(), kind, amount, status, source,
          expected, actual, note, now, mode),
     )
@@ -288,14 +288,14 @@ def confirm_cash_flow(
     """
     if kind not in FLOW_KINDS:
         raise ValueError(f"알 수 없는 Kind: {kind!r} (가능: {', '.join(FLOW_KINDS)})")
-    cur = conn.execute('SELECT "Status" FROM "CashFlows" WHERE "FlowId"=%s', (flow_id,))
+    cur = conn.execute('SELECT status FROM cash_flows WHERE flow_id=%s', (flow_id,))
     row = cur.fetchone()
     if row is None:
         return False
-    status = "reclassified" if row["Status"] != "unconfirmed" else "confirmed"
+    status = "reclassified" if row["status"] != "unconfirmed" else "confirmed"
     conn.execute(
-        'UPDATE "CashFlows" SET "Kind"=%s, "Status"=%s, "ConfirmedDateTime"=%s, '
-        '"ConfirmedBy"=%s, "Note"=COALESCE(%s, "Note") WHERE "FlowId"=%s',
+        'UPDATE cash_flows SET kind=%s, status=%s, confirmed_date_time=%s, '
+        'confirmed_by=%s, note=COALESCE(%s, note) WHERE flow_id=%s',
         (kind, status, now_utc(), by, note, flow_id),
     )
     conn.commit()
@@ -311,19 +311,19 @@ def load_cash_flows(
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     """`CashFlows`를 최신순으로 읽는다(대시보드·CLI 공용)."""
-    sql = 'SELECT * FROM "CashFlows" WHERE 1=1'
+    sql = 'SELECT * FROM cash_flows WHERE 1=1'
     args: list[Any] = []
     if status:
-        sql += ' AND "Status"=%s'
+        sql += ' AND status=%s'
         args.append(status)
     if start:
-        sql += ' AND "TradeDate" >= %s'
+        sql += ' AND trade_date >= %s'
         args.append(start)
     if end:
-        sql += ' AND "TradeDate" <= %s'
+        sql += ' AND trade_date <= %s'
         args.append(end)
     args.append(limit)
-    rows = conn.execute(sql + ' ORDER BY "DetectedDateTime" DESC LIMIT %s', args).fetchall()
+    rows = conn.execute(sql + ' ORDER BY detected_date_time DESC LIMIT %s', args).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -337,13 +337,13 @@ def sum_flows_since(
     그건 진짜 손익이라 손익률에 그대로 잡혀야 한다.
     """
     marks = ", ".join(["%s"] * len(EXTERNAL_KINDS))
-    sql = f'SELECT COALESCE(SUM("Amount"), 0) AS s FROM "CashFlows" WHERE "Kind" IN ({marks})'
+    sql = f'SELECT COALESCE(SUM(amount), 0) AS s FROM cash_flows WHERE kind IN ({marks})'
     args: list[Any] = list(EXTERNAL_KINDS)
     if since is not None:
-        sql += ' AND "DetectedDateTime" > %s'
+        sql += ' AND detected_date_time > %s'
         args.append(since)
     if mode:
-        sql += ' AND "Mode"=%s'
+        sql += ' AND mode=%s'
         args.append(mode)
     return float(conn.execute(sql, args).fetchone()["s"] or 0.0)
 
@@ -364,8 +364,8 @@ def record_safe_stop(
     now = now_utc()
     event_id = f"{cycle_id or 'manual'}_{now:%Y%m%dT%H%M%S%fZ}"
     conn.execute(
-        'INSERT INTO "SafeStopEvents"("EventId", "CycleId", "OccurredDateTime", '
-        '"Cause", "Trigger") VALUES(%s, %s, %s, %s, %s)',
+        'INSERT INTO safe_stop_events(event_id, cycle_id, occurred_date_time, '
+        'cause, trigger) VALUES(%s, %s, %s, %s, %s)',
         (event_id, cycle_id, now, cause, trigger),
     )
     conn.commit()
@@ -375,8 +375,8 @@ def record_safe_stop(
 def active_safe_stop(conn: psycopg.Connection) -> dict[str, Any] | None:
     """미해제 SafeStop 중 가장 최근 것을 반환한다(없으면 None = 정상)."""
     return conn.execute(
-        'SELECT * FROM "SafeStopEvents" WHERE "ReleasedDateTime" IS NULL '
-        'ORDER BY "OccurredDateTime" DESC LIMIT 1'
+        'SELECT * FROM safe_stop_events WHERE released_date_time IS NULL '
+        'ORDER BY occurred_date_time DESC LIMIT 1'
     ).fetchone()
 
 
@@ -385,8 +385,8 @@ def release_safe_stop(
 ) -> None:
     """SafeStop을 해제한다(잔고 불일치·데이터 오류·이상행동은 사람 개입 필수 — 05-risk 5.4)."""
     conn.execute(
-        'UPDATE "SafeStopEvents" SET "ReleasedDateTime"=%s, "ReleasedBy"=%s, '
-        '"ReleaseReason"=%s WHERE "EventId"=%s AND "ReleasedDateTime" IS NULL',
+        'UPDATE safe_stop_events SET released_date_time=%s, released_by=%s, '
+        'release_reason=%s WHERE event_id=%s AND released_date_time IS NULL',
         (now_utc(), released_by, reason, event_id),
     )
     conn.commit()
@@ -426,10 +426,10 @@ def record_decisions(
         plan = plans.get(o.code)
         did = f"{cycle_id}_{o.code}_{action}"
         conn.execute(
-            'INSERT INTO "Decisions"("DecisionId", "CycleId", "SymbolId", "Action", "Reason", '
-            '"Score", "Threshold", "EntryPrice", "StopPrice", "RiskPerShare", '
-            '"TargetPositions", "Quantity", "RewardRiskRatio", "EstimatedCost", '
-            '"NetEdge", "DecidedDateTime") '
+            'INSERT INTO decisions(decision_id, cycle_id, symbol_id, action, reason, '
+            'score, threshold, entry_price, stop_price, risk_per_share, '
+            'target_positions, quantity, reward_risk_ratio, estimated_cost, '
+            'net_edge, decided_date_time) '
             "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 did, cycle_id, o.code, action, reason, o.risk_budget,
@@ -496,10 +496,10 @@ def record_order(
 ) -> None:
     """KIS 주문·체결 1건을 `Orders`에 적재."""
     conn.execute(
-        'INSERT INTO "Orders"("ClientOrderId", "CycleId", "DecisionId", "KisOrderNo", '
-        '"SymbolId", "Side", "Purpose", "OrderType", "OrderQuantity", "OrderPrice", '
-        '"TriggerPrice", "FilledQuantity", "AverageFillPrice", "Fee", "Tax", '
-        '"SlippageEstimate", "Status", "OrderedDateTime", "FilledDateTime", "Mode") '
+        'INSERT INTO orders(client_order_id, cycle_id, decision_id, kis_order_no, '
+        'symbol_id, side, purpose, order_type, order_quantity, order_price, '
+        'trigger_price, filled_quantity, average_fill_price, fee, tax, '
+        'slippage_estimate, status, ordered_date_time, filled_date_time, mode) '
         "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (client_order_id, cycle_id, decision_id, kis_order_no, symbol_id, side, purpose,
          order_type, order_quantity, order_price, trigger_price, filled_quantity,
@@ -525,27 +525,27 @@ def upsert_entry_position(
     """진입 체결 → `Positions` 생성 또는 수량·평단 갱신(추가매수 병합). 반환: PositionId."""
     now = now_utc()
     row = conn.execute(
-        'SELECT "PositionId", "Quantity", "AveragePrice" FROM "Positions" '
-        "WHERE \"SymbolId\"=%s AND \"Status\"='open'",
+        'SELECT position_id, quantity, average_price FROM positions '
+        "WHERE symbol_id=%s AND status='open'",
         (symbol_id,),
     ).fetchone()
     if row is not None:
-        pid, q0, p0 = row["PositionId"], row["Quantity"], row["AveragePrice"]
+        pid, q0, p0 = row["position_id"], row["quantity"], row["average_price"]
         new_qty = q0 + add_quantity
         new_avg = (q0 * p0 + add_quantity * fill_price) / new_qty if new_qty else fill_price
         conn.execute(
-            'UPDATE "Positions" SET "Quantity"=%s, "AveragePrice"=%s, "CurrentStopPrice"=%s, '
-            '"UpdatedDateTime"=%s WHERE "PositionId"=%s',
+            'UPDATE positions SET quantity=%s, average_price=%s, current_stop_price=%s, '
+            'updated_date_time=%s WHERE position_id=%s',
             (new_qty, new_avg, current_stop_price, now, pid),
         )
     else:
         pid = f"{cycle_id}_{symbol_id}"
         initial = initial_stop_price if initial_stop_price is not None else current_stop_price
         conn.execute(
-            'INSERT INTO "Positions"("PositionId", "SymbolId", "Market", "Quantity", '
-            '"AveragePrice", "EntryDecisionId", "EntryDate", "InitialStopPrice", '
-            '"CurrentStopPrice", "RiskPerShare", "IsBreakevenDone", "Status", '
-            '"OpenedDateTime", "UpdatedDateTime") '
+            'INSERT INTO positions(position_id, symbol_id, market, quantity, '
+            'average_price, entry_decision_id, entry_date, initial_stop_price, '
+            'current_stop_price, risk_per_share, is_breakeven_done, status, '
+            'opened_date_time, updated_date_time) '
             "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, false, 'open', %s, %s)",
             (pid, symbol_id, market, add_quantity, fill_price, entry_decision_id,
              entry_date or kst_today(), initial, current_stop_price,
@@ -558,8 +558,8 @@ def upsert_entry_position(
 def set_active_stop(conn: psycopg.Connection, position_id: str, client_order_id: str) -> None:
     """KIS에 상주 중인 스톱 주문을 포지션에 연결한다."""
     conn.execute(
-        'UPDATE "Positions" SET "ActiveStopOrderId"=%s, "UpdatedDateTime"=%s '
-        'WHERE "PositionId"=%s',
+        'UPDATE positions SET active_stop_order_id=%s, updated_date_time=%s '
+        'WHERE position_id=%s',
         (client_order_id, now_utc(), position_id),
     )
     conn.commit()
@@ -574,9 +574,9 @@ def update_stop(
 ) -> None:
     """트레일링·본전 상향 — CurrentStopPrice 갱신(청산 없음)."""
     conn.execute(
-        'UPDATE "Positions" SET "CurrentStopPrice"=%s, '
-        '"IsBreakevenDone"=COALESCE(%s, "IsBreakevenDone"), "UpdatedDateTime"=%s '
-        'WHERE "PositionId"=%s',
+        'UPDATE positions SET current_stop_price=%s, '
+        'is_breakeven_done=COALESCE(%s, is_breakeven_done), updated_date_time=%s '
+        'WHERE position_id=%s',
         (new_stop, breakeven_done, now_utc(), position_id),
     )
     conn.commit()
@@ -591,9 +591,9 @@ def reduce_position(
 ) -> None:
     """부분 체결 뒤처리 — 체결분만 수량 차감(+선택 손절 갱신)."""
     conn.execute(
-        'UPDATE "Positions" SET "Quantity"=GREATEST(0, "Quantity" - %s), '
-        '"CurrentStopPrice"=COALESCE(%s, "CurrentStopPrice"), "UpdatedDateTime"=%s '
-        'WHERE "PositionId"=%s',
+        'UPDATE positions SET quantity=GREATEST(0, quantity - %s), '
+        'current_stop_price=COALESCE(%s, current_stop_price), updated_date_time=%s '
+        'WHERE position_id=%s',
         (sell_quantity, new_stop, now_utc(), position_id),
     )
     conn.commit()
@@ -602,8 +602,8 @@ def reduce_position(
 def close_position(conn: psycopg.Connection, position_id: str) -> None:
     """전량 청산 — Status=closed, 잔량 0."""
     conn.execute(
-        'UPDATE "Positions" SET "Status"=\'closed\', "Quantity"=0, "UpdatedDateTime"=%s '
-        'WHERE "PositionId"=%s',
+        'UPDATE positions SET status=\'closed\', quantity=0, updated_date_time=%s '
+        'WHERE position_id=%s',
         (now_utc(), position_id),
     )
     conn.commit()
@@ -638,11 +638,11 @@ def record_outcome(
 ) -> None:
     """청산 체결 1건의 실현손익을 `Outcomes`에 적재."""
     conn.execute(
-        'INSERT INTO "Outcomes"("OutcomeId", "PositionId", "EntryDecisionId", '
-        '"ExitDecisionId", "SymbolId", "EntryPrice", "ExitPrice", "Quantity", "EntryDate", '
-        '"ExitDate", "HoldingDays", "GrossProfitLoss", "Fee", "Tax", "NetProfitLoss", '
-        '"ReturnPercent", "RMultiple", "ExitKind", "ExitReason", "EntryScore", '
-        '"EntryRegime", "ClosedDateTime", "Mode") '
+        'INSERT INTO outcomes(outcome_id, position_id, entry_decision_id, '
+        'exit_decision_id, symbol_id, entry_price, exit_price, quantity, entry_date, '
+        'exit_date, holding_days, gross_profit_loss, fee, tax, net_profit_loss, '
+        'return_percent, r_multiple, exit_kind, exit_reason, entry_score, '
+        'entry_regime, closed_date_time, mode) '
         "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
         "%s, %s, %s, %s, %s)",
         (outcome_id, position_id, entry_decision_id, exit_decision_id, symbol_id,
@@ -657,9 +657,9 @@ def record_outcome(
 def recover_pending_cycles(conn: psycopg.Connection) -> list[str]:
     """시작 시 미완 사이클을 failed로 마감하고 그 id 목록을 반환한다."""
     rows = conn.execute(
-        'SELECT "CycleId" FROM "Cycles" WHERE "Status" = ANY(%s)', (list(PENDING_STATES),)
+        'SELECT cycle_id FROM cycles WHERE status = ANY(%s)', (list(PENDING_STATES),)
     ).fetchall()
-    pending = [r["CycleId"] for r in rows]
+    pending = [r["cycle_id"] for r in rows]
     for cid in pending:
         advance_status(conn, cid, "failed")
     return pending
@@ -673,12 +673,12 @@ def upsert_symbols(conn: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> 
     n = 0
     for r in rows:
         conn.execute(
-            'INSERT INTO "Symbols"("SymbolId", "Name", "Market", "SecurityType", '
-            '"LastUpdateDateTime") VALUES(%s, %s, %s, %s, %s) '
-            'ON CONFLICT ("SymbolId") DO UPDATE SET '
-            '"Name"=EXCLUDED."Name", "Market"=EXCLUDED."Market", '
-            '"SecurityType"=EXCLUDED."SecurityType", '
-            '"LastUpdateDateTime"=EXCLUDED."LastUpdateDateTime"',
+            'INSERT INTO symbols(symbol_id, name, market, security_type, '
+            'last_update_date_time) VALUES(%s, %s, %s, %s, %s) '
+            'ON CONFLICT (symbol_id) DO UPDATE SET '
+            'name=EXCLUDED.name, market=EXCLUDED.market, '
+            'security_type=EXCLUDED.security_type, '
+            'last_update_date_time=EXCLUDED.last_update_date_time',
             (r["code"], r["name"], r["market"], r.get("security_type", "common"), now),
         )
         n += 1
@@ -697,12 +697,12 @@ def upsert_daily_bars(
         if value is None and close is not None and volume is not None:
             value = float(close) * float(volume)
         conn.execute(
-            'INSERT INTO "DailyBars"("SymbolId", "TradeDate", "Open", "High", "Low", '
-            '"Close", "Volume", "Value") VALUES(%s, %s, %s, %s, %s, %s, %s, %s) '
-            'ON CONFLICT ("SymbolId", "TradeDate") DO UPDATE SET '
-            '"Open"=EXCLUDED."Open", "High"=EXCLUDED."High", "Low"=EXCLUDED."Low", '
-            '"Close"=EXCLUDED."Close", "Volume"=EXCLUDED."Volume", '
-            '"Value"=EXCLUDED."Value"',
+            'INSERT INTO daily_bars(symbol_id, trade_date, open, high, low, '
+            'close, volume, value) VALUES(%s, %s, %s, %s, %s, %s, %s, %s) '
+            'ON CONFLICT (symbol_id, trade_date) DO UPDATE SET '
+            'open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, '
+            'close=EXCLUDED.close, volume=EXCLUDED.volume, '
+            'value=EXCLUDED.value',
             (symbol_id, b["date"], b.get("open"), b.get("high"), b.get("low"),
              close, int(volume) if volume is not None else None, value),
         )
@@ -719,14 +719,14 @@ def upsert_daily_flows(
     today = kst_today()
     for f in flows:
         conn.execute(
-            'INSERT INTO "DailyFlows"("SymbolId", "TradeDate", "ForeignNet", '
-            '"InstitutionNet", "IsFinal", "CollectedDateTime") '
+            'INSERT INTO daily_flows(symbol_id, trade_date, foreign_net, '
+            'institution_net, is_final, collected_date_time) '
             "VALUES(%s, %s, %s, %s, %s, %s) "
-            'ON CONFLICT ("SymbolId", "TradeDate") DO UPDATE SET '
-            '"ForeignNet"=EXCLUDED."ForeignNet", '
-            '"InstitutionNet"=EXCLUDED."InstitutionNet", '
-            '"IsFinal"=EXCLUDED."IsFinal", '
-            '"CollectedDateTime"=EXCLUDED."CollectedDateTime"',
+            'ON CONFLICT (symbol_id, trade_date) DO UPDATE SET '
+            'foreign_net=EXCLUDED.foreign_net, '
+            'institution_net=EXCLUDED.institution_net, '
+            'is_final=EXCLUDED.is_final, '
+            'collected_date_time=EXCLUDED.collected_date_time',
             (symbol_id, f["date"], f.get("foreign_net"), f.get("inst_net"),
              f["date"] < today, now_utc()),
         )
@@ -743,12 +743,12 @@ def upsert_market_index(
     n = 0
     for r in rows:
         conn.execute(
-            'INSERT INTO "MarketIndices"("IndexCode", "TradeDate", "Close", "Sma200", '
-            '"Regime", "CollectedDateTime") VALUES(%s, %s, %s, %s, %s, %s) '
-            'ON CONFLICT ("IndexCode", "TradeDate") DO UPDATE SET '
-            '"Close"=EXCLUDED."Close", "Sma200"=EXCLUDED."Sma200", '
-            '"Regime"=EXCLUDED."Regime", '
-            '"CollectedDateTime"=EXCLUDED."CollectedDateTime"',
+            'INSERT INTO market_indices(index_code, trade_date, close, sma_200, '
+            'regime, collected_date_time) VALUES(%s, %s, %s, %s, %s, %s) '
+            'ON CONFLICT (index_code, trade_date) DO UPDATE SET '
+            'close=EXCLUDED.close, sma_200=EXCLUDED.sma_200, '
+            'regime=EXCLUDED.regime, '
+            'collected_date_time=EXCLUDED.collected_date_time',
             (index_code, r["date"], r["close"], r.get("sma200"), r.get("regime"), now),
         )
         n += 1
@@ -764,22 +764,22 @@ def upsert_daily_scores(
     n = 0
     for r in rows:
         conn.execute(
-            'INSERT INTO "DailyScores"("TradeDate", "SymbolId", "PassedFilter", '
-            '"FilterReason", "Momentum", "FlowNet20Day", "ValueRatio", "Volatility", '
-            '"MomentumPercentile", "FlowPercentile", "ValuePercentile", '
-            '"LowVolatilityPercentile", "TotalScore", "Rank", "ComputedDateTime") '
+            'INSERT INTO daily_scores(trade_date, symbol_id, passed_filter, '
+            'filter_reason, momentum, flow_net_20_day, value_ratio, volatility, '
+            'momentum_percentile, flow_percentile, value_percentile, '
+            'low_volatility_percentile, total_score, rank, computed_date_time) '
             "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-            'ON CONFLICT ("TradeDate", "SymbolId") DO UPDATE SET '
-            '"PassedFilter"=EXCLUDED."PassedFilter", '
-            '"FilterReason"=EXCLUDED."FilterReason", "Momentum"=EXCLUDED."Momentum", '
-            '"FlowNet20Day"=EXCLUDED."FlowNet20Day", "ValueRatio"=EXCLUDED."ValueRatio", '
-            '"Volatility"=EXCLUDED."Volatility", '
-            '"MomentumPercentile"=EXCLUDED."MomentumPercentile", '
-            '"FlowPercentile"=EXCLUDED."FlowPercentile", '
-            '"ValuePercentile"=EXCLUDED."ValuePercentile", '
-            '"LowVolatilityPercentile"=EXCLUDED."LowVolatilityPercentile", '
-            '"TotalScore"=EXCLUDED."TotalScore", "Rank"=EXCLUDED."Rank", '
-            '"ComputedDateTime"=EXCLUDED."ComputedDateTime"',
+            'ON CONFLICT (trade_date, symbol_id) DO UPDATE SET '
+            'passed_filter=EXCLUDED.passed_filter, '
+            'filter_reason=EXCLUDED.filter_reason, momentum=EXCLUDED.momentum, '
+            'flow_net_20_day=EXCLUDED.flow_net_20_day, value_ratio=EXCLUDED.value_ratio, '
+            'volatility=EXCLUDED.volatility, '
+            'momentum_percentile=EXCLUDED.momentum_percentile, '
+            'flow_percentile=EXCLUDED.flow_percentile, '
+            'value_percentile=EXCLUDED.value_percentile, '
+            'low_volatility_percentile=EXCLUDED.low_volatility_percentile, '
+            'total_score=EXCLUDED.total_score, rank=EXCLUDED.rank, '
+            'computed_date_time=EXCLUDED.computed_date_time',
             (trade_date, r["symbol_id"], r["passed_filter"], r.get("filter_reason"),
              r.get("momentum"), r.get("flow_net_20day"), r.get("value_ratio"),
              r.get("volatility"), r.get("momentum_percentile"),
@@ -809,14 +809,14 @@ def record_ingest_run(
 ) -> None:
     """배치 실행 1회의 결과를 `IngestRuns`에 남긴다(신선도 검사가 여기를 읽는다)."""
     conn.execute(
-        'INSERT INTO "IngestRuns"("RunId", "TargetTable", "Source", "RangeStartDate", '
-        '"RangeEndDate", "Status", "TargetCount", "SuccessCount", "RowsWritten", '
-        '"ErrorMessage", "StartedDateTime", "FinishedDateTime") '
+        'INSERT INTO ingest_runs(run_id, target_table, source, range_start_date, '
+        'range_end_date, status, target_count, success_count, rows_written, '
+        'error_message, started_date_time, finished_date_time) '
         "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-        'ON CONFLICT ("RunId") DO UPDATE SET "Status"=EXCLUDED."Status", '
-        '"SuccessCount"=EXCLUDED."SuccessCount", "RowsWritten"=EXCLUDED."RowsWritten", '
-        '"ErrorMessage"=EXCLUDED."ErrorMessage", '
-        '"FinishedDateTime"=EXCLUDED."FinishedDateTime"',
+        'ON CONFLICT (run_id) DO UPDATE SET status=EXCLUDED.status, '
+        'success_count=EXCLUDED.success_count, rows_written=EXCLUDED.rows_written, '
+        'error_message=EXCLUDED.error_message, '
+        'finished_date_time=EXCLUDED.finished_date_time',
         (run_id, target_table, source, range_start, range_end, status, target_count,
          success_count, rows_written, error_message, started_at, now_utc()),
     )
@@ -828,8 +828,8 @@ def last_ingest_run(
 ) -> dict[str, Any] | None:
     """그날 그 표의 마지막 배치 기록을 반환한다."""
     return conn.execute(
-        'SELECT * FROM "IngestRuns" WHERE "TargetTable"=%s AND "RangeEndDate"=%s '
-        'ORDER BY "StartedDateTime" DESC LIMIT 1',
+        'SELECT * FROM ingest_runs WHERE target_table=%s AND range_end_date=%s '
+        'ORDER BY started_date_time DESC LIMIT 1',
         (target_table, trade_date),
     ).fetchone()
 
@@ -837,20 +837,20 @@ def last_ingest_run(
 def load_symbol_ids(conn: psycopg.Connection) -> list[str]:
     """상장 중인 종목코드를 반환한다."""
     rows = conn.execute(
-        'SELECT "SymbolId" FROM "Symbols" WHERE "DelistedDate" IS NULL '
-        'ORDER BY "SymbolId"'
+        'SELECT symbol_id FROM symbols WHERE delisted_date IS NULL '
+        'ORDER BY symbol_id'
     ).fetchall()
-    return [r["SymbolId"] for r in rows]
+    return [r["symbol_id"] for r in rows]
 
 
 def load_daily_score_candidates(conn: psycopg.Connection, trade_date: date) -> list[str]:
     """그날 배치가 제외 필터를 통과시킨 종목코드를 rank 순으로 반환한다."""
     rows = conn.execute(
-        'SELECT "SymbolId" FROM "DailyScores" WHERE "TradeDate"=%s AND "PassedFilter" '
-        'ORDER BY "Rank" ASC NULLS LAST',
+        'SELECT symbol_id FROM daily_scores WHERE trade_date=%s AND passed_filter '
+        'ORDER BY rank ASC NULLS LAST',
         (trade_date,),
     ).fetchall()
-    return [r["SymbolId"] for r in rows]
+    return [r["symbol_id"] for r in rows]
 
 
 def load_price_history(
@@ -860,26 +860,26 @@ def load_price_history(
     import pandas as pd
 
     sql = (
-        'SELECT b."SymbolId", b."TradeDate", b."Open", b."High", b."Low", b."Close", '
-        'b."Volume", f."ForeignNet", f."InstitutionNet" '
-        'FROM "DailyBars" b '
-        'LEFT JOIN "DailyFlows" f '
-        '  ON f."SymbolId" = b."SymbolId" AND f."TradeDate" = b."TradeDate" '
-        'WHERE b."TradeDate" BETWEEN %s AND %s'
+        'SELECT b.symbol_id, b.trade_date, b.open, b.high, b.low, b.close, '
+        'b.volume, f.foreign_net, f.institution_net '
+        'FROM daily_bars b '
+        'LEFT JOIN daily_flows f '
+        '  ON f.symbol_id = b.symbol_id AND f.trade_date = b.trade_date '
+        'WHERE b.trade_date BETWEEN %s AND %s'
     )
     params: list[Any] = [start, end]
     if symbol_ids:
-        sql += ' AND b."SymbolId" = ANY(%s)'
+        sql += ' AND b.symbol_id = ANY(%s)'
         params.append(symbol_ids)
-    rows = conn.execute(sql + ' ORDER BY b."SymbolId", b."TradeDate"', params).fetchall()
+    rows = conn.execute(sql + ' ORDER BY b.symbol_id, b.trade_date', params).fetchall()
     if not rows:
         return {}
     df = pd.DataFrame(rows).rename(columns={
-        "TradeDate": "date", "Open": "open", "High": "high", "Low": "low",
-        "Close": "close", "Volume": "volume",
-        "ForeignNet": "foreign_net", "InstitutionNet": "inst_net",
+        "trade_date": "date", "open": "open", "high": "high", "low": "low",
+        "close": "close", "volume": "volume",
+        "foreign_net": "foreign_net", "institution_net": "inst_net",
     })
     out: dict[str, Any] = {}
-    for code, g in df.groupby("SymbolId"):
-        out[code] = g.drop(columns=["SymbolId"]).set_index("date").sort_index()
+    for code, g in df.groupby("symbol_id"):
+        out[code] = g.drop(columns=["symbol_id"]).set_index("date").sort_index()
     return out

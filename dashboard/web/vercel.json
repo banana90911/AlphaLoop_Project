@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://CHANGE-ME.ts.net/api/:path*"
+      "destination": "https://alphaloop-ncp.tailea7703.ts.net/api/:path*"
     }
   ],
   "headers": [

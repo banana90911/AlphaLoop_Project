@@ -260,9 +260,9 @@ function useEquityOption(
   const curve = useMemo(() => {
     return points
       .map((p) => {
-        const at = p.RecordedDateTime ?? p.ExitDate ?? p.TradeDate
-        if (!at || p.Cumulative === null || p.Cumulative === undefined) return null
-        const y = axis === 'twr' ? (p.Cumulative - 1) * 100 : p.Cumulative
+        const at = p.recorded_date_time ?? p.exit_date ?? p.trade_date
+        if (!at || p.cumulative === null || p.cumulative === undefined) return null
+        const y = axis === 'twr' ? (p.cumulative - 1) * 100 : p.cumulative
         return { value: [kx(at), y] as [number, number], point: p }
       })
       .filter((v): v is { value: [number, number]; point: (typeof points)[number] } => v !== null)
@@ -299,8 +299,8 @@ function useEquityOption(
     const indexRows = (code: 'KOSPI' | 'KOSDAQ') =>
       normalize(
         (data?.benchmarks ?? [])
-          .filter((b) => b.IndexCode === code)
-          .map((b) => ({ x: kx(b.TradeDate), close: Number(b.Close) })),
+          .filter((b) => b.index_code === code)
+          .map((b) => ({ x: kx(b.trade_date), close: Number(b.close) })),
       )
 
     // 툴팁이 params에만 기대면 그 x에 점이 없는 계열은 통째로 빠진다(실현손익은 청산일에만
@@ -354,7 +354,7 @@ function useEquityOption(
     }
     if (benches.watchlist && watchlist) {
       const rows = watchlist.series.map(
-        (s) => [kx(s.TradeDate), s.Cumulative * 100] as [number, number],
+        (s) => [kx(s.trade_date), s.cumulative * 100] as [number, number],
       )
       series.push(line('균등가중 워치리스트', C.watchlist, rows))
       lookups.push({ name: '균등가중 워치리스트', color: C.watchlist, rows })
@@ -416,15 +416,15 @@ function useEquityOption(
         yAxisIndex: 0,
         data: flows
           .map((f) => {
-            const x = kx(f.DetectedDateTime)
+            const x = kx(f.detected_date_time)
             const y = valueAt(x)
             return y === null ? null : { value: [x, y], flow: f }
           })
           .filter(Boolean),
-        symbol: (_: unknown, p: { data?: { flow?: { Direction: string } } }) =>
-          p.data?.flow?.Direction === 'withdrawal' ? 'triangle' : 'triangle',
-        symbolRotate: (_: unknown, p: { data?: { flow?: { Direction: string } } }) =>
-          p.data?.flow?.Direction === 'withdrawal' ? 180 : 0,
+        symbol: (_: unknown, p: { data?: { flow?: { direction: string } } }) =>
+          p.data?.flow?.direction === 'withdrawal' ? 'triangle' : 'triangle',
+        symbolRotate: (_: unknown, p: { data?: { flow?: { direction: string } } }) =>
+          p.data?.flow?.direction === 'withdrawal' ? 180 : 0,
         symbolSize: 11,
         itemStyle: { color: C.flow, borderColor: '#0a0c10', borderWidth: 1 },
         z: 6,
@@ -443,7 +443,7 @@ function useEquityOption(
           lineStyle: { color: C.flow, type: 'dashed', width: 1 },
           label: { show: false },
           data: flows.map((f) => ({
-            xAxis: kx(f.DetectedDateTime),
+            xAxis: kx(f.detected_date_time),
             flow: f,
           })),
         },
@@ -560,15 +560,15 @@ type TooltipParam = {
   value: [number, number]
   data?: {
     point?: {
-      Name?: string | null
-      SymbolId?: string
-      NetProfitLoss?: number
-      RMultiple?: number | null
-      ExitReason?: string | null
-      ReturnPercent?: number | null
+      name?: string | null
+      symbol_id?: string
+      net_profit_loss?: number
+      r_multiple?: number | null
+      exit_reason?: string | null
+      return_percent?: number | null
     }
     fills?: FillMarker[]
-    flow?: { Kind: string; Amount: number; Direction: string }
+    flow?: { kind: string; amount: number; direction: string }
   }
 }
 
@@ -606,7 +606,7 @@ type FillMark = {
 function fillMarks(markers: FillMarker[], valueAt: (ms: number) => number | null): FillMark[] {
   const byDay = new Map<number, FillMarker[]>()
   for (const m of markers) {
-    const x = kx(m.FilledDateTime)
+    const x = kx(m.filled_date_time)
     const day = Math.floor(x / 86400_000)      // kx가 KST를 UTC 자리로 옮겨 놨다
     const bucket = byDay.get(day)
     if (bucket) bucket.push(m)
@@ -616,11 +616,11 @@ function fillMarks(markers: FillMarker[], valueAt: (ms: number) => number | null
   const out: FillMark[] = []
   for (const fills of byDay.values()) {
     // 그날 첫 체결 시각에 찍는다 — 자정으로 몰면 점이 하루만큼 왼쪽으로 밀린다
-    const x = Math.min(...fills.map((f) => kx(f.FilledDateTime)))
+    const x = Math.min(...fills.map((f) => kx(f.filled_date_time)))
     const y = valueAt(x)
     if (y === null) continue
-    const hasBuy = fills.some((f) => f.Side === 'buy')
-    const hasSell = fills.some((f) => f.Side === 'sell')
+    const hasBuy = fills.some((f) => f.side === 'buy')
+    const hasSell = fills.some((f) => f.side === 'sell')
     out.push({
       value: [x, y],
       kind: hasBuy && hasSell ? 'both' : hasBuy ? 'buy' : 'sell',
@@ -688,30 +688,30 @@ function tooltip(params: TooltipParam[], ctx: TooltipCtx): string {
   for (const p of params) {
     for (const f of p.data?.fills ?? []) {
       events.push(
-        `<div style="line-height:1.7">${dot(f.Side === 'buy' ? C.buy : C.sell)}` +
-          `${f.Side === 'buy' ? '매수' : '매도'} ${ctx.names[f.SymbolId] ?? f.SymbolId} ` +
-          `<span style="color:#7d879a">${f.FilledQuantity}주 @ ${fmtWon(f.AverageFillPrice)}</span></div>`,
+        `<div style="line-height:1.7">${dot(f.side === 'buy' ? C.buy : C.sell)}` +
+          `${f.side === 'buy' ? '매수' : '매도'} ${ctx.names[f.symbol_id] ?? f.symbol_id} ` +
+          `<span style="color:#7d879a">${f.filled_quantity}주 @ ${fmtWon(f.average_fill_price)}</span></div>`,
       )
     }
     if (p.data?.flow) {
       const f = p.data.flow
       events.push(
-        `<div style="line-height:1.7">${dot(C.flow)}${FLOW_KIND[f.Kind] ?? f.Kind} ` +
-          `<span style="color:#7d879a">금액: ${fmtWonSigned(f.Amount)}원</span></div>`,
+        `<div style="line-height:1.7">${dot(C.flow)}${FLOW_KIND[f.kind] ?? f.kind} ` +
+          `<span style="color:#7d879a">금액: ${fmtWonSigned(f.amount)}원</span></div>`,
       )
     }
     // 실현손익 축의 점은 그 자체가 한 건의 청산이다
     const pt = p.data?.point
-    if (pt && pt.NetProfitLoss !== undefined) {
+    if (pt && pt.net_profit_loss !== undefined) {
       events.push(
-        `<div style="line-height:1.7;color:#c3cad6">${ctx.names[pt.SymbolId ?? ''] ?? pt.Name ?? pt.SymbolId}` +
-          ` <span style="color:#7d879a">${pt.SymbolId}</span></div>` +
+        `<div style="line-height:1.7;color:#c3cad6">${ctx.names[pt.symbol_id ?? ''] ?? pt.name ?? pt.symbol_id}` +
+          ` <span style="color:#7d879a">${pt.symbol_id}</span></div>` +
           `<div style="color:#7d879a;line-height:1.7">청산 <b style="color:${
-            (pt.NetProfitLoss ?? 0) >= 0 ? C.sell : '#4e8ef7'
-          }">${fmtWonSigned(pt.NetProfitLoss)}원</b>` +
-          ` · ${fmtPercent(pt.ReturnPercent)}` +
-          ` · R ${pt.RMultiple === null || pt.RMultiple === undefined ? '—' : pt.RMultiple.toFixed(2)}` +
-          `${pt.ExitReason ? ` · ${EXIT_REASON[pt.ExitReason] ?? pt.ExitReason}` : ''}</div>`,
+            (pt.net_profit_loss ?? 0) >= 0 ? C.sell : '#4e8ef7'
+          }">${fmtWonSigned(pt.net_profit_loss)}원</b>` +
+          ` · ${fmtPercent(pt.return_percent)}` +
+          ` · R ${pt.r_multiple === null || pt.r_multiple === undefined ? '—' : pt.r_multiple.toFixed(2)}` +
+          `${pt.exit_reason ? ` · ${EXIT_REASON[pt.exit_reason] ?? pt.exit_reason}` : ''}</div>`,
       )
     }
   }

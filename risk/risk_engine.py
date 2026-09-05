@@ -52,7 +52,7 @@ class Verdict:
     """판정 결과. allowed=False면 reason에 단일 사유, check에 걸린 검사 이름."""
     allowed: bool
     reason: str = ""
-    check: str = ""              # RiskChecks.CheckName (없으면 빈 문자열)
+    check: str = ""              # risk_checks.check_name (없으면 빈 문자열)
 
     def __bool__(self) -> bool:
         return self.allowed
@@ -153,7 +153,7 @@ class StockStatus:
         return ""
 
 
-# RiskChecks.CheckName → 5.2 검사 순서 번호. 여러 규칙이 동시에 걸려도
+# risk_checks.check_name → 5.2 검사 순서 번호. 여러 규칙이 동시에 걸려도
 # 이 순서에서 가장 먼저 걸린 하나만 사유로 남긴다(05-risk 5.2 / 07-model 7.2).
 CHECK_ORDER = {
     "balanceSync": 1,       # 1-a 보유 대조 + 1-b 현금 검사 중 정지에 해당하는 것
@@ -178,7 +178,7 @@ class CycleDecision:
     """사이클 레벨 판정. action ∈ {proceed, new_blocked, skip, halt}."""
     action: str
     reason: str = ""
-    check: str = "balanceSync"   # 판정을 낸 검사 이름(RiskChecks.CheckName)
+    check: str = "balanceSync"   # 판정을 낸 검사 이름(risk_checks.check_name)
     result: str = "pass"         # RiskChecks.Result
 
 

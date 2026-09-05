@@ -144,7 +144,7 @@ def _fresh_ingest(conn, day: date, table: str, status: str = "ok") -> None:
 
 def test_market_state_ok_on_trading_day(conn):
     day = date(2026, 8, 28)                # 금요일 — 거래일
-    for t in ("DailyBars", "DailyScores"):
+    for t in ("daily_bars", "daily_scores"):
         _fresh_ingest(conn, day, t)
     state, notes = gates.build_market_state(
         conn, kis_holdings={}, trade_date=day, check_data=True,
@@ -171,10 +171,10 @@ def test_market_state_flags_stale_data(conn):
 
 def test_market_state_flags_failed_ingest(conn):
     day = date(2026, 8, 28)
-    _fresh_ingest(conn, day, "DailyBars", status="failed")
-    _fresh_ingest(conn, day, "DailyScores")
+    _fresh_ingest(conn, day, "daily_bars", status="failed")
+    _fresh_ingest(conn, day, "daily_scores")
     state, notes = gates.build_market_state(conn, trade_date=day, check_data=True)
-    assert not state.prices_ok and "DailyBars 배치 failed" in notes
+    assert not state.prices_ok and "daily_bars 배치 failed" in notes
 
 
 def test_market_state_flags_balance_mismatch(conn):
@@ -202,11 +202,11 @@ def test_sidecar_and_market_cb_are_not_detected(conn):
 
 def test_freshness_window_expires(conn):
     day = date(2026, 8, 28)
-    for t in ("DailyBars", "DailyScores"):
+    for t in ("daily_bars", "daily_scores"):
         _fresh_ingest(conn, day, t)
     # FinishedDateTime을 과거로 밀어 신선도 창을 벗어나게 한다
     conn.execute(
-        'UPDATE "IngestRuns" SET "FinishedDateTime"=%s', (now_utc() - timedelta(days=3),)
+        'UPDATE ingest_runs SET finished_date_time=%s', (now_utc() - timedelta(days=3),)
     )
     conn.commit()
     state, notes = gates.build_market_state(conn, trade_date=day, check_data=True)

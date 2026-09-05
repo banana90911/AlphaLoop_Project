@@ -17,7 +17,7 @@ from core.timeutils import now_utc
 log = logging.getLogger(__name__)
 
 # 매 사이클 덤프 대상 — 다시 만들 수 없는 표만. 시장 데이터는 제외(재수집 가능).
-TRADE_TABLES = ("Decisions", "Orders", "Positions", "Outcomes")
+TRADE_TABLES = ("decisions", "orders", "positions", "outcomes")
 DUMP_TIMEOUT_S = 600
 
 

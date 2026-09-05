@@ -1,5 +1,5 @@
 """
-description:        DB 초기화·제약·멱등성 (0-B 게이트). 표·컬럼 이름은 07-model 그대로 PascalCase.
+description:        DB 초기화·제약·멱등성 (0-B 게이트). 표·컬럼 이름은 07-model 그대로 snake_case.
 author:             siheon jung
 created date:       2026/08/29
 last modified date: 2026/08/30
@@ -9,11 +9,11 @@ remarks:
 from memory.db import SCHEMA_PATH
 
 CATALOG = {
-    "Symbols", "SymbolStates", "DailyBars", "DailyFlows", "CorporateActions",
-    "MarketIndices", "IngestRuns",
-    "Cycles", "AccountSnapshots", "DailyScores", "CycleScores", "Decisions", "RiskChecks",
-    "Orders", "CashFlows", "Positions", "Outcomes",
-    "SafeStopEvents",
+    "symbols", "symbol_states", "daily_bars", "daily_flows", "corporate_actions",
+    "market_indices", "ingest_runs",
+    "cycles", "account_snapshots", "daily_scores", "cycle_scores", "decisions", "risk_checks",
+    "orders", "cash_flows", "positions", "outcomes",
+    "safe_stop_events",
 }
 
 
@@ -30,30 +30,17 @@ def test_schema_creates_core_tables(conn):
     assert CATALOG <= _tables(conn)
 
 
-def test_identifiers_keep_pascal_case(conn):
-    """컬럼명이 소문자로 접히지 않는다 — DDL이 큰따옴표로 감싼 결과."""
-    cols = {
-        r["column_name"]
-        for r in conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = 'Symbols'"
-        ).fetchall()
-    }
-    assert {"SymbolId", "SecurityType", "LastUpdateDateTime"} <= cols
-    assert "symbolid" not in cols
-
-
 def test_money_columns_are_numeric(conn):
     """금액·가격은 numeric이라야 반올림 오차가 자본곡선에 누적되지 않는다(07-model)."""
     rows = conn.execute(
         "SELECT column_name, data_type FROM information_schema.columns "
-        "WHERE table_schema = current_schema() AND table_name = 'Outcomes'"
+        "WHERE table_schema = current_schema() AND table_name = 'outcomes'"
     ).fetchall()
     types = {r["column_name"]: r["data_type"] for r in rows}
-    assert types["EntryPrice"] == "numeric" and types["NetProfitLoss"] == "numeric"
-    assert types["ReturnPercent"] == "double precision"    # 비율은 부동소수
-    assert types["Quantity"] == "integer"
-    assert types["ClosedDateTime"] == "timestamp with time zone"
+    assert types["entry_price"] == "numeric" and types["net_profit_loss"] == "numeric"
+    assert types["return_percent"] == "double precision"    # 비율은 부동소수
+    assert types["quantity"] == "integer"
+    assert types["closed_date_time"] == "timestamp with time zone"
 
 
 def test_foreign_keys_are_enforced(conn):
@@ -62,8 +49,8 @@ def test_foreign_keys_are_enforced(conn):
 
     try:
         conn.execute(
-            'INSERT INTO "Decisions"("DecisionId", "CycleId", "SymbolId", "Action", '
-            '"Reason", "DecidedDateTime") '
+            'INSERT INTO decisions(decision_id, cycle_id, symbol_id, action, '
+            'reason, decided_date_time) '
             "VALUES('D1', 'NOPE', '005930', 'buy', 'entryThreshold', now())"
         )
         raise AssertionError("없는 CycleId 참조가 허용됨")
@@ -76,13 +63,13 @@ def test_check_constraints_reject_unknown_values(conn):
     import psycopg
 
     conn.execute(
-        'INSERT INTO "Cycles"("CycleId", "TradeDate", "Status", "Mode", "StartedDateTime") '
+        'INSERT INTO cycles(cycle_id, trade_date, status, mode, started_date_time) '
         "VALUES('C1', DATE '2024-01-02', 'intent', 'paper', now())"
     )
     try:
         conn.execute(
-            'INSERT INTO "Decisions"("DecisionId", "CycleId", "SymbolId", "Action", '
-            '"Reason", "DecidedDateTime") '
+            'INSERT INTO decisions(decision_id, cycle_id, symbol_id, action, '
+            'reason, decided_date_time) '
             "VALUES('D1', 'C1', '005930', 'exitPartial', 'entryThreshold', now())"
         )
         raise AssertionError("설계에서 뺀 exitPartial이 허용됨")

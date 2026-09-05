@@ -77,8 +77,8 @@ def seed(conn) -> None:
     # ── 종목 명부 ────────────────────────────────────────────
     many(
         conn,
-        'INSERT INTO "Symbols" ("SymbolId","Name","Market","SecurityType",'
-        '"ListedDate","LastUpdateDateTime") VALUES (%s,%s,%s,\'common\',%s,%s)',
+        'INSERT INTO symbols (symbol_id,name,market,security_type,'
+        'listed_date,last_update_date_time) VALUES (%s,%s,%s,\'common\',%s,%s)',
         [(sid, name, mkt, date(2010, 1, 4), now) for sid, name, mkt, _ in SYMBOLS],
     )
 
@@ -95,8 +95,8 @@ def seed(conn) -> None:
                                "uptrend" if drift[code] > 0 else "downtrend", now))
     many(
         conn,
-        'INSERT INTO "MarketIndices" ("IndexCode","TradeDate","Close","Sma200",'
-        '"Regime","CollectedDateTime") VALUES (%s,%s,%s,%s,%s,%s)',
+        'INSERT INTO market_indices (index_code,trade_date,close,sma_200,'
+        'regime,collected_date_time) VALUES (%s,%s,%s,%s,%s,%s)',
         index_rows,
     )
 
@@ -114,8 +114,8 @@ def seed(conn) -> None:
                              round(px * rng.randint(200_000, 4_000_000), 0)))
     many(
         conn,
-        'INSERT INTO "DailyBars" ("SymbolId","TradeDate","Open","High","Low","Close",'
-        '"Volume","Value") VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
+        'INSERT INTO daily_bars (symbol_id,trade_date,open,high,low,close,'
+        'volume,value) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
         bar_rows,
     )
 
@@ -130,9 +130,9 @@ def seed(conn) -> None:
                                total, rank, now))
     many(
         conn,
-        'INSERT INTO "DailyScores" ("TradeDate","SymbolId","PassedFilter","Momentum",'
-        '"MomentumPercentile","FlowPercentile","ValuePercentile","LowVolatilityPercentile",'
-        '"TotalScore","Rank","ComputedDateTime") '
+        'INSERT INTO daily_scores (trade_date,symbol_id,passed_filter,momentum,'
+        'momentum_percentile,flow_percentile,value_percentile,low_volatility_percentile,'
+        'total_score,rank,computed_date_time) '
         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         score_rows,
     )
@@ -153,8 +153,8 @@ def seed(conn) -> None:
                        "marketHalt", None, "paper", ts(skipped, 14, 30), ts(skipped, 14, 30)))
     many(
         conn,
-        'INSERT INTO "Cycles" ("CycleId","TradeDate","Status","SkipReason","FailedStep",'
-        '"Mode","StartedDateTime","FinishedDateTime") VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
+        'INSERT INTO cycles (cycle_id,trade_date,status,skip_reason,failed_step,'
+        'mode,started_date_time,finished_date_time) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',
         cycle_rows,
     )
 
@@ -277,39 +277,39 @@ def seed(conn) -> None:
 
     many(
         conn,
-        'INSERT INTO "Decisions" ("DecisionId","CycleId","SymbolId","Action","Reason","Score",'
-        '"Threshold","EntryPrice","StopPrice","RiskPerShare","TargetPositions","Quantity",'
-        '"RewardRiskRatio","EstimatedCost","NetEdge","Regime","DecidedDateTime") '
+        'INSERT INTO decisions (decision_id,cycle_id,symbol_id,action,reason,score,'
+        'threshold,entry_price,stop_price,risk_per_share,target_positions,quantity,'
+        'reward_risk_ratio,estimated_cost,net_edge,regime,decided_date_time) '
         "VALUES (" + ",".join(["%s"] * 17) + ")", decisions)
     many(
         conn,
-        'INSERT INTO "Orders" ("ClientOrderId","CycleId","DecisionId","KisOrderNo","SymbolId",'
-        '"Side","Purpose","OrderType","OrderQuantity","OrderPrice","TriggerPrice",'
-        '"FilledQuantity","AverageFillPrice","Fee","Tax","Status","OrderedDateTime",'
-        '"FilledDateTime","Mode") VALUES (' + ",".join(["%s"] * 19) + ")", orders)
+        'INSERT INTO orders (client_order_id,cycle_id,decision_id,kis_order_no,symbol_id,'
+        'side,purpose,order_type,order_quantity,order_price,trigger_price,'
+        'filled_quantity,average_fill_price,fee,tax,status,ordered_date_time,'
+        'filled_date_time,mode) VALUES (' + ",".join(["%s"] * 19) + ")", orders)
     many(
         conn,
-        'INSERT INTO "Positions" ("PositionId","SymbolId","Market","Quantity","AveragePrice",'
-        '"EntryDecisionId","EntryDate","InitialStopPrice","CurrentStopPrice","RiskPerShare",'
-        '"IsBreakevenDone","ActiveStopOrderId","Status","OpenedDateTime","UpdatedDateTime") '
+        'INSERT INTO positions (position_id,symbol_id,market,quantity,average_price,'
+        'entry_decision_id,entry_date,initial_stop_price,current_stop_price,risk_per_share,'
+        'is_breakeven_done,active_stop_order_id,status,opened_date_time,updated_date_time) '
         "VALUES (" + ",".join(["%s"] * 15) + ")", positions)
     many(
         conn,
-        'INSERT INTO "Outcomes" ("OutcomeId","PositionId","EntryDecisionId","ExitDecisionId",'
-        '"SymbolId","EntryPrice","ExitPrice","Quantity","EntryDate","ExitDate","HoldingDays",'
-        '"GrossProfitLoss","Fee","Tax","NetProfitLoss","ReturnPercent","RMultiple","ExitKind",'
-        '"ExitReason","EntryScore","EntryScoreBucket","EntryRegime","ClosedDateTime","Mode") '
+        'INSERT INTO outcomes (outcome_id,position_id,entry_decision_id,exit_decision_id,'
+        'symbol_id,entry_price,exit_price,quantity,entry_date,exit_date,holding_days,'
+        'gross_profit_loss,fee,tax,net_profit_loss,return_percent,r_multiple,exit_kind,'
+        'exit_reason,entry_score,entry_score_bucket,entry_regime,closed_date_time,mode) '
         "VALUES (" + ",".join(["%s"] * 24) + ")", outcomes)
     many(
         conn,
-        'INSERT INTO "RiskChecks" ("CheckId","CycleId","DecisionId","CheckOrder","CheckName",'
-        '"Result","Reason","LimitValue","ActualValue","CheckedDateTime") '
+        'INSERT INTO risk_checks (check_id,cycle_id,decision_id,check_order,check_name,'
+        'result,reason,limit_value,actual_value,checked_date_time) '
         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", checks)
     many(
         conn,
-        'INSERT INTO "CycleScores" ("CycleId","SymbolId","Inclusion","BaseScore",'
-        '"FlowPercentileLive","TotalScore","LastPrice","BuyQuantity","SellQuantity","Atr",'
-        '"StopWidth","IsTradable","BlockReason","ScoredDateTime") '
+        'INSERT INTO cycle_scores (cycle_id,symbol_id,inclusion,base_score,'
+        'flow_percentile_live,total_score,last_price,buy_quantity,sell_quantity,atr,'
+        'stop_width,is_tradable,block_reason,scored_date_time) '
         "VALUES (" + ",".join(["%s"] * 14) + ")", list(cscores.values()))
 
     # ── 입출금 ──────────────────────────────────────────────
@@ -328,9 +328,9 @@ def seed(conn) -> None:
                           "owner" if stat == "confirmed" else None, "paper"))
     many(
         conn,
-        'INSERT INTO "CashFlows" ("FlowId","DetectedCycleId","TradeDate","Kind","Amount",'
-        '"Status","Source","ExpectedCash","ActualCash","Note","DetectedDateTime",'
-        '"ConfirmedDateTime","ConfirmedBy","Mode") VALUES (' + ",".join(["%s"] * 14) + ")",
+        'INSERT INTO cash_flows (flow_id,detected_cycle_id,trade_date,kind,amount,'
+        'status,source,expected_cash,actual_cash,note,detected_date_time,'
+        'confirmed_date_time,confirmed_by,mode) VALUES (' + ",".join(["%s"] * 14) + ")",
         flow_rows)
 
     # ── 계좌 스냅샷 ─────────────────────────────────────────
@@ -366,16 +366,16 @@ def seed(conn) -> None:
         prev_total = total
     many(
         conn,
-        'INSERT INTO "AccountSnapshots" ("SnapshotId","CycleId","TradeDate","Amount",'
-        '"PositionValue","TotalAsset","BaseAsset","NetFlowSinceBase","AdjustedBaseAsset",'
-        '"CumulativeNetFlow","TwrIndex","DayReturnPercent","RecordedDateTime") '
+        'INSERT INTO account_snapshots (snapshot_id,cycle_id,trade_date,amount,'
+        'position_value,total_asset,base_asset,net_flow_since_base,adjusted_base_asset,'
+        'cumulative_net_flow,twr_index,day_return_percent,recorded_date_time) '
         "VALUES (" + ",".join(["%s"] * 13) + ")", snaps)
 
     # ── ④가 비어 있지 않게 ───────────────────────────────────
     many(
         conn,
-        'INSERT INTO "SafeStopEvents" ("EventId","CycleId","OccurredDateTime","Cause",'
-        '"Trigger","ReleasedDateTime","ReleasedBy","ReleaseReason") '
+        'INSERT INTO safe_stop_events (event_id,cycle_id,occurred_date_time,cause,'
+        'trigger,released_date_time,released_by,release_reason) '
         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
         [
             ("E1", cycle_ids[days[-9]], ts(days[-9], 14, 31),
@@ -387,13 +387,13 @@ def seed(conn) -> None:
     )
     many(
         conn,
-        'INSERT INTO "IngestRuns" ("RunId","TargetTable","Source","RangeStartDate",'
-        '"RangeEndDate","Status","TargetCount","SuccessCount","RowsWritten","ErrorMessage",'
-        '"StartedDateTime","FinishedDateTime") VALUES (' + ",".join(["%s"] * 12) + ")",
+        'INSERT INTO ingest_runs (run_id,target_table,source,range_start_date,'
+        'range_end_date,status,target_count,success_count,rows_written,error_message,'
+        'started_date_time,finished_date_time) VALUES (' + ",".join(["%s"] * 12) + ")",
         [
-            ("R1", "DailyBars", "KIS", days[-2], days[-2], "partial", 2_412, 2_180, 2_180,
+            ("R1", "daily_bars", "KIS", days[-2], days[-2], "partial", 2_412, 2_180, 2_180,
              "rate limit 초과로 232종목 미수집", ts(days[-2], 7, 0), ts(days[-2], 8, 12)),
-            ("R2", "DailyFlows", "KIS", days[-1], days[-1], "failed", 2_412, 0, 0,
+            ("R2", "daily_flows", "KIS", days[-1], days[-1], "failed", 2_412, 0, 0,
              "KIS 인증 토큰 발급 실패 (EGW00133)", ts(days[-1], 7, 0), ts(days[-1], 7, 1)),
         ],
     )
@@ -428,13 +428,13 @@ def main() -> None:
     get_settings.cache_clear()
 
     conn = init_db(dsn)
-    seeded = conn.execute('SELECT count(*) AS n FROM "AccountSnapshots"').fetchone()["n"]
+    seeded = conn.execute('SELECT count(*) AS n FROM account_snapshots').fetchone()["n"]
     if args.reset or seeded == 0:
         if seeded:
-            for table in ("Outcomes", "Positions", "Orders", "RiskChecks", "Decisions",
-                          "CycleScores", "CashFlows", "AccountSnapshots", "SafeStopEvents",
-                          "Cycles", "DailyScores", "DailyFlows", "DailyBars",
-                          "MarketIndices", "IngestRuns", "SymbolStates", "Symbols"):
+            for table in ("outcomes", "positions", "orders", "risk_checks", "decisions",
+                          "cycle_scores", "cash_flows", "account_snapshots", "safe_stop_events",
+                          "cycles", "daily_scores", "daily_flows", "daily_bars",
+                          "market_indices", "ingest_runs", "symbol_states", "symbols"):
                 conn.execute(f'DELETE FROM "{table}"')
             conn.commit()
         print("데모 데이터를 채우는 중…")

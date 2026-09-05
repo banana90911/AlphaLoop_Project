@@ -102,14 +102,14 @@ function buildRows(data: TradesResponse | null): Row[] {
   if (!data) return []
   const rows: Row[] = [
     ...data.orders.map((o) => ({
-      key: `o:${o.ClientOrderId}`,
-      at: Date.parse(o.FilledDateTime ?? o.OrderedDateTime),
+      key: `o:${o.client_order_id}`,
+      at: Date.parse(o.filled_date_time ?? o.ordered_date_time),
       kind: 'order' as const,
       order: o,
     })),
     ...data.flows.map((f) => ({
-      key: `f:${f.FlowId}`,
-      at: Date.parse(f.DetectedDateTime),
+      key: `f:${f.flow_id}`,
+      at: Date.parse(f.detected_date_time),
       kind: 'flow' as const,
       flow: f,
     })),
@@ -240,13 +240,13 @@ function OrderRow({
   open: boolean
   onToggle: () => void
 }) {
-  const buy = order.Side === 'buy'
-  const price = order.AverageFillPrice ?? order.OrderPrice
-  const qty = order.FilledQuantity || order.OrderQuantity
+  const buy = order.side === 'buy'
+  const price = order.average_fill_price ?? order.order_price
+  const qty = order.filled_quantity || order.order_quantity
   // 거래대금은 현금이 어느 쪽으로 움직였는지를 부호로 읽힌다 — 매수 −, 매도 +
   const cash = price === null ? null : (buy ? -1 : 1) * price * qty
-  const at = order.FilledDateTime ?? order.OrderedDateTime
-  const filled = order.Status === 'filled' || order.Status === 'partial'
+  const at = order.filled_date_time ?? order.ordered_date_time
+  const filled = order.status === 'filled' || order.status === 'partial'
 
   return (
     <>
@@ -260,8 +260,8 @@ function OrderRow({
           <Badge tone={buy ? 'buy' : 'sell'}>{buy ? '매수' : '매도'}</Badge>
         </td>
         <td className={`${CELL} font-sans`}>
-          <span className="text-ink-50">{order.Name ?? order.SymbolId}</span>{' '}
-          <span className="font-mono text-[11px] text-ink-400">{order.SymbolId}</span>
+          <span className="text-ink-50">{order.name ?? order.symbol_id}</span>{' '}
+          <span className="font-mono text-[11px] text-ink-400">{order.symbol_id}</span>
         </td>
         <td className={`${CELL} text-right`}>{fmtWon(price)}</td>
         <td className={`${CELL} text-right`}>{qty.toLocaleString('ko-KR')}</td>
@@ -269,14 +269,14 @@ function OrderRow({
           {fmtWonSigned(cash)}
         </td>
         <td className={`${CELL} text-right text-ink-400`}>
-          {fmtWon(order.TriggerPrice ?? order.StopPrice)}
+          {fmtWon(order.trigger_price ?? order.stop_price)}
         </td>
         <td className={CELL}>
           {!filled ? (
-            <Badge tone="warn">{ORDER_STATUS[order.Status] ?? order.Status}</Badge>
-          ) : order.PositionStatus === 'open' ? (
+            <Badge tone="warn">{ORDER_STATUS[order.status] ?? order.status}</Badge>
+          ) : order.position_status === 'open' ? (
             <Badge tone="neutral">보유</Badge>
-          ) : order.PositionStatus === 'frozen' ? (
+          ) : order.position_status === 'frozen' ? (
             <Badge tone="warn">동결</Badge>
           ) : (
             <Badge tone="neutral">청산</Badge>
@@ -287,7 +287,7 @@ function OrderRow({
       {open && (
         <tr>
           <td colSpan={10} className="bg-ink-950/60 px-5 py-4">
-            <OrderDetail clientOrderId={order.ClientOrderId} />
+            <OrderDetail clientOrderId={order.client_order_id} />
           </td>
         </tr>
       )}
@@ -304,29 +304,29 @@ function FlowRow({
   open: boolean
   onToggle: () => void
 }) {
-  const inbound = Number(flow.Amount) >= 0
+  const inbound = Number(flow.amount) >= 0
   return (
     <>
       <tr
         onClick={onToggle}
         className={`cursor-pointer transition-colors hover:bg-ink-850/60 ${open ? 'bg-ink-850/60' : ''}`}
       >
-        <td className={`${CELL} pl-5 text-ink-200`}>{fmtDate(flow.TradeDate)}</td>
-        <td className={`${CELL} text-ink-400`}>{fmtTime(flow.DetectedDateTime)}</td>
+        <td className={`${CELL} pl-5 text-ink-200`}>{fmtDate(flow.trade_date)}</td>
+        <td className={`${CELL} text-ink-400`}>{fmtTime(flow.detected_date_time)}</td>
         <td className={CELL}>
-          <Badge tone="flow">{FLOW_KIND[flow.Kind] ?? flow.Kind}</Badge>
+          <Badge tone="flow">{FLOW_KIND[flow.kind] ?? flow.kind}</Badge>
         </td>
         <td className={`${CELL} font-sans text-ink-400`}>계좌 이체</td>
         <td className={`${CELL} text-right text-ink-700`}>—</td>
         <td className={`${CELL} text-right text-ink-700`}>—</td>
         {/* 부호 규칙을 매매와 그대로 잇는다 — 거래대금이 곧 현금 방향(8.4 ③) */}
         <td className={`${CELL} text-right font-semibold ${inbound ? 'text-sell' : 'text-buy'}`}>
-          {fmtWonSigned(flow.Amount)}
+          {fmtWonSigned(flow.amount)}
         </td>
         <td className={`${CELL} text-right text-ink-700`}>—</td>
         <td className={CELL}>
-          <Badge tone={flow.Status === 'unconfirmed' ? 'warn' : 'neutral'}>
-            {FLOW_STATUS[flow.Status] ?? flow.Status}
+          <Badge tone={flow.status === 'unconfirmed' ? 'warn' : 'neutral'}>
+            {FLOW_STATUS[flow.status] ?? flow.status}
           </Badge>
         </td>
         <td className="w-8 pr-5 text-right text-ink-400">{open ? '▲' : '▼'}</td>
@@ -336,20 +336,20 @@ function FlowRow({
           <td colSpan={10} className="bg-ink-950/60 px-5 py-4">
             <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
               <FieldGroup title="감지 근거">
-                <Field label="기대 예수금">{fmtWon(flow.ExpectedCash)}원</Field>
-                <Field label="실제 예수금">{fmtWon(flow.ActualCash)}원</Field>
+                <Field label="기대 예수금">{fmtWon(flow.expected_cash)}원</Field>
+                <Field label="실제 예수금">{fmtWon(flow.actual_cash)}원</Field>
                 <Field label="잔차">
-                  {fmtWonSigned(Number(flow.ActualCash) - Number(flow.ExpectedCash))}원
+                  {fmtWonSigned(Number(flow.actual_cash) - Number(flow.expected_cash))}원
                 </Field>
-                <Field label="감지 경로">{flow.Source}</Field>
+                <Field label="감지 경로">{flow.source}</Field>
               </FieldGroup>
               <FieldGroup title="확인 상태">
-                <Field label="상태">{FLOW_STATUS[flow.Status] ?? flow.Status}</Field>
-                <Field label="감지 사이클">{flow.DetectedCycleId ?? '—'}</Field>
-                <Field label="감지 시각">{fmtStamp(flow.DetectedDateTime)}</Field>
-                <Field label="확인 시각">{fmtStamp(flow.ConfirmedDateTime)}</Field>
+                <Field label="상태">{FLOW_STATUS[flow.status] ?? flow.status}</Field>
+                <Field label="감지 사이클">{flow.detected_cycle_id ?? '—'}</Field>
+                <Field label="감지 시각">{fmtStamp(flow.detected_date_time)}</Field>
+                <Field label="확인 시각">{fmtStamp(flow.confirmed_date_time)}</Field>
               </FieldGroup>
-              {flow.Status === 'unconfirmed' && (
+              {flow.status === 'unconfirmed' && (
                 <div className="min-w-0">
                   <h4 className="mb-1 text-[11px] font-semibold tracking-wide text-ink-200 uppercase">
                     라벨 붙이기
@@ -358,7 +358,7 @@ function FlowRow({
                     대시보드는 읽기 전용이라 여기서 라벨을 붙일 수 없습니다. 터미널에서:
                   </p>
                   <code className="block rounded-lg border border-ink-800 bg-ink-950 px-2.5 py-2 font-mono text-[11px] break-all text-ink-200">
-                    python -m ops.cashflow confirm --id {flow.FlowId} --kind deposit
+                    python -m ops.cashflow confirm --id {flow.flow_id} --kind deposit
                   </code>
                 </div>
               )}
@@ -391,7 +391,7 @@ function OrderDetail({ clientOrderId }: { clientOrderId: string }) {
   if (!detail) return <Skeleton className="h-24 w-full" />
 
   const { decision: d, cycle_score: cs, risk_checks: checks, outcome: out, order } = detail
-  const isEntry = order.Purpose === 'entry'
+  const isEntry = order.purpose === 'entry'
 
   return (
     <div className="grid gap-x-8 gap-y-4 md:grid-cols-2 lg:grid-cols-4">
@@ -401,25 +401,25 @@ function OrderDetail({ clientOrderId }: { clientOrderId: string }) {
       <FieldGroup title={isEntry ? '진입 근거' : '청산 판단'}>
         {d ? (
           <>
-            <Field label="판정">{DECISION_REASON[d.Reason] ?? d.Reason}</Field>
+            <Field label="판정">{DECISION_REASON[d.reason] ?? d.reason}</Field>
             {isEntry && (
               <Field label="점수 / 임계">
-                {fmtNumber(d.Score, 3)} / {fmtNumber(d.Threshold, 3)}
+                {fmtNumber(d.score, 3)} / {fmtNumber(d.threshold, 3)}
               </Field>
             )}
-            <Field label={isEntry ? '진입가' : '기준가'}>{fmtWon(d.EntryPrice)}원</Field>
-            <Field label="손절가">{fmtWon(d.StopPrice)}원</Field>
-            <Field label="R (주당 위험)">{fmtWon(d.RiskPerShare)}원</Field>
+            <Field label={isEntry ? '진입가' : '기준가'}>{fmtWon(d.entry_price)}원</Field>
+            <Field label="손절가">{fmtWon(d.stop_price)}원</Field>
+            <Field label="R (주당 위험)">{fmtWon(d.risk_per_share)}원</Field>
             {isEntry && (
               <>
-                <Field label="목표 보유 수">{d.TargetPositions ?? '—'}종목</Field>
-                <Field label="수량">{d.Quantity ?? '—'}주</Field>
+                <Field label="목표 보유 수">{d.target_positions ?? '—'}종목</Field>
+                <Field label="수량">{d.quantity ?? '—'}주</Field>
                 <Field label="기대 비용 / 엣지">
-                  {fmtWon(d.EstimatedCost)} / {fmtWonSigned(d.NetEdge)}
+                  {fmtWon(d.estimated_cost)} / {fmtWonSigned(d.net_edge)}
                 </Field>
               </>
             )}
-            <Field label="판단 시각">{fmtStamp(d.DecidedDateTime)}</Field>
+            <Field label="판단 시각">{fmtStamp(d.decided_date_time)}</Field>
           </>
         ) : (
           <p className="text-[11px] text-ink-400">
@@ -431,16 +431,16 @@ function OrderDetail({ clientOrderId }: { clientOrderId: string }) {
       <FieldGroup title="점수 항목">
         {cs ? (
           <>
-            <Field label="편입 사유">{cs.Inclusion}</Field>
-            <Field label="종합 점수">{fmtNumber(cs.TotalScore, 3)}</Field>
-            <Field label="전일 기준 점수">{fmtNumber(cs.BaseScore, 3)}</Field>
-            <Field label="장중 수급 백분위">{fmtPercentile(cs.FlowPercentileLive)}</Field>
+            <Field label="편입 사유">{cs.inclusion}</Field>
+            <Field label="종합 점수">{fmtNumber(cs.total_score, 3)}</Field>
+            <Field label="전일 기준 점수">{fmtNumber(cs.base_score, 3)}</Field>
+            <Field label="장중 수급 백분위">{fmtPercentile(cs.flow_percentile_live)}</Field>
             <Field label="ATR / 손절폭">
-              {fmtWon(cs.Atr)} / {fmtWon(cs.StopWidth)}
+              {fmtWon(cs.atr)} / {fmtWon(cs.stop_width)}
             </Field>
-            <Field label="레짐">{d?.Regime ?? '—'}</Field>
+            <Field label="레짐">{d?.regime ?? '—'}</Field>
             <Field label="거래 가능">
-              {cs.IsTradable === false ? (cs.BlockReason ?? '불가') : '가능'}
+              {cs.is_tradable === false ? (cs.block_reason ?? '불가') : '가능'}
             </Field>
           </>
         ) : (
@@ -452,21 +452,21 @@ function OrderDetail({ clientOrderId }: { clientOrderId: string }) {
         {checks.length > 0 ? (
           <ul className="space-y-1">
             {checks.map((c) => {
-              const meta = CHECK_RESULT[c.Result] ?? { label: c.Result, tone: 'neutral' as const }
+              const meta = CHECK_RESULT[c.result] ?? { label: c.result, tone: 'neutral' as const }
               return (
                 <li
-                  key={c.CheckId}
+                  key={c.check_id}
                   className="flex items-baseline justify-between gap-2 border-b border-ink-800/60 py-1.5 last:border-0"
                 >
                   <span className="text-[11px] text-ink-400">
-                    <span className="mr-1.5 font-mono text-ink-700">{c.CheckOrder}</span>
-                    {CHECK_NAME[c.CheckName] ?? c.CheckName}
+                    <span className="mr-1.5 font-mono text-ink-700">{c.check_order}</span>
+                    {CHECK_NAME[c.check_name] ?? c.check_name}
                   </span>
                   <span className="flex items-center gap-1.5 text-right">
-                    {c.ActualValue !== null && (
+                    {c.actual_value !== null && (
                       <span className="font-mono text-[11px] text-ink-400">
-                        {fmtNumber(c.ActualValue, 2)}
-                        {c.LimitValue !== null && ` / ${fmtNumber(c.LimitValue, 2)}`}
+                        {fmtNumber(c.actual_value, 2)}
+                        {c.limit_value !== null && ` / ${fmtNumber(c.limit_value, 2)}`}
                       </span>
                     )}
                     <Badge tone={meta.tone}>{meta.label}</Badge>
@@ -484,33 +484,33 @@ function OrderDetail({ clientOrderId }: { clientOrderId: string }) {
         {out ? (
           <>
             <Field label="실현손익">
-              <span className={Number(out.NetProfitLoss) >= 0 ? 'text-up' : 'text-down'}>
-                {fmtWonSigned(out.NetProfitLoss)}원
+              <span className={Number(out.net_profit_loss) >= 0 ? 'text-up' : 'text-down'}>
+                {fmtWonSigned(out.net_profit_loss)}원
               </span>
             </Field>
-            <Field label="수익률">{fmtPercent(out.ReturnPercent)}</Field>
-            <Field label="R 배수">{fmtNumber(out.RMultiple, 2)}</Field>
-            <Field label="보유일수">{out.HoldingDays ?? '—'}일</Field>
+            <Field label="수익률">{fmtPercent(out.return_percent)}</Field>
+            <Field label="R 배수">{fmtNumber(out.r_multiple, 2)}</Field>
+            <Field label="보유일수">{out.holding_days ?? '—'}일</Field>
             <Field label="진입 → 청산">
-              {fmtWon(out.EntryPrice)} → {fmtWon(out.ExitPrice)}
+              {fmtWon(out.entry_price)} → {fmtWon(out.exit_price)}
             </Field>
             <Field label="수수료 / 세금">
-              {fmtWon(out.Fee)} / {fmtWon(out.Tax)}
+              {fmtWon(out.fee)} / {fmtWon(out.tax)}
             </Field>
             <Field label="청산 사유">
-              {out.ExitReason ? (EXIT_REASON[out.ExitReason] ?? out.ExitReason) : '—'}
+              {out.exit_reason ? (EXIT_REASON[out.exit_reason] ?? out.exit_reason) : '—'}
             </Field>
-            <Field label="청산 시각">{fmtStamp(out.ClosedDateTime)}</Field>
+            <Field label="청산 시각">{fmtStamp(out.closed_date_time)}</Field>
           </>
         ) : (
           <>
             <p className="mb-2 text-[11px] text-ink-400">아직 청산되지 않았습니다.</p>
-            <Field label="주문 상태">{ORDER_STATUS[order.Status] ?? order.Status}</Field>
+            <Field label="주문 상태">{ORDER_STATUS[order.status] ?? order.status}</Field>
             <Field label="체결">
-              {order.FilledQuantity}/{order.OrderQuantity}주
+              {order.filled_quantity}/{order.order_quantity}주
             </Field>
             <Field label="수수료 / 세금">
-              {fmtWon(order.Fee)} / {fmtWon(order.Tax)}
+              {fmtWon(order.fee)} / {fmtWon(order.tax)}
             </Field>
           </>
         )}

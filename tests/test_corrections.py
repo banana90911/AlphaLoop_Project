@@ -116,14 +116,14 @@ def _run(conn, table, status, finished_hours_ago=0.0):
     )
     if finished_hours_ago:      # record_ingest_run은 now로 찍으므로 과거로 되돌린다
         conn.execute(
-            'UPDATE "IngestRuns" SET "FinishedDateTime"=%s WHERE "RunId"=%s',
+            'UPDATE ingest_runs SET finished_date_time=%s WHERE run_id=%s',
             (now_utc() - timedelta(hours=finished_hours_ago), f"r_{table}"),
         )
         conn.commit()
 
 
 def test_freshness_passes_when_batch_ok(conn):
-    for t in ("DailyBars", "DailyScores"):
+    for t in ("daily_bars", "daily_scores"):
         _run(conn, t, "ok")
     ok, reason = check_freshness(conn, trade_date=date(2026, 8, 28))
     assert ok and reason == ""
@@ -136,14 +136,14 @@ def test_freshness_fails_without_record(conn):
 
 def test_freshness_rejects_partial(conn):
     # 일부 종목이 빠진 채 백분위를 매기면 그 종목들이 조용히 후보에서 사라진다
-    _run(conn, "DailyBars", "partial")
-    _run(conn, "DailyScores", "ok")
+    _run(conn, "daily_bars", "partial")
+    _run(conn, "daily_scores", "ok")
     ok, reason = check_freshness(conn, trade_date=date(2026, 8, 28))
     assert not ok and "partial" in reason
 
 
 def test_freshness_rejects_stale_batch(conn):
-    for t in ("DailyBars", "DailyScores"):
+    for t in ("daily_bars", "daily_scores"):
         _run(conn, t, "ok", finished_hours_ago=30)
     ok, reason = check_freshness(conn, trade_date=date(2026, 8, 28))
     assert not ok and "초과" in reason

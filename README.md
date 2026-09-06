@@ -75,10 +75,8 @@
 | 08  | [08-dashboard](docs/08-dashboard.md)               | 대시보드 — 불변식·화면 구성·접속·로그인        |
 | 09  | [09-evaluation](docs/09-evaluation.md)             | 성과 평가·벤치마크·백테스트·게이트·실행 이력      |
 | 10  | [10-operations](docs/10-operations.md)             | 운영 — 멱등성·DB 권한·백업·배포·조용한 실패 차단 |
+| 11  | [11-infrastructure](docs/11-infrastructure.md)     | 인프라 — 서버·DB·API·배포·cron이 실제로 도는 방식 |
 
 
 외부 API 명세 -> [docs/reference/external-apis.md](docs/reference/external-apis.md)
 
-## 면책
-
-이 프로젝트는 개인 학습·연구 본 목적이다.

@@ -21,6 +21,18 @@ backtest = ["scipy>=1.13"]                              # Deflated Sharpe·PBO �
 dashboard = ["fastapi>=0.111", "uvicorn>=0.30", "pyjwt>=2.8"]  # 읽기 전용 대시보드 API + 출입증 서명 (08-dashboard 8.3·8.6)
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10", "pgserver>=0.1.4", "httpx>=0.27"]  # pgserver: 테스트용 1인용 PostgreSQL(설치 불필요) / httpx: FastAPI TestClient
 
+# ── 패키지 탐색 — 최상위 디렉터리가 여럿이라 자동 판별이 안 된다(docs·tests는 제외) ──
+[tool.setuptools.packages.find]
+include = [
+    "analysis*", "backtest*", "broker*", "config*", "core*", "dashboard*",
+    "data*", "eval*", "exec*", "memory*", "ops*", "pipeline*", "risk*",
+]
+
+# 코드가 아니지만 함께 설치돼야 하는 파일 — 스키마와 운영 파라미터
+[tool.setuptools.package-data]
+memory = ["*.sql"]
+config = ["*.toml"]
+
 # ── 가드레일 (불변식 기계 강제 — 03-arch 3.3) ──────────────────
 [tool.ruff]
 target-version = "py312"

@@ -356,6 +356,26 @@ cp ops/deploy/alphaloop.cron /etc/cron.d/alphaloop
 
 절차는 `ops/deploy/README.md`에 정리돼 있다.
 
+### 실거래를 켜고 끄는 것도 여기다
+
+`--live`는 **코드 안에 없다.** cron 지시서에 적힌 명령줄 옵션이다. 그래서 켜고 끄는 데
+코드 수정도, git도, 배포도 필요 없다. 서버에서 `/etc/cron.d/alphaloop` 한 줄만 고치면
+다음 사이클부터 바로 적용된다.
+
+```bash
+# 끄기 — 계획만 내고 주문은 안 낸다
+sed -i 's|run_cycle.py --live|run_cycle.py|' /etc/cron.d/alphaloop
+
+# 켜기 — 실제 주문을 낸다
+sed -i 's|run_cycle.py |run_cycle.py --live |' /etc/cron.d/alphaloop
+
+# 지금 어느 쪽인지 확인
+grep run_cycle /etc/cron.d/alphaloop
+```
+
+저장소의 `ops/deploy/alphaloop.cron`은 **드라이런이 기본값**이다. 이 파일을 다시 복사해도
+실거래가 저절로 켜지지 않게 하려는 것이다. 켤 때는 항상 사람이 직접 `--live`를 붙인다.
+
 ### 왜 이렇게 하는가
 
 코드를 그냥 복사해서 옮길 수도 있다. git을 쓰는 이유는:

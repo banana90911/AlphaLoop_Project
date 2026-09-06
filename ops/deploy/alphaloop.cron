@@ -12,8 +12,11 @@ MAILTO=""
 0 8 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_daily_ingest.py >> /var/log/alphaloop/ingest.log 2>&1
 
 # 정기 사이클 — 하루 1회 14:30. 수급이 굳고 동시호가(14:50~) 전인 시각이다.
-# --live 를 빼면 집행 계획까지만 내고 주문을 내지 않는다(문제 발생 시 여기를 먼저 끈다).
-30 14 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_cycle.py --live >> /var/log/alphaloop/cycle.log 2>&1
+#
+# 기본값은 드라이런이다 — 집행 계획까지만 내고 주문을 내지 않는다. 이 파일이 다시
+# 복사되더라도 실거래가 저절로 켜지지 않게 하려고 안전한 쪽을 기본으로 둔다.
+# 실제 주문을 내려면 아래 줄의 run_cycle.py 뒤에 --live 를 붙인다.
+30 14 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_cycle.py >> /var/log/alphaloop/cycle.log 2>&1
 
 # 보유 감시 — 장중 30분 간격, 상주 손절의 무결성만 본다.
 0,30 9-15 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_watch.py >> /var/log/alphaloop/watch.log 2>&1

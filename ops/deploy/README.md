@@ -21,8 +21,20 @@ grep -vE '^\s*#|^\s*$|^[A-Z]+=' /etc/cron.d/alphaloop   # 4줄이 보여야 한�
 logrotate -d /etc/logrotate.d/alphaloop >/dev/null && echo "회전 설정 OK"
 ```
 
-**매매를 멈추려면** `/etc/cron.d/alphaloop`의 사이클 줄에서 `--live`를 지운다.
-계획은 계속 산출되고 주문만 나가지 않는다. 완전히 멈추려면 그 줄을 주석 처리한다.
+**이 파일의 기본값은 드라이런이다** — 사이클이 집행 계획까지만 내고 주문을 내지 않는다.
+다시 복사해도 실거래가 저절로 켜지지 않게 하려는 것이다.
+
+```bash
+# 실거래 켜기
+sed -i 's|run_cycle.py |run_cycle.py --live |' /etc/cron.d/alphaloop
+# 끄기
+sed -i 's|run_cycle.py --live|run_cycle.py|' /etc/cron.d/alphaloop
+# 지금 상태
+grep run_cycle /etc/cron.d/alphaloop
+```
+
+완전히 멈추려면 그 줄 맨 앞에 `#`을 붙인다. `--live` 여부는 코드와 무관하므로
+git·배포가 필요 없고, 고치는 즉시 다음 사이클부터 적용된다.
 
 ## 2. 대시보드 API
 

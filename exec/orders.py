@@ -11,10 +11,13 @@ from typing import Protocol
 
 from core.timeutils import now_utc
 from memory import journal
+from ops import notify
 
 # 진입 주문구분 — 모드별(모의 IOC 미지원 보정). if-분기 아닌 데이터 룩업.
 ENTRY_ORD_DVSN = {"real": "11", "paper": "00", "backtest": "00"}
 STOP_ORD_DVSN = "22"   # 손절 스톱지정가. 트리거 도달 시 KIS 자동 발동.
+# 브로커가 스톱을 받아들였다고 볼 상태. 그 밖(rejected 등)이면 맨몸 포지션이다.
+_STOP_ACCEPTED = frozenset({"submitted", "filled", "partial"})
 
 
 @dataclass
@@ -114,4 +117,8 @@ def _register_stop(conn, o, filled_qty, cycle_id, seq, did, mode, ts, broker) ->
         trigger_price=float(stop), kis_order_no=sf.broker_order_id,
         status=sf.status, mode=mode, ordered_at=ts,
     )
+    # 스톱이 서지 않았는데 조용히 넘어가면 장 마감 후 갭에 맨몸으로 노출된다.
+    # 매매를 멈추지는 않되(이미 체결된 진입은 되돌릴 수 없다) 사람을 즉시 부른다.
+    if sf.status not in _STOP_ACCEPTED:
+        notify.notify_stop_not_registered(o.code, filled_qty, float(stop), sf.status)
     return stop_coid

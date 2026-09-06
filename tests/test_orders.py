@@ -167,3 +167,48 @@ def test_add_position_weighted_avg(conn):
     assert _count(conn, 'positions') == 1
     assert _count(conn, 'orders', 'WHERE side=\'buy\'') == 2
     assert _count(conn, 'orders', 'WHERE purpose=\'stop\'') == 2
+
+
+class RejectingStopBroker(FakeBroker):
+    """스톱만 거부하는 브로커 — KIS 실계좌가 22를 안 받는 상황을 흉내낸다."""
+
+    def place_stop(self, *, code, qty, trigger_price, limit_price, client_order_id) -> Fill:
+        self.stops.append({"code": code, "qty": qty, "trigger": trigger_price})
+        return Fill(0, None, "rejected")
+
+
+def test_rejected_stop_alerts_the_operator(conn, monkeypatch):
+    """스톱이 거부되면 조용히 넘어가지 않고 사람을 부른다(맨몸 포지션 경보)."""
+    from ops import notify
+
+    sent: list[tuple] = []
+    monkeypatch.setattr(notify, "notify_stop_not_registered",
+                        lambda *a: sent.append(a) or True)
+    _setup(conn)
+    execute_entries(
+        conn, [PlannedOrder("005930", 2, 70000.0, 65000.0)],
+        broker=RejectingStopBroker(), cycle_id="CY1", order_mode="real",
+        market_map={"005930": "KOSPI"},
+    )
+    assert sent == [("005930", 2, 65000.0, "rejected")]
+    # 거부됐다는 사실이 장부에도 남아야 사후에 되짚을 수 있다
+    s = conn.execute(
+        'SELECT status FROM orders WHERE client_order_id=\'CY1-005930-stop-0\''
+    ).fetchone()
+    assert s["status"] == "rejected"
+
+
+def test_accepted_stop_does_not_alert(conn, monkeypatch):
+    """정상 등록된 스톱은 알림을 만들지 않는다(경보 피로 방지)."""
+    from ops import notify
+
+    sent: list[tuple] = []
+    monkeypatch.setattr(notify, "notify_stop_not_registered",
+                        lambda *a: sent.append(a) or True)
+    _setup(conn)
+    execute_entries(
+        conn, [PlannedOrder("005930", 2, 70000.0, 65000.0)],
+        broker=FakeBroker(), cycle_id="CY1", order_mode="real",
+        market_map={"005930": "KOSPI"},
+    )
+    assert sent == []

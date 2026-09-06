@@ -99,6 +99,16 @@ def notify_ingest_failure(target_table: str, reason: str) -> bool:
     )
 
 
+def notify_stop_not_registered(code: str, qty: int, stop_price: float, status: str) -> bool:
+    """손절 스톱이 걸리지 않은 채 보유가 생겼음을 알린다 — 장 마감 후 갭에 무방비인 상태다."""
+    return send(
+        f"종목: `{code}` {qty}주\n걸려던 손절: {stop_price:,.0f}원\n브로커 응답: `{status}`\n\n"
+        "매수는 체결됐는데 손절 예약이 서지 않았습니다. 다음 감시(30분 내)가 재등록을 시도하지만, "
+        "계속 실패하면 장 마감 전에 직접 손절을 걸거나 보유를 정리하세요.",
+        level="critical", title="손절 미등록 보유 발생",
+    )
+
+
 def notify_cycle_failure(cycle_id: str, step: int | None, reason: str) -> bool:
     """사이클이 도중에 죽었을 때 어느 단계에서 멈췄는지 알린다."""
     at = f"{step}단계" if step else "단계 미상"

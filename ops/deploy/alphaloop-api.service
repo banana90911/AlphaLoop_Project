@@ -1,0 +1,20 @@
+# 대시보드 조회 API — /etc/systemd/system/ 로 복사해 쓴다 (08-dashboard)
+#   sudo cp /opt/alphaloop/ops/deploy/alphaloop-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now alphaloop-api
+#
+# 127.0.0.1 에만 묶는다 — 바깥에서 닿는 길은 Tailscale Funnel 하나뿐이어야 한다(10-ops 10.12).
+[Unit]
+Description=AlphaLoop dashboard API (read-only)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/alphaloop
+ExecStart=/opt/alphaloop/.venv/bin/uvicorn dashboard.api:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -17,8 +17,12 @@ from core.timeutils import now_utc
 log = logging.getLogger(__name__)
 
 # 매 사이클 덤프 대상 — 다시 만들 수 없는 표만. 시장 데이터는 제외(재수집 가능).
-TRADE_TABLES = ("decisions", "orders", "positions", "outcomes")
+# 다시 만들 수 없는 표만 담는다. cash_flows가 여기 드는 이유는 증권사가 입출금 내역
+# API를 주지 않아서다 — 잃으면 어느 돈이 수익이고 어느 돈이 원금인지 되짚을 수 없다(10-ops 10.6).
+TRADE_TABLES = ("decisions", "orders", "cash_flows", "positions", "outcomes")
 DUMP_TIMEOUT_S = 600
+DEFAULT_DEST = Path("/var/backups/alphaloop")   # 서버 원본 사본. 3-2-1의 첫 번째다
+DEFAULT_KEEP_DAYS = 14                          # 디스크가 좁아 2주만 둔다(10-ops 10.6)
 
 
 class BackupError(RuntimeError):
@@ -91,3 +95,27 @@ def verify_restore(dump_path: Path, *, scratch_dsn: str) -> bool:
         log.error("복구 리허설 실패: %s", e)
         return False
     return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI 진입점 — 덤프를 뜨고 보관 기간이 지난 스냅샷을 지운다."""
+    import argparse
+
+    ap = argparse.ArgumentParser(description="AlphaLoop 백업")
+    ap.add_argument("kind", choices=("full", "trades"),
+                    help="full=DB 전체(하루 1회) / trades=거래 기록만(사이클마다)")
+    ap.add_argument("--dest", default=str(DEFAULT_DEST), help="덤프를 둘 디렉터리")
+    ap.add_argument("--keep-days", type=int, default=DEFAULT_KEEP_DAYS,
+                    help=f"보관 일수(기본 {DEFAULT_KEEP_DAYS}일). 지난 스냅샷은 지운다")
+    args = ap.parse_args(argv)
+
+    dest = Path(args.dest)
+    dump = dump_full(dest) if args.kind == "full" else dump_trade_records(dest)
+    removed = prune_old(dest, keep_days=args.keep_days)
+    size_mb = dump.stat().st_size / 1_048_576
+    print(f"{args.kind} 백업 완료: {dump} ({size_mb:.1f}MB) · 오래된 스냅샷 {removed}개 삭제")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

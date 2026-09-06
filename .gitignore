@@ -23,3 +23,9 @@ tune_results/
 
 # 대시보드 화면 개발 부산물
 .playwright-mcp/
+
+# Claude Code 로컬 설정
+.claude/
+
+# 편집 가능 설치(pip install -e) 부산물
+*.egg-info/

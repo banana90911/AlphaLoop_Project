@@ -45,14 +45,12 @@ def main() -> None:
     ap.add_argument("--codes", nargs="*", default=None,
                     help="후보 종목코드. 생략 시 당일 DailyScores 통과 종목 전체(+보유 종목)")
     ap.add_argument("--live", action="store_true",
-                    help="실제 주문 송출(모의 모드에서만). 없으면 집행 계획까지만")
+                    help="실제 주문을 송출한다. 없으면 집행 계획까지만(드라이런)")
     ap.add_argument("--skip-freshness", action="store_true",
                     help="데이터 신선도 검사를 건너뛴다(진단용 — 운영에서 쓰지 말 것)")
     args = ap.parse_args()
 
     mode = get_settings().trading_mode
-    if args.live and mode != "paper":
-        raise SystemExit(f"--live는 모의(paper)에서만 허용한다 (현재 mode={mode!r})")
 
     conn = init_db()
     heartbeat.ping_start()

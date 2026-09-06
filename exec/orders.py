@@ -86,7 +86,8 @@ def execute_entries(
             position_id = journal.upsert_entry_position(
                 conn, cycle_id=cycle_id, symbol_id=o.code, add_quantity=fill.filled_qty,
                 fill_price=entry_px, entry_decision_id=did,
-                current_stop_price=o.stop, initial_stop_price=o.stop,   # 진입 시 initial=current(R 고정)
+                # 진입 시 initial=current — 이후 트레일링이 올라가도 R 산정 기준은 고정된다
+                current_stop_price=o.stop, initial_stop_price=o.stop,
                 market=market_map.get(o.code),
             )
             # 손절 스톱 KIS 등록 — 체결 즉시 등록해 장간 갭 맨몸 포지션을 막는다

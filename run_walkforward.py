@@ -13,9 +13,8 @@ import json
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
-
-from backtest import loader, spec_engine as se
+from backtest import loader
+from backtest import spec_engine as se
 from backtest.walkforward import rolling_splits
 from config.settings import load_params
 from data import cache

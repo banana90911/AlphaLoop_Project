@@ -77,4 +77,5 @@ def fetch_universe(*, common_only: bool = True) -> pd.DataFrame:
 def load_market_map() -> dict[str, str]:
     """종목코드 → 시장(KOSPI/KOSDAQ) 룩업을 반환한다(캐시 우선)."""
     df = pd.read_parquet(_CACHE) if _CACHE.exists() else fetch_universe()
-    return dict(zip(df["code"], df["market"]))
+    # 같은 DataFrame의 두 열이라 길이가 어긋날 수 없다 — strict로 그 전제를 명시한다
+    return dict(zip(df["code"], df["market"], strict=True))

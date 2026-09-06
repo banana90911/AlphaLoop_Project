@@ -12,7 +12,8 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 
-from backtest import loader, spec_engine as engine
+from backtest import loader
+from backtest import spec_engine as engine
 from config.settings import load_params
 from data import cache
 from eval import metrics

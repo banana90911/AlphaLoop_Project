@@ -11,12 +11,15 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 
 from config.settings import Settings, get_settings, load_params
 from core.timeutils import now_utc
+
+if TYPE_CHECKING:            # 순환 임포트 회피 — 실행 시점엔 각 메서드 안에서 가져온다
+    from exec.orders import Fill
 
 # ── 모드별 차이 = 데이터(코드 분기 아님) ────────────────────────────────
 # TR(Transaction) ID: KIS API가 요청의 "기능 종류"를 구분하는 코드. URL 경로는 같아도

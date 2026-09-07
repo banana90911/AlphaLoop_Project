@@ -62,3 +62,46 @@ def test_cache_roundtrip_and_clear(tmp_path, monkeypatch):
     assert cache.load("missing") is None
     assert cache.clear() == 1
     assert not cache.exists("ohlcv_X")
+
+
+# ── 지수 수신 — yfinance 컬럼 대소문자 (2026-09-07 배치 실패 회귀) ──────────
+def _fake_yf_frame(*, upper: bool, multi: bool) -> pd.DataFrame:
+    """yfinance가 돌려주는 모양을 흉내낸다."""
+    cols = ["Open", "High", "Low", "Close", "Volume"] if upper else \
+           ["open", "high", "low", "close", "volume"]
+    df = pd.DataFrame(
+        [[1.0, 2.0, 0.5, 1.5, 100], [1.5, 2.5, 1.0, 2.0, 200]],
+        index=pd.to_datetime(["2026-09-03", "2026-09-04"]), columns=cols,
+    )
+    if multi:                                  # 단일 심볼도 (필드, 심볼) 튜플로 온다
+        df.columns = pd.MultiIndex.from_tuples([(c, "^KS11") for c in cols])
+    return df
+
+
+@pytest.mark.parametrize("upper", [True, False])
+@pytest.mark.parametrize("multi", [True, False])
+def test_fetch_index_accepts_either_column_case(monkeypatch, upper, multi):
+    """yfinance가 'Close'로 주든 'close'로 주든 받아낸다.
+
+    실제로 yfinance는 첫 글자를 대문자로 준다. 예전 코드가 소문자 이름으로만
+    rename을 걸어서 2026-09-07 배치의 지수 적재가 통째로 실패했다.
+    """
+    from data.sources import index_history as ih
+
+    monkeypatch.setattr(ih.yf, "download",
+                        lambda *a, **k: _fake_yf_frame(upper=upper, multi=multi))
+    df = ih.fetch_index("KOSPI", "20260901", "20260905")
+    assert list(df.columns) == ["date", "open", "high", "low", "close", "volume"]
+    assert df["close"].tolist() == [1.5, 2.0]
+    assert df["date"].iloc[0] == date(2026, 9, 3)
+
+
+def test_fetch_index_reports_which_columns_are_missing(monkeypatch):
+    """컬럼이 정말 없으면 무엇이 없는지 밝히고 실패한다."""
+    from data.sources import index_history as ih
+
+    bad = pd.DataFrame({"Close": [1.0]}, index=pd.to_datetime(["2026-09-03"]))
+    monkeypatch.setattr(ih.yf, "download", lambda *a, **k: bad)
+    with pytest.raises(ih.IndexHistoryError) as e:
+        ih.fetch_index("KOSPI", "20260901", "20260905")
+    assert "open" in str(e.value)              # 없는 컬럼을 알려준다

@@ -25,6 +25,9 @@ from memory.db import init_db
 
 # 12-1 모멘텀(252거래일) + 20일 스킵 + 휴장 여유. 점수 계산이 읽어갈 최소 이력이다.
 SCORE_LOOKBACK_DAYS = 450
+# 일상 배치의 기본 조회 창(달력일). 하루만 요청하면 그날이 아직 미확정일 때 받을 것이
+# 없어진다. 연휴가 껴도 확정 봉이 최소 하나는 들어오도록 넉넉히 잡는다.
+RECENT_WINDOW_DAYS = 10
 # 지수 200일선 워밍업.
 INDEX_LOOKBACK_DAYS = 400
 # 증권그룹 ST(주권) → 07-model SecurityType. 마스터는 보통주만 걸러 받는다.
@@ -94,12 +97,16 @@ def ingest_bars_and_flows(
         except Exception as ex:
             errors.append(f"{code} bars {type(ex).__name__}")
             continue
+        # 장이 열리기 전에 당일을 조회하면 KIS가 전일 종가로 채운 거래량 0짜리 봉을 준다.
+        # 그대로 넣으면 고가=저가라 ATR이 0이 되고 변동성이 과소평가된다 — 확정 봉만 받는다.
+        if "volume" in df.columns:
+            df = df[df["volume"] > 0]
         if df.empty:
             continue
         bar_rows += journal.upsert_daily_bars(conn, code, df.to_dict("records"))
         bar_ok += 1
         try:                                    # 수급 실패는 일봉을 막지 않는다
-            flows = _recent_flows(client, code, start)
+            flows = _recent_flows(client, code)
         except Exception as ex:
             errors.append(f"{code} flows {type(ex).__name__}")
             continue
@@ -121,14 +128,18 @@ def ingest_bars_and_flows(
     )
 
 
-def _recent_flows(client: KISClient, code: str, start: date) -> list[dict]:
-    """투자자 순매수(최근 ≤30거래일) 중 start 이후분만 반환한다."""
+def _recent_flows(client: KISClient, code: str) -> list[dict]:
+    """투자자 순매수(최근 ≤30거래일)를 그대로 반환한다.
+
+    날짜로 자르지 않는다. 예전에는 `start`(= 배치 기준일) 이후만 남겼는데, 장 시작 전
+    08:00에 도는 배치에서는 그날 수급이 아직 존재하지 않아 매번 0건이 됐다. 적재는
+    멱등이라 이미 있는 날을 다시 넣어도 문제가 없고, 오히려 빠진 날이 메워진다.
+    """
     from data.market_data import fetch_supply
 
     df = fetch_supply(client, code)
     if df.empty:
         return []
-    df = df[df.index >= start]
     return [
         {"date": idx, "foreign_net": r.get("foreign_net"), "inst_net": r.get("inst_net")}
         for idx, r in df.iterrows()
@@ -290,7 +301,7 @@ def main() -> None:
         raise SystemExit("Symbols가 비어 있다 — --skip-symbols 없이 먼저 돌릴 것")
 
     # ② 일봉·수급
-    start = trade_date - timedelta(days=args.backfill) if args.backfill else trade_date
+    start = trade_date - timedelta(days=args.backfill or RECENT_WINDOW_DAYS)
     done = _already_done(conn, trade_date) if args.resume else set()
     if done:
         print(f"  이어받기: {len(done):,}종목 건너뜀")

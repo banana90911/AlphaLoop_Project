@@ -13,8 +13,9 @@ import yfinance as yf
 
 # 시장 → yfinance 심볼
 _SYMBOLS = {"KOSPI": "^KS11", "KOSDAQ": "^KQ11"}
-_COLS = {"open": "open", "high": "high", "low": "low", "close": "close",
-         "volume": "volume"}
+# yfinance는 'Close'처럼 첫 글자를 대문자로 준다. 대소문자에 기대지 않고
+# 받은 뒤 소문자로 맞춘 다음 이 순서로 고른다.
+_COLS = ("open", "high", "low", "close", "volume")
 
 
 class IndexHistoryError(RuntimeError):
@@ -37,10 +38,11 @@ def fetch_index(market: str, start: str, end: str) -> pd.DataFrame:
     df = raw.copy()
     if isinstance(df.columns, pd.MultiIndex):       # 단일심볼도 (필드, 심볼) 튜플로 옴
         df.columns = [c[0] for c in df.columns]
-    try:
-        df = df.rename(columns=_COLS)[list(_COLS.values())]
-    except KeyError as e:
-        raise IndexHistoryError(f"{market} 지수 컬럼 이상: {e}") from e
+    df.columns = [str(c).lower() for c in df.columns]
+    missing = [c for c in _COLS if c not in df.columns]
+    if missing:
+        raise IndexHistoryError(f"{market} 지수 컬럼 없음: {missing} (받은 것: {list(df.columns)})")
+    df = df[list(_COLS)]
     df.index = pd.to_datetime(df.index).date
     df = df.reset_index(names="date")
     return df

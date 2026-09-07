@@ -137,19 +137,28 @@ def test_stop_gap_multi_position_filters():
 
 # ── execute_exits 집행 통합 (FakeBroker로 송출→Orders·Outcomes·Positions) ──
 class _FakeBroker:
-    def __init__(self, exit_fills=None):
+    def __init__(self, exit_fills=None, revise_result=None):
         self.exit_fills = exit_fills or {}
         self.exits: list[tuple] = []
+        self.revisions: list[dict] = []
+        self.revise_result = revise_result or Fill(0, None, "submitted", "S2", "0601")
 
     def place_entry(self, *, code, qty, price, ord_dvsn, client_order_id) -> Fill:
         return Fill(qty, float(price), "filled")
 
     def place_stop(self, *, code, qty, trigger_price, limit_price, client_order_id) -> Fill:
-        return Fill(0, None, "submitted", "S")
+        return Fill(0, None, "submitted", "S", "0601")   # (주문번호, 조직번호)
 
     def place_exit(self, *, code, qty, ord_dvsn, client_order_id) -> Fill:
         self.exits.append((code, qty, ord_dvsn))
         return self.exit_fills.get(code, Fill(qty, None, "filled"))   # None → 현재가 사용
+
+    def revise_stop(self, *, code, qty, orgn_odno, org_no, trigger_price, limit_price) -> Fill:
+        self.revisions.append(
+            {"code": code, "qty": qty, "odno": orgn_odno, "org": org_no,
+             "trigger": trigger_price}
+        )
+        return self.revise_result
 
 
 def _df(last_close: float, base: float = 70000.0, n: int = 300) -> pd.DataFrame:
@@ -225,6 +234,15 @@ def test_execute_breakeven_raises_stop_only(conn):
     assert pos["current_stop_price"] == 70000.0           # 본전으로 상향
     assert pos["is_breakeven_done"] is True               # 다음 사이클에 ③이 또 걸리지 않게
     assert _count(conn, 'outcomes') == 0
+    # 장부만 고치고 끝내면 밤사이 갭에서 옛 손절가로 체결된다 — 브로커 예약까지 정정해야 한다
+    assert len(fb.revisions) == 1
+    assert fb.revisions[0]["trigger"] == 70000 and fb.revisions[0]["odno"] == "S"
+    assert fb.revisions[0]["org"] == "0601"
+    # 정정 결과(새 주문번호)를 갈아 끼워 다음 정정이 가능해야 한다
+    o = conn.execute(
+        'SELECT trigger_price, kis_order_no FROM orders WHERE purpose=\'stop\''
+    ).fetchone()
+    assert float(o["trigger_price"]) == 70000.0 and o["kis_order_no"] == "S2"
 
 
 def test_execute_hold_no_action(conn):
@@ -265,3 +283,35 @@ def test_time_exit_needs_more_calendar_days_now():
 
 def test_days_held_handles_missing_entry_date():
     assert _days_held(None, None) == 0
+
+
+def test_trailing_revises_broker_stop(conn):
+    """트레일링 상향도 브로커 예약을 정정한다(본전 상향과 같은 경로)."""
+    fb = _FakeBroker()
+    _enter(conn, fb, price=70000.0, stop=65000.0)
+    journal.update_stop(conn, conn.execute(
+        'SELECT position_id FROM positions').fetchone()["position_id"], 70000.0,
+        breakeven_done=True)                       # 본전은 이미 끝난 상태로 만든다
+    journal.create_cycle(conn, "CY2")
+    execute_exits(conn, {"005930": _df(90000.0)}, broker=fb, cycle_id="CY2",
+                  order_mode="paper")
+    assert len(fb.revisions) == 1                   # 트레일링으로 한 번 더 올라간다
+    assert fb.revisions[0]["trigger"] > 70000
+
+
+def test_revision_failure_alerts_and_keeps_ledger(conn, monkeypatch):
+    """정정이 거부되면 사람을 부르되 매매는 멈추지 않는다(옛 손절이 살아 있다)."""
+    from ops import notify
+
+    sent: list = []
+    monkeypatch.setattr(notify, "notify_stop_not_revised",
+                        lambda *a: sent.append(a) or True)
+    fb = _FakeBroker(revise_result=Fill(0, None, "rejected"))
+    _enter(conn, fb)
+    journal.create_cycle(conn, "CY2")
+    execute_exits(conn, {"005930": _df(78000.0)}, broker=fb, cycle_id="CY2",
+                  order_mode="paper")
+    assert len(sent) == 1 and sent[0][0] == "005930"
+    # 정정에 실패해도 장부는 올라간다 — 다음 감시가 다시 시도할 수 있어야 한다
+    assert conn.execute(
+        'SELECT current_stop_price FROM positions').fetchone()["current_stop_price"] == 70000.0

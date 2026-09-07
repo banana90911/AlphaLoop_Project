@@ -287,7 +287,8 @@ CREATE TABLE IF NOT EXISTS orders (
     client_order_id    text PRIMARY KEY,           -- {CycleId}-{SymbolId}-{Side}-{Seq}
     cycle_id          text REFERENCES cycles(cycle_id),      -- 상주 스톱 자동 체결은 NULL
     decision_id       text REFERENCES decisions(decision_id),
-    kis_order_no       text,                       -- 정정·취소에 필요
+    kis_order_no       text,                       -- 정정·취소에 필요(원주문번호 ODNO)
+    kis_order_org_no   text,                       -- 〃 거래소전송주문조직번호. 이 둘이 있어야 TTTC0013U로 정정할 수 있다
     symbol_id         text NOT NULL,
     side             text NOT NULL CHECK (side IN ('buy','sell')),
     purpose          text NOT NULL
@@ -392,3 +393,9 @@ BEGIN
     END IF;
 END
 $$;
+
+
+-- ── 나중에 더한 컬럼 ────────────────────────────────────────────────────
+-- CREATE TABLE IF NOT EXISTS는 이미 있는 표에 컬럼을 더해주지 않는다. Alembic을
+-- 들이기 전까지(memory/migrations/README.md) 여기에 멱등한 ALTER를 모아 둔다.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS kis_order_org_no text;

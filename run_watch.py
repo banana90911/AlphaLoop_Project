@@ -16,6 +16,7 @@ from exec.exits import StopPosition, detect_stop_gaps
 from exec.orders import STOP_ORD_DVSN
 from memory import journal
 from memory.db import init_db
+from ops import notify
 
 # KIS에 살아 있다고 볼 주문 상태 — 체결·취소·거부는 '없는 것'으로 친다.
 _ALIVE = {"submitted", "partial"}
@@ -24,9 +25,12 @@ _ALIVE = {"submitted", "partial"}
 def load_open_positions(conn) -> list[dict]:
     """open 보유(잔량>0)를 조회한다 — 감시 대상."""
     return conn.execute(
-        'SELECT position_id, symbol_id, quantity, current_stop_price, '
-        'active_stop_order_id FROM positions '
-        "WHERE status='open' AND quantity > 0"
+        'SELECT p.position_id, p.symbol_id, p.quantity, p.current_stop_price, '
+        'p.active_stop_order_id, o.trigger_price AS broker_stop_price, '
+        'o.kis_order_no, o.kis_order_org_no '
+        'FROM positions p '
+        'LEFT JOIN orders o ON o.client_order_id = p.active_stop_order_id '
+        "WHERE p.status='open' AND p.quantity > 0"
     ).fetchall()
 
 
@@ -91,6 +95,52 @@ def register_missing_stops(conn, client: KISClient, missing: list[dict], *,
     return ids
 
 
+def find_stale_stops(positions: list[dict]) -> list[dict]:
+    """장부의 손절선과 KIS에 걸린 발동가가 어긋난 보유를 찾는다.
+
+    트레일링·본전 상향이 브로커에 반영되지 않으면 밤사이 갭에서 옛 가격으로 체결된다.
+    존재만 보는 `find_missing_stops`는 이 어긋남을 잡지 못한다(10-ops 10.13).
+    """
+    stale = []
+    for p in positions:
+        want, have = p["current_stop_price"], p["broker_stop_price"]
+        if want is None or have is None:
+            continue
+        if abs(float(want) - float(have)) >= 1.0:      # 원 단위 — 반올림 차이는 무시
+            stale.append(p)
+    return stale
+
+
+def revise_stale_stops(conn, client: KISClient, stale: list[dict], *,
+                       dry_run: bool) -> list[str]:
+    """어긋난 손절 예약을 장부 값으로 정정한다. 반환: 정정한 종목 목록."""
+    done: list[str] = []
+    for p in stale:
+        if not p["kis_order_no"] or not p["kis_order_org_no"]:
+            print(f"  {p['symbol_id']}: KIS 식별자가 없어 정정 불가(옛 주문)")
+            continue
+        trigger = int(round(float(p["current_stop_price"])))
+        if dry_run:
+            done.append(p["symbol_id"])
+            continue
+        fill = client.revise_stop(
+            code=p["symbol_id"], qty=int(p["quantity"]),
+            orgn_odno=str(p["kis_order_no"]), org_no=str(p["kis_order_org_no"]),
+            trigger_price=trigger, limit_price=trigger,
+        )
+        if fill.status in ("submitted", "filled", "partial"):
+            journal.record_stop_revision(
+                conn, client_order_id=p["active_stop_order_id"],
+                trigger_price=float(trigger), kis_order_no=fill.broker_order_id,
+                kis_order_org_no=fill.broker_org_no,
+            )
+            done.append(p["symbol_id"])
+        else:
+            notify.notify_stop_not_revised(
+                p["symbol_id"], float(trigger), f"감시 정정 실패({fill.status})")
+    return done
+
+
 def find_stop_gaps(client: KISClient, positions: list[dict]) -> list:
     """현재가가 손절선을 이탈했는데 아직 보유 중인 종목(손절 구멍)을 찾는다."""
     prices: dict[str, float] = {}
@@ -141,14 +191,25 @@ def main() -> None:
     else:
         print("  ① 상주 스톱 정상")
 
-    # ② 손절 구멍
+    # ② 손절선 어긋남 — 장부는 올렸는데 KIS 예약이 옛 가격인 경우
+    stale = find_stale_stops(positions)
+    if stale:
+        for p in stale:
+            print(f"  손절 어긋남 {p['symbol_id']}: 장부 {p['current_stop_price']:,.0f} "
+                  f"≠ KIS {p['broker_stop_price']:,.0f}")
+        fixed = revise_stale_stops(conn, client, stale, dry_run=args.check)
+        print(f"  {'정정 예정' if args.check else '정정 완료'} {len(fixed)}건")
+    else:
+        print("  ② 손절선 일치")
+
+    # ③ 손절 구멍
     hits = find_stop_gaps(client, positions)
     if hits:
         for h in hits:
-            print(f"  ② 손절 구멍 {h.symbol}: 현재가 {h.price:,.0f} ≤ 손절 {h.stop:,.0f}")
+            print(f"  ③ 손절 구멍 {h.symbol}: 현재가 {h.price:,.0f} ≤ 손절 {h.stop:,.0f}")
         print("  → 정리는 사이클의 청산 경로가 한다(run_cycle)")
     else:
-        print("  ② 손절 구멍 없음")
+        print("  ③ 손절 구멍 없음")
 
     if args.check:
         print("\n점검 모드 — 주문을 내지 않았다")

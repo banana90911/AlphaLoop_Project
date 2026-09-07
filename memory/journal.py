@@ -487,6 +487,7 @@ def record_order(
     trigger_price: float | None = None,
     average_fill_price: float | None = None,
     kis_order_no: str | None = None,
+    kis_order_org_no: str | None = None,
     fee: float | None = None,
     tax: float | None = None,
     slippage_estimate: float | None = None,
@@ -497,14 +498,15 @@ def record_order(
     """KIS 주문·체결 1건을 `Orders`에 적재."""
     conn.execute(
         'INSERT INTO orders(client_order_id, cycle_id, decision_id, kis_order_no, '
-        'symbol_id, side, purpose, order_type, order_quantity, order_price, '
-        'trigger_price, filled_quantity, average_fill_price, fee, tax, '
+        'kis_order_org_no, symbol_id, side, purpose, order_type, order_quantity, '
+        'order_price, trigger_price, filled_quantity, average_fill_price, fee, tax, '
         'slippage_estimate, status, ordered_date_time, filled_date_time, mode) '
-        "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (client_order_id, cycle_id, decision_id, kis_order_no, symbol_id, side, purpose,
-         order_type, order_quantity, order_price, trigger_price, filled_quantity,
-         average_fill_price, fee, tax, slippage_estimate, status,
-         ordered_at or now_utc(), filled_at, mode),
+        "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+        "%s, %s, %s)",
+        (client_order_id, cycle_id, decision_id, kis_order_no, kis_order_org_no,
+         symbol_id, side, purpose, order_type, order_quantity, order_price,
+         trigger_price, filled_quantity, average_fill_price, fee, tax,
+         slippage_estimate, status, ordered_at or now_utc(), filled_at, mode),
     )
     conn.commit()
 
@@ -563,6 +565,39 @@ def set_active_stop(conn: psycopg.Connection, position_id: str, client_order_id:
         (client_order_id, now_utc(), position_id),
     )
     conn.commit()
+
+
+def record_stop_revision(
+    conn: psycopg.Connection,
+    *,
+    client_order_id: str,
+    trigger_price: float,
+    kis_order_no: str | None = None,
+    kis_order_org_no: str | None = None,
+) -> None:
+    """정정된 손절 예약의 새 발동가와 KIS 식별자를 주문 행에 반영한다.
+
+    정정은 KIS가 새 주문번호를 돌려주므로, 다음 정정을 위해 그 번호로 갈아 끼운다.
+    """
+    conn.execute(
+        'UPDATE orders SET trigger_price=%s, order_price=%s, '
+        'kis_order_no=COALESCE(%s, kis_order_no), '
+        'kis_order_org_no=COALESCE(%s, kis_order_org_no) '
+        'WHERE client_order_id=%s',
+        (trigger_price, trigger_price, kis_order_no, kis_order_org_no, client_order_id),
+    )
+    conn.commit()
+
+
+def active_stop_order(conn: psycopg.Connection, position_id: str) -> dict[str, Any] | None:
+    """포지션에 연결된 상주 스톱 주문을 반환한다(정정에 쓸 KIS 식별자 포함)."""
+    return conn.execute(
+        'SELECT o.client_order_id, o.kis_order_no, o.kis_order_org_no, '
+        'o.order_quantity, o.trigger_price '
+        'FROM positions p JOIN orders o ON o.client_order_id = p.active_stop_order_id '
+        'WHERE p.position_id = %s',
+        (position_id,),
+    ).fetchone()
 
 
 def update_stop(

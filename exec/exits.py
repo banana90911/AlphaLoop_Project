@@ -16,6 +16,7 @@ from core import costs
 from core.timeutils import kst_today, now_utc
 from core.trading_days import trading_days_between
 from memory import journal
+from ops import notify
 
 # 청산 주문구분 — 모드별(모의 IOC 미지원이라 01 일반시장가).
 EXIT_ORD_DVSN = {"real": "13", "paper": "01", "backtest": "01"}
@@ -187,6 +188,10 @@ def execute_exits(
         if act.action == "hold":
             continue
         if act.action == "raise_stop":
+            # 장부만 고치면 소용이 없다 — 밤에 실제로 발동하는 것은 KIS에 걸린 예약이다.
+            # 먼저 브로커 예약을 정정하고, 그 결과와 무관하게 장부는 갱신한다
+            # (정정이 실패해도 다음 감시가 다시 시도할 수 있어야 하므로).
+            _revise_broker_stop(conn, broker, r, act.new_stop, code)
             # 본전 상향이면 완료 표시까지 남긴다 — 안 남기면 다음 사이클에 ③이 또 걸린다.
             journal.update_stop(
                 conn, r["position_id"], act.new_stop,
@@ -202,6 +207,40 @@ def execute_exits(
                          cycle_id, day, order_mode, mode, tax_params)
         )
     return order_ids
+
+
+def _revise_broker_stop(conn, broker, row, new_stop: float, code: str) -> bool:
+    """KIS에 걸린 손절 예약의 발동가를 새 값으로 정정한다. 반환: 성공 여부.
+
+    실패해도 매매를 멈추지 않는다 — 이미 걸린 옛 손절이 그대로 살아 있어 파산 방지는
+    되기 때문이다. 다만 이익 보존이 깨진 상태이므로 사람을 부른다(10-ops 10.13).
+    """
+    if broker is None:                       # 드라이런·백테스트 — 장부만 움직인다
+        return True
+    stop_order = journal.active_stop_order(conn, row["position_id"])
+    if stop_order is None or not stop_order["kis_order_no"]:
+        notify.notify_stop_not_revised(code, new_stop, "상주 스톱 주문을 찾지 못함")
+        return False
+    org_no = stop_order["kis_order_org_no"]
+    if not org_no:
+        # 조직번호를 안 받아 둔 옛 주문 — 정정에 필요한 값이 없다.
+        notify.notify_stop_not_revised(code, new_stop, "조직번호 미보유(옛 주문)")
+        return False
+
+    trigger = int(round(new_stop))
+    fill = broker.revise_stop(
+        code=code, qty=int(stop_order["order_quantity"]),
+        orgn_odno=str(stop_order["kis_order_no"]), org_no=str(org_no),
+        trigger_price=trigger, limit_price=trigger,
+    )
+    if fill.status not in ("submitted", "filled", "partial"):
+        notify.notify_stop_not_revised(code, new_stop, f"브로커 응답 {fill.status}")
+        return False
+    journal.record_stop_revision(
+        conn, client_order_id=stop_order["client_order_id"], trigger_price=float(trigger),
+        kis_order_no=fill.broker_order_id, kis_order_org_no=fill.broker_org_no,
+    )
+    return True
 
 
 def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,

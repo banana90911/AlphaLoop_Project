@@ -86,8 +86,23 @@ def main() -> None:
         print(f"   ✗ 거부됨: {e}")
         stop = None
 
-    # ③ KIS가 실제로 받아들였는지 일별주문조회로 되짚는다 — 응답만 믿지 않는다
-    print("\n③ 일별주문조회로 확인…")
+    # ③ 손절선 정정 — 트레일링이 실제로 브로커에 닿는지가 이 스크립트의 두 번째 목적이다
+    revised = None
+    if stop is not None and stop.status != "rejected" and stop.broker_order_id:
+        new_trigger = int(round(trigger * 0.99))     # 1% 더 낮춰 정정만 확인한다
+        print(f"\n③ 손절 정정(TTTC0013U) {trigger:,} → {new_trigger:,}원…")
+        if not stop.broker_org_no:
+            print("   ✗ 조직번호를 받지 못했다 — 정정에 필요한 값이 없다")
+        else:
+            revised = client.revise_stop(
+                code=args.code, qty=entry.filled_qty,
+                orgn_odno=str(stop.broker_order_id), org_no=str(stop.broker_org_no),
+                trigger_price=new_trigger, limit_price=new_trigger,
+            )
+            print(f"   상태 {revised.status} · 새 주문번호 {revised.broker_order_id}")
+
+    # ④ KIS가 실제로 받아들였는지 일별주문조회로 되짚는다 — 응답만 믿지 않는다
+    print("\n④ 일별주문조회로 확인…")
     rows = client.get_daily_orders(kst_today().strftime("%Y%m%d"))
     mine = [r for r in rows if r.get("pdno") == args.code]
     for r in mine:
@@ -100,6 +115,10 @@ def main() -> None:
         print("✓ 스톱지정가(22)가 실계좌에서 받아들여졌다 — 손절 예약 경로가 동작한다")
     else:
         print("✗ 스톱지정가(22)가 조회에 잡히지 않는다 — place_stop의 CNDT_PRIC 방식을 재검토할 것")
+    if revised is not None:
+        ok = revised.status in ("submitted", "filled", "partial")
+        print(f"{'✓' if ok else '✗'} 손절 정정(TTTC0013U) {revised.status}"
+              f" — 트레일링이 브로커에 {'닿는다' if ok else '닿지 않는다'}")
     print("정리는 사람이 한다: KIS 앱에서 ① 스톱 예약 취소 → ② 보유분 매도")
     print("=" * 60)
     sys.exit(0 if live_stop else 1)

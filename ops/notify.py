@@ -109,6 +109,16 @@ def notify_stop_not_registered(code: str, qty: int, stop_price: float, status: s
     )
 
 
+def notify_stop_not_revised(code: str, new_stop: float, reason: str) -> bool:
+    """손절선을 올리려 했는데 브로커 예약을 못 고쳤음을 알린다 — 이익 보존이 깨진 상태다."""
+    return send(
+        f"종목: `{code}`\n올리려던 손절: {new_stop:,.0f}원\n실패 사유: {reason}\n\n"
+        "장부의 손절선만 올라가고 증권사 예약은 옛 가격 그대로입니다. "
+        "파산 방지(초기 손절)는 살아 있지만 밤사이 갭에서는 옛 가격으로 체결됩니다.",
+        level="warning", title="손절 정정 실패",
+    )
+
+
 def notify_cycle_failure(cycle_id: str, step: int | None, reason: str) -> bool:
     """사이클이 도중에 죽었을 때 어느 단계에서 멈췄는지 알린다."""
     at = f"{step}단계" if step else "단계 미상"

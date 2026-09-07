@@ -23,11 +23,14 @@ from risk.risk_engine import (
     Account,
     MarketState,
     OrderProposal,
-    Position as RiskPosition,
     check_new_buy,
     detect_anomaly,
     screen_cycle,
 )
+from risk.risk_engine import (
+    Position as RiskPosition,
+)
+
 
 @dataclass
 class ClosedTrade:

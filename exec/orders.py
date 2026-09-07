@@ -27,6 +27,9 @@ class Fill:
     fill_price: float | None
     status: str                       # submitted/filled/partial/cancelled/rejected
     broker_order_id: str | None = None
+    # 정정(TTTC0013U)에는 원주문번호와 거래소전송주문조직번호가 둘 다 필요하다.
+    # 주문을 낼 때 받아 두지 않으면 나중에 손절선을 올릴 방법이 없다.
+    broker_org_no: str | None = None
     fee: float | None = None
     tax: float | None = None
 
@@ -115,6 +118,7 @@ def _register_stop(conn, o, filled_qty, cycle_id, seq, did, mode, ts, broker) ->
         symbol_id=o.code, side="sell", purpose="stop", order_type=STOP_ORD_DVSN,
         order_quantity=filled_qty, filled_quantity=0, order_price=float(stop),
         trigger_price=float(stop), kis_order_no=sf.broker_order_id,
+        kis_order_org_no=sf.broker_org_no,
         status=sf.status, mode=mode, ordered_at=ts,
     )
     # 스톱이 서지 않았는데 조용히 넘어가면 장 마감 후 갭에 맨몸으로 노출된다.

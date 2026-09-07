@@ -34,6 +34,7 @@ _PROFILES: dict[str, dict[str, Any]] = {
             "buy": "TTTC0802U",
             "sell": "TTTC0801U",
             "daily_orders": "TTTC0081R",
+            "revise": "TTTC0013U",
         },
     },
     "paper": {
@@ -44,6 +45,7 @@ _PROFILES: dict[str, dict[str, Any]] = {
             "buy": "VTTC0802U",
             "sell": "VTTC0801U",
             "daily_orders": "VTTC0081R",
+            "revise": "VTTC0013U",
         },
     },
 }
@@ -372,6 +374,40 @@ class KISClient:
             body["CNDT_PRIC"] = str(cndt_pric)
         return self._post_order("/uapi/domestic-stock/v1/trading/order-cash", tr_id, body)
 
+    def revise_stop(
+        self, *, code: str, qty: int, orgn_odno: str, org_no: str,
+        trigger_price: int, limit_price: int,
+    ) -> "Fill":
+        """걸어 둔 손절 스톱의 발동가를 정정한다(TTTC0013U).
+
+        트레일링·본전 상향으로 손절선이 올라가면 장부만 고쳐서는 소용이 없다 —
+        우리가 꺼져 있는 밤에 실제로 발동하는 것은 KIS에 걸린 예약이기 때문이다
+        (10-ops 10.13). 이미 체결된 주문은 정정되지 않으므로 실패를 정상 경로로 다룬다.
+        """
+        from exec.orders import Fill
+        body = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt,
+            "KRX_FWDG_ORD_ORGNO": org_no,
+            "ORGN_ODNO": orgn_odno,
+            "ORD_DVSN": "22",              # 스톱지정가를 유지한 채 가격만 바꾼다
+            "RVSE_CNCL_DVSN_CD": "01",     # 01=정정, 02=취소
+            "ORD_QTY": str(qty),
+            "ORD_UNPR": str(limit_price),
+            "QTY_ALL_ORD_YN": "Y",         # 잔량 전부
+            "EXCG_ID_DVSN_CD": "KRX",
+            "CNDT_PRIC": str(trigger_price),   # 새 발동가
+        }
+        try:
+            resp = self._post_order(
+                "/uapi/domestic-stock/v1/trading/order-rvsecncl",
+                self._profile["tr"]["revise"], body,
+            )
+        except KISError:
+            return Fill(0, None, "rejected")
+        odno, org = _order_ids(resp)
+        return Fill(0, None, "submitted", odno, broker_org_no=org)
+
     def place_stop(
         self, *, code: str, qty: int, trigger_price: int, limit_price: int,
         client_order_id: str,
@@ -383,8 +419,8 @@ class KISClient:
                 code, qty, limit_price, side="sell", ord_dvsn="22",
                 cndt_pric=trigger_price,
             )
-            out = resp.get("output") or resp
-            return Fill(0, None, "submitted", out.get("ODNO") or out.get("odno"))
+            odno, org = _order_ids(resp)
+            return Fill(0, None, "submitted", odno, broker_org_no=org)
         except KISError:
             return Fill(0, None, "rejected")
 
@@ -394,26 +430,27 @@ class KISClient:
         """청산 송출 + 일별체결조회로 체결 확정(exec.orders.Broker 프로토콜)."""
         from exec.orders import Fill
         odno: str | None = None
+        org: str | None = None
         try:
             resp = self.order_cash(code, qty, 0, side="sell", ord_dvsn=ord_dvsn)
-            out = resp.get("output") or resp
-            odno = out.get("ODNO") or out.get("odno")
+            odno, org = _order_ids(resp)
         except KISError:
             pass
         try:
             rows = self.get_daily_orders(_today_kst())
         except KISError:
-            return Fill(0, None, "submitted", odno)
+            return Fill(0, None, "submitted", odno, broker_org_no=org)
         match = next((r for r in rows if odno and r.get("odno") == odno), None)
         if match is None:
             cands = [r for r in rows if r.get("pdno") == code]
             match = cands[-1] if cands else None
         if match is None:
-            return Fill(0, None, "rejected" if odno is None else "submitted", odno)
+            return Fill(0, None, "rejected" if odno is None else "submitted",
+                        odno, broker_org_no=org)
         filled = int(match.get("tot_ccld_qty") or 0)
         avg = float(match.get("avg_prvs") or 0) or None
         status = "filled" if filled >= qty else ("partial" if filled > 0 else "submitted")
-        return Fill(filled, avg, status, odno)
+        return Fill(filled, avg, status, odno, broker_org_no=org)
 
     def place_entry(
         self, *, code: str, qty: int, price: int, ord_dvsn: str, client_order_id: str
@@ -421,26 +458,39 @@ class KISClient:
         """신규 진입 송출 + 일별체결조회로 체결 확정(exec.orders.Broker 프로토콜)."""
         from exec.orders import Fill
         odno: str | None = None
+        org: str | None = None
         try:
             resp = self.order_cash(code, qty, price, side="buy", ord_dvsn=ord_dvsn)
-            out = resp.get("output") or resp
-            odno = out.get("ODNO") or out.get("odno")
+            odno, org = _order_ids(resp)
         except KISError:
             pass
         try:
             rows = self.get_daily_orders(_today_kst())
         except KISError:
-            return Fill(0, None, "submitted", odno)
+            return Fill(0, None, "submitted", odno, broker_org_no=org)
         match = next((r for r in rows if odno and r.get("odno") == odno), None)
         if match is None:
             cands = [r for r in rows if r.get("pdno") == code]
             match = cands[-1] if cands else None
         if match is None:
-            return Fill(0, None, "rejected" if odno is None else "submitted", odno)
+            return Fill(0, None, "rejected" if odno is None else "submitted",
+                        odno, broker_org_no=org)
         filled = int(match.get("tot_ccld_qty") or 0)
         avg = float(match.get("avg_prvs") or 0) or None
         status = "filled" if filled >= qty else ("partial" if filled > 0 else "submitted")
-        return Fill(filled, avg, status, odno)
+        return Fill(filled, avg, status, odno, broker_org_no=org)
+
+
+def _order_ids(resp: dict[str, Any]) -> tuple[str | None, str | None]:
+    """주문 응답에서 (원주문번호, 거래소전송주문조직번호)를 꺼낸다.
+
+    정정(TTTC0013U)은 이 둘을 모두 요구한다. 주문 시점에 받아 두지 않으면
+    나중에 손절선을 올릴 방법이 없다(10-ops 10.13).
+    """
+    out = resp.get("output") or resp
+    odno = out.get("ODNO") or out.get("odno")
+    org = out.get("KRX_FWDG_ORD_ORGNO") or out.get("krx_fwdg_ord_orgno")
+    return odno, org
 
 
 def _today_kst() -> str:

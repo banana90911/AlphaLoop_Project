@@ -16,18 +16,45 @@ export class ApiError extends Error {
   }
 }
 
+// Vercel이 Funnel로 넘기는 구간이 간헐적으로 끊긴다(2026-09-07 실측: 10회 중 7회 502).
+// 서버는 멀쩡한데 유휴 연결이 먼저 닫혀서 나는 실패라, 다시 걸면 새 연결로 성공한다.
+// 게이트웨이 계열 오류에만 재시도한다 — 401·404 같은 진짜 응답은 그대로 올린다.
+const RETRY_STATUS = new Set([502, 503, 504])
+const RETRY_MAX = 2
+const RETRY_DELAY_MS = 300
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + path, {
-    // 출입증은 화면 코드가 읽을 수 없는 쿠키에 담긴다(8.6). 그래서 매 요청에 쿠키를 태운다.
-    credentials: 'include',
-    headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
-    ...init,
-  })
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null)
-    throw new ApiError(res.status, detail?.detail ?? `요청이 실패했습니다 (${res.status})`)
+  let lastError: unknown
+  for (let attempt = 0; attempt <= RETRY_MAX; attempt++) {
+    if (attempt > 0) await sleep(RETRY_DELAY_MS * attempt)
+    let res: Response
+    try {
+      res = await fetch(BASE + path, {
+        // 출입증은 화면 코드가 읽을 수 없는 쿠키에 담긴다(8.6). 그래서 매 요청에 쿠키를 태운다.
+        credentials: 'include',
+        headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
+        ...init,
+      })
+    } catch (e) {
+      lastError = e                          // 연결 자체가 끊긴 경우도 같은 원인이다
+      continue
+    }
+    if (!res.ok) {
+      // 쓰기 요청(로그인·로그아웃)은 다시 보내지 않는다 — 두 번 처리될 수 있다.
+      if (RETRY_STATUS.has(res.status) && attempt < RETRY_MAX && !init?.method) {
+        lastError = new ApiError(res.status, `요청이 실패했습니다 (${res.status})`)
+        continue
+      }
+      const detail = await res.json().catch(() => null)
+      throw new ApiError(res.status, detail?.detail ?? `요청이 실패했습니다 (${res.status})`)
+    }
+    return res.status === 204 ? (undefined as T) : res.json()
   }
-  return res.status === 204 ? (undefined as T) : res.json()
+  throw lastError instanceof Error
+    ? lastError
+    : new ApiError(502, '요청이 실패했습니다 (502)')
 }
 
 const qs = (params: Record<string, string | number | boolean | undefined>) => {

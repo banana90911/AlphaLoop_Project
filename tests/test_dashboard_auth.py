@@ -49,7 +49,10 @@ def test_wrong_password_rejected(configured):
 
 
 def test_unconfigured_password_rejects_everything(monkeypatch):
-    monkeypatch.setattr(auth, "get_settings", lambda: Settings())
+    # Settings()는 만들 때마다 .env를 다시 읽는다 — 빈 값을 명시해야 환경과 무관해진다
+    monkeypatch.setattr(auth, "get_settings",
+                        lambda: Settings(dashboard_password_hash="",
+                                         dashboard_token_secret=""))
     assert not auth.verify_password("hunter2")
     assert not auth.is_configured()
 
@@ -115,7 +118,10 @@ def test_rotating_secret_invalidates_all_tokens(configured, monkeypatch):
 
 
 def test_issue_without_secret_raises(monkeypatch):
-    monkeypatch.setattr(auth, "get_settings", lambda: Settings())
+    # Settings()는 만들 때마다 .env를 다시 읽는다 — 빈 값을 명시해야 환경과 무관해진다
+    monkeypatch.setattr(auth, "get_settings",
+                        lambda: Settings(dashboard_password_hash="",
+                                         dashboard_token_secret=""))
     with pytest.raises(RuntimeError):
         auth.issue_token()
 

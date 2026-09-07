@@ -191,7 +191,15 @@ def compute_daily_scores(conn, *, trade_date: date) -> StepResult:
         return StepResult("daily_scores", "journal", "failed",
                           error_message="DailyBars가 비어 있다 — 먼저 --backfill")
 
-    panel = build_panel(hist, asof=trade_date)
+    # 점수는 "어느 날 확정 봉으로 계산했는가"로 라벨링해야 한다. 사이클이 지표 기준일
+    # (= 직전 거래일)로 점수를 찾기 때문이다(04-data 4.2). 장 시작 전 배치는 당일 봉이
+    # 아직 없으므로 실제 기준일이 전 거래일이 되는데, 그걸 배치 날짜로 저장해 버리면
+    # 사이클이 영영 점수를 못 찾는다.
+    score_date = max(
+        (df.index.max() for df in hist.values() if df is not None and not df.empty),
+        default=trade_date,
+    )
+    panel = build_panel(hist, asof=score_date)
     if panel.empty:
         return StepResult("daily_scores", "journal", "failed", len(hist), 0, 0,
                           "패널이 비었다(전 종목 워밍업 미완 의심)")
@@ -229,8 +237,9 @@ def compute_daily_scores(conn, *, trade_date: date) -> StepResult:
             "rank": None if code not in ranks.index or pd.isna(ranks[code])
                     else int(ranks[code]),
         })
-    n = journal.upsert_daily_scores(conn, trade_date, rows)
-    return StepResult("daily_scores", "journal", "ok", len(panel), len(passed), n)
+    n = journal.upsert_daily_scores(conn, score_date, rows)
+    return StepResult("daily_scores", "journal", "ok", len(panel), len(passed), n,
+                      None if score_date == trade_date else f"기준일 {score_date}")
 
 
 def _pct(pool: pd.DataFrame, col: str, higher_better: bool) -> pd.Series:

@@ -102,7 +102,8 @@ def ingest_bars_and_flows(
         if "volume" in df.columns:
             df = df[df["volume"] > 0]
         if df.empty:
-            continue
+            bar_ok += 1          # 조회는 성공했다. 상장폐지·거래정지라 받을 봉이 없을 뿐이다
+            continue             # (10-ops 10.3 — 이걸 실패로 세면 영원히 partial이 된다)
         bar_rows += journal.upsert_daily_bars(conn, code, df.to_dict("records"))
         bar_ok += 1
         try:                                    # 수급 실패는 일봉을 막지 않는다
@@ -110,9 +111,9 @@ def ingest_bars_and_flows(
         except Exception as ex:
             errors.append(f"{code} flows {type(ex).__name__}")
             continue
+        flow_ok += 1             # 위와 같다 — 예외가 없었으면 조회는 성공한 것이다
         if flows:
             flow_rows += journal.upsert_daily_flows(conn, code, flows)
-            flow_ok += 1
 
     def status(ok: int) -> str:
         if ok == 0 and targets:

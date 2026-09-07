@@ -67,6 +67,10 @@ def check_freshness(
             return False, f"{table} 배치 기록 없음({trade_date})"
         if run["status"] != "ok":
             return False, f"{table} 배치 {run['status']}: {run['error_message'] or '사유 미기록'}"
+        # 빈 결과를 성공으로 세므로, 출처 전체가 빈 응답을 준 장애는 "전부 성공"으로 보인다.
+        # 한 줄도 안 들어왔다는 사실로 그 구멍을 닫는다(10-ops 10.3).
+        if not run["rows_written"]:
+            return False, f"{table} 배치가 ok인데 적재 행이 0 — 출처가 빈 응답을 준 것으로 본다"
         finished = run["finished_date_time"]
         if finished is None:
             return False, f"{table} 배치가 끝나지 않았다"

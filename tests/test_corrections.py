@@ -107,11 +107,12 @@ def test_drop_stale_rows_removes_halted_symbol():
 
 
 # ── ② 신선도 (DB) ────────────────────────────────────────────────
-def _run(conn, table, status, finished_hours_ago=0.0):
+def _run(conn, table, status, finished_hours_ago=0.0, rows_written=100):
     started = now_utc() - timedelta(hours=finished_hours_ago + 0.1)
     journal.record_ingest_run(
         conn, run_id=f"r_{table}", target_table=table, source="test", status=status,
         started_at=started, range_start=date(2026, 8, 28), range_end=date(2026, 8, 28),
+        rows_written=rows_written,
         error_message="테스트" if status != "ok" else None,
     )
     if finished_hours_ago:      # record_ingest_run은 now로 찍으므로 과거로 되돌린다
@@ -147,3 +148,11 @@ def test_freshness_rejects_stale_batch(conn):
         _run(conn, t, "ok", finished_hours_ago=30)
     ok, reason = check_freshness(conn, trade_date=date(2026, 8, 28))
     assert not ok and "초과" in reason
+
+
+def test_freshness_rejects_ok_batch_that_wrote_nothing(conn):
+    """상태가 ok여도 적재 행이 0이면 막는다 — 출처가 빈 응답만 준 장애(10-ops 10.3)."""
+    _run(conn, "daily_bars", "ok", rows_written=0)
+    _run(conn, "daily_scores", "ok")
+    ok, reason = check_freshness(conn, trade_date=date(2026, 8, 28))
+    assert not ok and "적재 행이 0" in reason

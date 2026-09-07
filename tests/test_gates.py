@@ -135,10 +135,12 @@ def test_empty_both_sides_matches(conn):
 
 
 # ── 시장 상태 조립 ──────────────────────────────────────────────────
-def _fresh_ingest(conn, day: date, table: str, status: str = "ok") -> None:
+def _fresh_ingest(conn, day: date, table: str, status: str = "ok",
+                  rows_written: int = 100) -> None:
     journal.record_ingest_run(
         conn, run_id=f"{day:%Y%m%d}_{table}", target_table=table, source="test",
         status=status, started_at=now_utc(), range_start=day, range_end=day,
+        rows_written=rows_written,
     )
 
 

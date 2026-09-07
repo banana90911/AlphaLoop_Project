@@ -93,8 +93,10 @@ def classify_residual(
     if abs(residual) < absorb_threshold(equity):
         # 흡수 — 관찰 모드에서는 분포를 모으려고 기록만 남긴다. Kind가 'fee'인 것은
         # 이 크기의 잔차를 수익 계열로 보아 순외부흐름에서 빼기 위해서다.
+        # 다만 잔차가 정확히 0이면 분포에 보탤 것이 없다. 매매가 없는 날마다 0원 행이
+        # 하나씩 쌓여 거래 리포트만 채우므로 남기지 않는다.
         return FlowResolution(
-            record=observation_mode, absorbed=True, kind="fee",
+            record=observation_mode and residual != 0, absorbed=True, kind="fee",
             source="residual", alert=False,
         )
 

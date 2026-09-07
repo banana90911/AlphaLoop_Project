@@ -202,3 +202,13 @@ def test_cycle_halts_on_massive_outflow(conn):
     res = cycle.run(conn, market_data=_universe(), account=acc)
     assert res.cycle_action == "halt"
     assert journal.active_safe_stop(conn) is not None
+
+
+def test_zero_residual_is_not_logged_even_in_observation_mode():
+    """잔차가 정확히 0이면 관찰 모드라도 남기지 않는다.
+
+    분포에 보탤 것이 없는데 매매 없는 날마다 0원 행이 쌓여 거래 리포트만 채운다
+    (2026-09-07 실측: 사이클 1회에 '수수료 +0원' 1건).
+    """
+    res = cashflow.classify_residual(0.0, 1_000_000, observation_mode=True)
+    assert res.absorbed and not res.record

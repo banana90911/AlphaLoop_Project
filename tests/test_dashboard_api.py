@@ -437,7 +437,11 @@ def test_alerts_lists_failed_cycles_and_ingests(conn, client):
     body = client.get("/api/alerts").json()
     assert [c["cycle_id"] for c in body["failed_cycles"]] == ["C1"]
     assert body["failed_cycles"][0]["failed_step"] == 4
-    assert [i["run_id"] for i in body["failed_ingests"]] == ["R1"]   # ok는 안 뜬다
+    # 배치는 성공까지 준다 — "잘 돌았다"와 "아예 안 돌았다"를 화면에서 갈라야 한다
+    assert {i["run_id"] for i in body["ingests"]} == {"R1", "R2"}
+    by_id = {i["run_id"]: i for i in body["ingests"]}
+    assert by_id["R1"]["status"] == "partial" and by_id["R2"]["status"] == "ok"
+    assert by_id["R2"]["range_end_date"] == _DAY.isoformat()   # 화면이 거래일로 묶는다
 
 
 # ── 외부 현금흐름 반영 (08-dashboard 8.4) ────────────────────────

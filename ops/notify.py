@@ -2,12 +2,15 @@
 description:        Discord 웹훅 알림 (조기 경보 + 시크릿 마스킹)
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/08/30
+last modified date: 2026/09/08
 remarks:
 """
 
 import logging
 import re
+from collections.abc import Sequence
+from datetime import date
+from typing import NamedTuple
 
 import requests
 
@@ -89,13 +92,93 @@ def notify_cash_flow(
     )
 
 
-def notify_ingest_failure(target_table: str, reason: str) -> bool:
-    """일일 배치 실패 알림을 보낸다(신선도 검사가 사이클을 막는다는 안내 포함)."""
+class StepLine(NamedTuple):
+    """배치 한 단계 요약 — `run_daily_ingest`의 `StepResult`를 알림용으로 줄인 것.
+
+    알림 모듈이 배치 모듈을 import하면 순환이 되므로, 필요한 값만 여기로 옮겨 받는다.
+    """
+    table: str
+    status: str                 # ok / partial / failed
+    success: int                # 조회 성공 종목 수 (종목 단위가 아닌 단계는 0)
+    target: int                 # 조회 대상 종목 수 (〃)
+    rows: int                   # 적재 행 수
+
+
+_STEP_MARK = {"ok": "✅", "partial": "🔸", "failed": "❌"}
+# 단계 하나라도 나쁘면 전체가 그 등급이 된다 — 나쁜 쪽이 이긴다.
+_WORST_ORDER = ("ok", "partial", "failed")
+_INGEST_TITLE = {
+    "ok": "일일 배치 완료", "partial": "일일 배치 부분 성공", "failed": "일일 배치 실패",
+}
+_INGEST_LEVEL = {"ok": "info", "partial": "warning", "failed": "critical"}
+
+
+def notify_ingest_summary(
+    trade_date: date, steps: Sequence[StepLine], *, mode: str = "real",
+) -> bool:
+    """일일 배치 결과 요약. 실패만이 아니라 **성공도 매번 보낸다**.
+
+    조용한 성공은 "안 돈 것"과 구별되지 않는다(10-ops 10.4). 하루 한 번뿐이라
+    알림이 넘치지도 않는다.
+    """
+    worst = "ok"
+    for s in steps:
+        if _WORST_ORDER.index(s.status) > _WORST_ORDER.index(worst):
+            worst = s.status
+    lines = []
+    for s in steps:
+        scope = f"{s.success:,}/{s.target:,}종목 · " if s.target else ""
+        lines.append(f"{_STEP_MARK.get(s.status, '·')} `{s.table}` {scope}{s.rows:,}행")
+    tail = "" if worst == "ok" else (
+        "\n\n오늘 사이클은 데이터 신선도 검사에서 멈출 수 있습니다. "
+        "`python run_daily_ingest.py --resume`으로 못 받은 종목만 재시도하세요."
+    )
     return send(
-        f"표: `{target_table}`\n사유: {reason}\n\n"
-        "오늘 사이클은 데이터 신선도 검사에서 멈춥니다. 배치를 다시 돌리세요 "
-        "(`--resume`으로 못 받은 종목만 재시도).",
-        level="warning", title="일일 배치 실패",
+        f"거래일 {trade_date} · `{mode}`\n" + "\n".join(lines) + tail,
+        level=_INGEST_LEVEL[worst], title=_INGEST_TITLE[worst],
+    )
+
+
+def notify_cycle_summary(
+    cycle_id: str, status: str, *, action: str, watchlist: int, planned: int,
+    submitted: int, live: bool, reason: str | None = None, mode: str = "real",
+) -> bool:
+    """정기 사이클 결과 요약(정상·건너뜀). 실패는 `notify_cycle_failure`가 따로 보낸다.
+
+    같은 사이클에 알림이 두 번 가지 않도록 호출부에서 갈라 부른다.
+    """
+    skipped = status != "recorded"
+    head = f"사이클: `{cycle_id}` · `{mode}`\n결과: {status} ({action})"
+    if reason:
+        head += f"\n사유: {reason}"
+    body = (f"\n워치리스트 {watchlist:,}종목 · 집행계획 {planned}건"
+            f" · 송출 {submitted}건" if not skipped else "")
+    tail = "" if live else "\n\n드라이런 — 계획만 세우고 주문은 내지 않았습니다(`--live` 없음)."
+    return send(
+        head + body + tail,
+        level="warning" if skipped else "info",
+        title="사이클 건너뜀" if skipped else "사이클 완료",
+    )
+
+
+def notify_watch_summary(
+    *, positions: int, missing: int, registered: int, stale: int, revised: int,
+    gaps: Sequence[str] = (), mode: str = "real",
+) -> bool:
+    """장중 보유 감시 결과 요약.
+
+    보유가 0이면 호출부가 아예 부르지 않는다 — 30분마다 "보유 없음"이 13번 오면
+    알림 자체가 배경 소음이 되어 진짜 경보를 놓친다. 안 도는 것은 heartbeat가 잡는다.
+    """
+    lines = [
+        f"① 상주 스톱: {'정상' if not missing else f'빠짐 {missing}종목 → 등록 {registered}건'}",
+        f"② 손절선 정합: {'일치' if not stale else f'어긋남 {stale}종목 → 정정 {revised}건'}",
+        f"③ 손절 구멍: {'없음' if not gaps else ', '.join(gaps)}",
+    ]
+    level = "critical" if gaps else ("warning" if (missing or stale) else "info")
+    return send(
+        f"보유 {positions}종목 감시 · `{mode}`\n" + "\n".join(lines),
+        level=level, title="보유 감시" + ("" if level == "info" else " — 조치 발생"),
     )
 
 

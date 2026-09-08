@@ -323,6 +323,7 @@ export type IngestRun = {
   run_id: string
   target_table: string
   source: string
+  range_end_date: string | null     // 대상 거래일 — 화면은 이걸로 하루치를 묶는다
   status: 'ok' | 'partial' | 'failed'
   target_count: number | null
   success_count: number | null
@@ -336,7 +337,7 @@ export type AlertsResponse = {
   safe_stops: SafeStopEvent[]
   active_stop: boolean
   failed_cycles: FailedCycle[]
-  failed_ingests: IngestRun[]
+  ingests: IngestRun[]        // 성공까지 포함한 최근 배치 기록
   unlabeled_flows: CashFlow[]
   unlabeled_flow_hint: string
 }

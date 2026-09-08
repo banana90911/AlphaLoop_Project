@@ -2,7 +2,7 @@
 description:        사이클 실행
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/08/30
+last modified date: 2026/09/08
 remarks:
 """
 
@@ -116,16 +116,29 @@ def main() -> None:
     print(f"\n사이클 {res.cycle_id} → {status} ({res.cycle_action}"
           f"{': ' + res.blocked_reason if res.blocked_reason else ''})")
 
+    # 알림은 사이클당 한 건이다 — SafeStop은 파이프라인이 이미 보냈고, 실패는 실패
+    # 알림이, 나머지(정상·건너뜀)는 결과 요약이 맡는다.
     if res.safe_stop_id:
         print(f"\n🚨 SafeStop 발생 — {res.blocked_reason}\n"
               f"   EventId: {res.safe_stop_id}\n"
               "   사람이 원인을 확인하고 해제해야 다음 사이클의 신규 진입이 열린다.")
         heartbeat.ping_safe_stop(res.blocked_reason)
-    elif status in ("failed", "skipped"):
+    elif status == "failed":
         notify.notify_cycle_failure(res.cycle_id, 4, res.blocked_reason)
         heartbeat.ping_failure(f"{status}: {res.blocked_reason}")
     else:
-        heartbeat.ping_success(f"워치리스트 {len(res.watchlist)}·계획 {len(res.planned_orders)}")
+        # 건너뜀도 결과다. "후보 없음"을 실패로 알리면 진짜 실패가 묻힌다.
+        notify.notify_cycle_summary(
+            res.cycle_id, status, action=res.cycle_action,
+            watchlist=len(res.watchlist), planned=len(res.planned_orders),
+            submitted=len(res.order_ids), live=args.live,
+            reason=res.blocked_reason, mode=mode,
+        )
+        if status == "skipped":
+            heartbeat.ping_failure(f"{status}: {res.blocked_reason}")
+        else:
+            heartbeat.ping_success(
+                f"워치리스트 {len(res.watchlist)}·계획 {len(res.planned_orders)}")
 
     print(f"워치리스트 {len(res.watchlist)}종목: {res.watchlist}")
     if res.decision:

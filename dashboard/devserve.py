@@ -395,6 +395,15 @@ def seed(conn) -> None:
              "rate limit 초과로 232종목 미수집", ts(days[-2], 7, 0), ts(days[-2], 8, 12)),
             ("R2", "daily_flows", "KIS", days[-1], days[-1], "failed", 2_412, 0, 0,
              "KIS 인증 토큰 발급 실패 (EGW00133)", ts(days[-1], 7, 0), ts(days[-1], 7, 1)),
+            # 성공한 배치도 화면에 뜬다 — 실패만 시딩하면 그 표시를 확인할 수가 없다
+            ("R3", "symbols", "KRX", days[-1], days[-1], "ok", 0, 0, 2_535,
+             None, ts(days[-1], 8, 0), ts(days[-1], 8, 1)),
+            ("R4", "daily_bars", "KIS", days[-1], days[-1], "ok", 2_535, 2_535, 16_949,
+             None, ts(days[-1], 8, 1), ts(days[-1], 8, 17)),
+            ("R5", "market_indices", "yfinance", days[-1], days[-1], "ok", 0, 0, 532,
+             None, ts(days[-1], 8, 17), ts(days[-1], 8, 18)),
+            ("R6", "daily_scores", "journal", days[-1], days[-1], "ok", 2_496, 508, 2_496,
+             None, ts(days[-1], 8, 18), ts(days[-1], 8, 19)),
         ],
     )
     conn.commit()

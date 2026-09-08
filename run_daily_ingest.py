@@ -2,7 +2,7 @@
 description:        장 시작 전 일일 배치 진입점 (전종목 데이터·점수 준비)
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/08/30
+last modified date: 2026/09/08
 remarks:
 """
 
@@ -22,6 +22,7 @@ from data.panel import build_panel
 from data.sources import index_history, kis_history, universe
 from memory import journal
 from memory.db import init_db
+from ops import notify
 
 # 12-1 모멘텀(252거래일) + 20일 스킵 + 휴장 여유. 점수 계산이 읽어갈 최소 이력이다.
 SCORE_LOOKBACK_DAYS = 450
@@ -299,13 +300,17 @@ def main() -> None:
     print(f"[{mode}] 일일 배치 · 거래일 {trade_date}"
           f"{f' · 백필 {args.backfill}일' if args.backfill else ''}")
 
+    steps: list[StepResult] = []
+
     # ① 종목 명부
     if not args.skip_symbols:
         started = now_utc()
         res = ingest_symbols(conn)
         _record(conn, trade_date, started, res)
+        steps.append(res)
         print(f"  ① Symbols        {res.status:<8} {res.rows_written:,}행")
         if res.status == "failed":
+            _notify_summary(trade_date, steps, mode)
             raise SystemExit(f"종목 명부 실패로 중단: {res.error_message}")
 
     codes = journal.load_symbol_ids(conn)
@@ -325,6 +330,7 @@ def main() -> None:
     )
     _record(conn, trade_date, started, bars)
     _record(conn, trade_date, started, flows)
+    steps += [bars, flows]
     for label, r in (("② DailyBars   ", bars), ("   DailyFlows ", flows)):
         print(f"  {label} {r.status:<8} {r.success_count:,}/{r.target_count:,}종목 "
               f"{r.rows_written:,}행")
@@ -335,20 +341,38 @@ def main() -> None:
         conn, start=trade_date - timedelta(days=INDEX_LOOKBACK_DAYS), end=trade_date
     )
     _record(conn, trade_date, started, idx)
+    steps.append(idx)
     print(f"  ③ MarketIndices  {idx.status:<8} {idx.rows_written:,}행")
 
     # ④ 점수 — 앞 단계가 쌓아둔 DB를 읽는다
     started = now_utc()
     scores = compute_daily_scores(conn, trade_date=trade_date)
     _record(conn, trade_date, started, scores)
+    steps.append(scores)
     print(f"  ④ DailyScores    {scores.status:<8} "
           f"{scores.success_count:,}/{scores.target_count:,}종목 통과 "
           f"{scores.rows_written:,}행")
 
-    failed = [r for r in (bars, flows, idx, scores) if r.status == "failed"]
+    _notify_summary(trade_date, steps, mode)
+
+    failed = [r for r in steps if r.status == "failed"]
     if failed:
         raise SystemExit(f"실패 단계: {[r.target_table for r in failed]}")
     conn.close()
+
+
+def _notify_summary(trade_date: date, steps: list[StepResult], mode: str) -> None:
+    """단계 결과를 Discord로 한 건 요약해 보낸다.
+
+    실패만이 아니라 성공도 보낸다 — 조용한 성공은 "배치가 안 돈 것"과 구별되지 않아서,
+    며칠 죽어 있어도 알 수가 없다(10-ops 10.4). 하루 한 번이라 알림이 넘치지도 않는다.
+    """
+    notify.notify_ingest_summary(
+        trade_date,
+        [notify.StepLine(r.target_table, r.status, r.success_count, r.target_count,
+                         r.rows_written) for r in steps],
+        mode=mode,
+    )
 
 
 def _already_done(conn, trade_date: date) -> set[str]:

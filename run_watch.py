@@ -2,7 +2,7 @@
 description:        보유 감시 진입점 (장중 30분 간격, 손절 무결성만 확인)
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/08/30
+last modified date: 2026/09/08
 remarks:
 """
 
@@ -176,6 +176,9 @@ def main() -> None:
 
     positions = load_open_positions(conn)
     if not positions:
+        # 알림을 보내지 않는다. 보유가 0인 날 30분마다 "보유 없음"이 13번 오면
+        # 알림 자체가 배경 소음이 되어 진짜 경보를 놓친다 — 안 도는 것은 cron 로그와
+        # heartbeat가 잡는다.
         print("보유 없음 — 감시할 대상이 없다")
         conn.close()
         return
@@ -183,6 +186,7 @@ def main() -> None:
 
     # ① 상주 스톱 무결성
     missing = find_missing_stops(conn, client, positions)
+    ids: list[str] = []
     if missing:
         codes = [p["symbol_id"] for p in missing]
         print(f"  손절 없는 보유 {len(missing)}종목: {codes}")
@@ -193,6 +197,7 @@ def main() -> None:
 
     # ② 손절선 어긋남 — 장부는 올렸는데 KIS 예약이 옛 가격인 경우
     stale = find_stale_stops(positions)
+    fixed: list[str] = []
     if stale:
         for p in stale:
             print(f"  손절 어긋남 {p['symbol_id']}: 장부 {p['current_stop_price']:,.0f} "
@@ -213,6 +218,13 @@ def main() -> None:
 
     if args.check:
         print("\n점검 모드 — 주문을 내지 않았다")
+    else:
+        notify.notify_watch_summary(
+            positions=len(positions), missing=len(missing), registered=len(ids),
+            stale=len(stale), revised=len(fixed),
+            gaps=[f"{h.symbol} 현재가 {h.price:,.0f} ≤ 손절 {h.stop:,.0f}" for h in hits],
+            mode=mode,
+        )
     conn.close()
 
 

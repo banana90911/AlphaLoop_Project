@@ -2,6 +2,7 @@
  * description:        ④ 오류·정지 알림
  * author:             siheon jung
  * created date:       2026/09/04
+ * last modified date: 2026/09/08
  * remarks:            08-dashboard 8.4 ④
  *                     대시보드는 읽기 전용이라 해제 버튼을 누르는 곳이 아니다 —
  *                     무엇을 해야 하는지 알려주는 곳이다.
@@ -29,6 +30,19 @@ const STEP_NAME: Record<number, string> = {
   4: '리스크 검증',
   5: '주문 실행',
   6: '기록',
+}
+
+// 배치 상태 → 화면 표시. `ok`는 "대상을 전부 조회했다"는 뜻이지 "오류가 하나도
+// 없었다"는 뜻은 아니다(상장폐지 종목처럼 받을 봉이 없는 경우도 성공으로 센다 — 10-ops 10.3).
+const INGEST_LABEL: Record<string, string> = {
+  ok: '성공',
+  partial: '부분 성공',
+  failed: '실패',
+}
+const INGEST_TONE: Record<string, 'buy' | 'warn' | 'neutral'> = {
+  ok: 'buy',
+  partial: 'warn',
+  failed: 'warn',
 }
 
 /** 행을 고르면 원인과 "무엇을 확인하고 어떻게 해제하는지"를 함께 보여준다(8.4 ④) */
@@ -70,9 +84,20 @@ export function AlertPanel({
 }) {
   const stops = data?.safe_stops ?? []
   const cycles = data?.failed_cycles ?? []
-  const ingests = data?.failed_ingests ?? []
+  const ingests = data?.ingests ?? []
   const flows = data?.unlabeled_flows ?? []
-  const total = stops.length + cycles.length + ingests.length + flows.length
+  // 배치는 성공까지 함께 온다 — 문제 건수에는 성공을 세지 않는다.
+  const badIngests = ingests.filter((r) => r.status !== 'ok')
+  const problems = stops.length + cycles.length + badIngests.length + flows.length
+  // 가장 최근 배치가 어느 거래일에 대해 어떤 결과였는지를 머리에 한 줄로 요약한다.
+  // 실행 시각이 아니라 대상 거래일로 묶는다 — 08:00 배치는 UTC로는 전날이라 어긋난다.
+  const lastDay = ingests[0]?.range_end_date ?? null
+  const lastDayRuns = lastDay ? ingests.filter((r) => r.range_end_date === lastDay) : []
+  const lastDayWorst = lastDayRuns.some((r) => r.status === 'failed')
+    ? 'failed'
+    : lastDayRuns.some((r) => r.status === 'partial')
+      ? 'partial'
+      : 'ok'
 
   return (
     <Panel
@@ -94,10 +119,9 @@ export function AlertPanel({
             <Skeleton key={i} className="h-12 w-full" />
           ))}
         </div>
-      ) : total === 0 ? (
-        <Empty>정지도 실패도 없습니다.</Empty>
       ) : (
         <div className="divide-y divide-ink-800">
+          {problems === 0 && <Empty>정지도 실패도 없습니다.</Empty>}
           {stops.length > 0 && (
             <Group title="안전 정지" count={stops.length}>
               {stops.map((e) => (
@@ -112,13 +136,6 @@ export function AlertPanel({
               ))}
             </Group>
           )}
-          {ingests.length > 0 && (
-            <Group title="일일 배치" count={ingests.length}>
-              {ingests.map((r) => (
-                <IngestRow key={r.run_id} r={r} />
-              ))}
-            </Group>
-          )}
           {flows.length > 0 && (
             <Group title="미분류 현금 변동" count={flows.length} info>
               {flows.map((f) => (
@@ -126,6 +143,29 @@ export function AlertPanel({
               ))}
             </Group>
           )}
+          {/* 배치는 성공도 보여준다 — "잘 돌았다"와 "아예 안 돌았다"를 화면에서 갈라야 한다 */}
+          <Group
+            title="일일 배치"
+            count={ingests.length}
+            note={
+              lastDay ? (
+                <span className="flex items-center gap-1.5">
+                  <Badge tone={INGEST_TONE[lastDayWorst]}>{INGEST_LABEL[lastDayWorst]}</Badge>
+                  <span className="font-normal text-ink-400">
+                    최근 {fmtDate(lastDay)} · {lastDayRuns.length}단계
+                  </span>
+                </span>
+              ) : undefined
+            }
+          >
+            {ingests.length === 0 ? (
+              <li className="px-1 py-2 text-xs text-ink-400">
+                배치 기록이 없습니다 — 아직 한 번도 돌지 않았거나 DB가 비어 있습니다.
+              </li>
+            ) : (
+              ingests.map((r) => <IngestRow key={r.run_id} r={r} />)
+            )}
+          </Group>
         </div>
       )}
     </Panel>
@@ -136,11 +176,13 @@ function Group({
   title,
   count,
   info,
+  note,
   children,
 }: {
   title: string
   count: number
   info?: boolean
+  note?: ReactNode
   children: ReactNode
 }) {
   return (
@@ -149,6 +191,7 @@ function Group({
         {title}
         <span className="font-mono text-[11px] text-ink-400">{count}</span>
         {info && <Badge tone="neutral">정보성 · 매매를 막지 않음</Badge>}
+        {note}
       </h3>
       <ul className="space-y-1.5">{children}</ul>
     </div>
@@ -255,28 +298,38 @@ function CycleRow({ c }: { c: FailedCycle }) {
 }
 
 function IngestRow({ r }: { r: IngestRun }) {
-  const failed = r.status === 'failed'
+  const ok = r.status === 'ok'
   return (
     <Row
-      tone={failed ? 'border-warn/40' : 'border-ink-800'}
+      tone={r.status === 'failed' ? 'border-warn/40' : 'border-ink-800'}
       head={
         <span className="flex items-center gap-2">
-          <Badge tone="warn">{failed ? '실패' : '부분 성공'}</Badge>
+          <Badge tone={INGEST_TONE[r.status]}>{INGEST_LABEL[r.status]}</Badge>
           <span className="text-ink-50">{r.target_table}</span>
           <span className="text-ink-400">{r.source}</span>
         </span>
       }
-      meta={`${r.success_count ?? 0}/${r.target_count ?? 0}`}
+      meta={
+        r.target_count
+          ? `${r.success_count ?? 0}/${r.target_count}`
+          : `${(r.rows_written ?? 0).toLocaleString()}행`
+      }
       detail={
         <>
           <p className="mb-1.5 text-ink-200">
-            그날 데이터가 낡았다는 뜻입니다. 낡은 값으로 낸 점수는 오늘의 시장이 아니므로,
-            사이클이 신선도 검사에서 스스로 멈출 수 있습니다.
+            {ok
+              ? '이 단계는 대상을 전부 조회해 적재를 마쳤습니다. 사이클은 이 표를 신선한 데이터로 봅니다.'
+              : '그날 데이터가 낡았다는 뜻입니다. 낡은 값으로 낸 점수는 오늘의 시장이 아니므로, 사이클이 신선도 검사에서 스스로 멈출 수 있습니다.'}
           </p>
-          <p>배치를 다시 돌립니다 — 이어받기가 되므로 성공한 종목은 다시 받지 않습니다.</p>
-          <code className="mt-2 block rounded border border-ink-800 bg-ink-950 px-2 py-1.5 font-mono">
-            python run_daily_ingest.py
-          </code>
+          {!ok && (
+            <>
+              <p>배치를 다시 돌립니다 — 이어받기가 되므로 성공한 종목은 다시 받지 않습니다.</p>
+              <code className="mt-2 block rounded border border-ink-800 bg-ink-950 px-2 py-1.5 font-mono">
+                python run_daily_ingest.py --resume
+              </code>
+            </>
+          )}
+          <p className="mt-2">적재 {(r.rows_written ?? 0).toLocaleString()}행</p>
           {r.error_message && (
             <p className="mt-2 break-all text-ink-200">오류: {r.error_message}</p>
           )}

@@ -466,6 +466,9 @@ def get_trade_detail(client_order_id: str, conn: DbConn) -> dict:
 def get_alerts(conn: DbConn) -> dict:
     """정지·실패 사이클·배치 결과와 미분류 현금 변동을 반환한다(해제는 사람이 직접 개입).
 
+    배치(`ingests`)만 성공까지 포함해 돌려준다 — 나머지는 문제가 있을 때만 행이 생기지만,
+    배치는 "오늘 돌았는가"가 그 자체로 확인할 값이기 때문이다.
+
     미분류 현금 변동은 **정보성 항목**이다 — 매매를 막고 있는 게 아니라 라벨이 아직
     안 붙었다는 안내일 뿐이다. 여기 뜨는 진짜 차단은 미수·대형 유출 SafeStop 둘뿐이다.
     """
@@ -478,9 +481,10 @@ def get_alerts(conn: DbConn) -> dict:
         "WHERE status IN ('failed','skipped') "
         'ORDER BY started_date_time DESC LIMIT 50'
     ).fetchall()
+    # 성공한 배치도 함께 준다(08-dashboard 8.4 ④ "일일 배치 결과"). 실패만 보이면
+    # "오늘 배치가 잘 돌았다"와 "오늘 배치가 아예 안 돌았다"가 화면에서 똑같아 보인다.
     ingests = conn.execute(
-        'SELECT * FROM ingest_runs WHERE status <> \'ok\' '
-        'ORDER BY started_date_time DESC LIMIT 50'
+        'SELECT * FROM ingest_runs ORDER BY started_date_time DESC LIMIT 40'
     ).fetchall()
     unlabeled = conn.execute(
         'SELECT * FROM cash_flows WHERE status = \'unconfirmed\' '
@@ -491,7 +495,7 @@ def get_alerts(conn: DbConn) -> dict:
         # 비어 있는 ReleasedDateTime이 곧 "지금 정지 중"이다(08-dashboard 8.4 ④)
         "active_stop": any(r["released_date_time"] is None for r in safe_stops),
         "failed_cycles": [dict(r) for r in cycles],
-        "failed_ingests": [dict(r) for r in ingests],
+        "ingests": [dict(r) for r in ingests],
         # 대시보드는 읽기 전용이라 라벨을 못 붙인다 — 붙이는 방법만 알려준다
         "unlabeled_flows": [dict(r) for r in unlabeled],
         "unlabeled_flow_hint": "python -m ops.cashflow confirm --id <FlowId> --kind deposit",

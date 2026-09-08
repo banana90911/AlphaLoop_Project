@@ -10,6 +10,7 @@ remarks:            대시보드가 아니라 CLI인 이유는 08-dashboard 8.1�
 
 import argparse
 from dataclasses import dataclass
+from datetime import date
 
 from config.settings import get_settings
 from memory import journal
@@ -119,8 +120,11 @@ def _fmt(row: dict) -> str:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI 진입점 — 감지된 외부 현금흐름을 보고 라벨을 붙인다."""
+def main(argv: list[str] | None = None, conn=None) -> int:
+    """CLI 진입점 — 감지된 외부 현금흐름을 보고 라벨을 붙인다.
+
+    `conn`은 테스트가 임시 DB를 넣기 위한 자리다. 비우면 설정의 저장소에 붙는다.
+    """
     ap = argparse.ArgumentParser(
         prog="python -m ops.cashflow",
         description="외부 현금흐름(입출금·배당) 확인과 라벨링",
@@ -131,6 +135,17 @@ def main(argv: list[str] | None = None) -> int:
     p_list.add_argument("--all", action="store_true", help="확인된 것까지 전부")
     p_list.add_argument("--limit", type=int, default=50)
 
+    # 잔차로 감지되지 않는 흐름을 사람이 직접 남긴다. 두 경우에 필요하다.
+    #  ① 개시 시점에 이미 계좌에 있던 돈 — 비교할 직전 스냅샷이 없어 감지되지 않는다.
+    #  ② 흡수 임계(max 1,000원, 자본의 0.01%) 미만의 이체 — 수수료로 흡수돼 버린다.
+    # 남기지 않으면 원금이 손익으로 계산된다(누적 손익 = 총자본 − 누적 순입금).
+    p_add = sub.add_parser("add", help="감지되지 않은 흐름을 직접 등록")
+    p_add.add_argument("--kind", required=True, choices=journal.FLOW_KINDS)
+    p_add.add_argument("--amount", required=True, type=float,
+                       help="부호 있는 금액(유입 +, 유출 −). 예: 입금 751, 출금 -751")
+    p_add.add_argument("--date", default=None, help="거래일 YYYY-MM-DD(생략 시 오늘)")
+    p_add.add_argument("--note", default=None)
+
     for name, help_text in (("confirm", "라벨 확정"), ("reclassify", "라벨 정정")):
         sp = sub.add_parser(name, help=help_text)
         sp.add_argument("--id", required=True, help="flow_id")
@@ -138,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--note", default=None)
 
     args = ap.parse_args(argv)
-    conn = init_db()
+    conn = conn if conn is not None else init_db()
 
     if args.cmd == "list":
         rows = journal.load_cash_flows(
@@ -149,6 +164,27 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         for r in rows:
             print(_fmt(r))
+        return 0
+
+    if args.cmd == "add":
+        if args.amount == 0:
+            print("금액이 0이면 남길 것이 없습니다.")
+            return 1
+        if (args.kind == "deposit") != (args.amount > 0):
+            print(f"부호가 종류와 어긋납니다: {args.kind}에 {args.amount:+,.0f}원 "
+                  "(입금은 +, 출금은 −)")
+            if args.kind in ("deposit", "withdrawal"):
+                return 1
+        trade_date = date.fromisoformat(args.date) if args.date else None
+        # 사람이 직접 넣은 것이므로 감지·확정을 한 번에 끝낸다. 기대·실제 예수금은
+        # 대조로 얻은 값이 아니라서 0으로 둔다(그 자리에 넣을 근거가 없다).
+        flow_id = journal.record_cash_flow(
+            conn, None, kind=args.kind, amount=args.amount, source="manual",
+            expected=0.0, actual=0.0, mode=get_settings().trading_mode,
+            status="confirmed", note=args.note, trade_date=trade_date,
+        )
+        print(f"등록 완료: {flow_id} · {args.kind} {args.amount:+,.0f}원")
+        print("  다음 사이클의 계좌 스냅샷부터 누적 순입금에 반영됩니다.")
         return 0
 
     ok = journal.confirm_cash_flow(conn, args.id, kind=args.kind, by="cli", note=args.note)

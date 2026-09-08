@@ -212,3 +212,32 @@ def test_zero_residual_is_not_logged_even_in_observation_mode():
     """
     res = cashflow.classify_residual(0.0, 1_000_000, observation_mode=True)
     assert res.absorbed and not res.record
+
+
+# ── 감지되지 않는 흐름 직접 등록 (개시 자본·임계 미만 이체) ──────────────
+def test_add_registers_confirmed_flow(conn):
+    """개시 시점에 있던 돈은 잔차로 안 잡힌다 — 직접 등록해야 순입금에 들어간다."""
+    rc = cashflow.main(["add", "--kind", "deposit", "--amount", "751",
+                        "--note", "개시 자본"], conn=conn)
+    assert rc == 0
+    row = conn.execute(
+        "SELECT kind, amount, status, source, note FROM cash_flows "
+        "WHERE source='manual'"
+    ).fetchone()
+    assert row["kind"] == "deposit" and float(row["amount"]) == 751.0
+    assert row["status"] == "confirmed"        # 사람이 넣었으니 확정 상태로 남는다
+    assert row["note"] == "개시 자본"
+
+
+def test_add_rejects_sign_mismatch(conn):
+    """입금인데 음수처럼 부호가 어긋나면 남기지 않는다(순입금이 반대로 움직인다)."""
+    assert cashflow.main(["add", "--kind", "deposit", "--amount", "-751"], conn=conn) == 1
+    assert cashflow.main(["add", "--kind", "withdrawal", "--amount", "751"], conn=conn) == 1
+    assert conn.execute(
+        "SELECT COUNT(*) AS c FROM cash_flows WHERE source='manual'"
+    ).fetchone()["c"] == 0
+
+
+def test_add_rejects_zero(conn):
+    """0원은 분포에도 순입금에도 보탤 것이 없다."""
+    assert cashflow.main(["add", "--kind", "deposit", "--amount", "0"], conn=conn) == 1

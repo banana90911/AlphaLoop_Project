@@ -229,12 +229,19 @@ def main() -> None:
     ap.add_argument("--check", action="store_true",
                     help="무엇을 할지 보고만 하고 주문은 내지 않는다")
     ap.add_argument("--force", action="store_true",
-                    help="장이 닫혀 있어도 점검한다(진단용)")
+                    help="장이 닫혀 있어도 돈다(마감 정리·진단용). 주문은 내지 않는다")
     args = ap.parse_args()
 
-    if not is_session_open() and not args.force:
-        print("장 시간이 아니다 — 감시하지 않는다 (--force로 점검만 가능)")
+    # 장이 닫혀 있으면 주문을 낼 수 없다 — 낼 수 있는 척하면 거부 응답만 쌓인다.
+    # 그래도 장부 정리는 해야 한다: 동시호가(15:20~15:30) 체결은 장이 닫힌 뒤에야
+    # 확정되므로, 마감 후 한 번 돌지 않으면 그날 손절 체결을 다음 날 아침까지 모른다.
+    market_open = is_session_open()
+    if not market_open and not args.force:
+        print("장 시간이 아니다 — 감시하지 않는다 (--force로 장부 정리만 가능)")
         return
+    can_order = market_open and not args.check
+    if not market_open:
+        print("장 마감 후 — 체결된 손절을 장부에 반영만 한다(주문 없음)")
 
     mode = get_settings().trading_mode
     conn = init_db()
@@ -281,8 +288,8 @@ def main() -> None:
     if missing:
         codes = [p["symbol_id"] for p in missing]
         print(f"  손절 없는 보유 {len(missing)}종목: {codes}")
-        ids = register_missing_stops(conn, client, missing, dry_run=args.check)
-        print(f"  {'등록 예정' if args.check else '등록 완료'} {len(ids)}건")
+        ids = register_missing_stops(conn, client, missing, dry_run=not can_order)
+        print(f"  {'등록 예정' if not can_order else '등록 완료'} {len(ids)}건")
     else:
         print("  ① 상주 스톱 정상")
 
@@ -293,8 +300,8 @@ def main() -> None:
         for p in stale:
             print(f"  손절 어긋남 {p['symbol_id']}: 장부 {p['current_stop_price']:,.0f} "
                   f"≠ KIS {p['broker_stop_price']:,.0f}")
-        fixed = revise_stale_stops(conn, client, stale, dry_run=args.check)
-        print(f"  {'정정 예정' if args.check else '정정 완료'} {len(fixed)}건")
+        fixed = revise_stale_stops(conn, client, stale, dry_run=not can_order)
+        print(f"  {'정정 예정' if not can_order else '정정 완료'} {len(fixed)}건")
     else:
         print("  ② 손절선 일치")
 
@@ -309,14 +316,17 @@ def main() -> None:
 
     if args.check:
         print("\n점검 모드 — 주문을 내지 않았다")
-    else:
+    # 마감 후 실행은 문제가 있을 때만 알린다. 15:25 감시가 "정상"을 보낸 지 10분 만에
+    # 똑같은 "정상"이 또 오면, 그게 쌓여서 진짜 경보를 덮는다. 손절 체결 알림은 위 ⓪이
+    # 이미 건별로 보냈으므로 여기서 빠져도 놓치지 않는다.
+    elif market_open or missing or stale or hits:
         notify.notify_watch_summary(
             positions=len(positions), missing=len(missing), registered=len(ids),
             stale=[f"{p['symbol_id']} {float(p['broker_stop_price']):,.0f}"
                    f" → {float(p['current_stop_price']):,.0f}" for p in stale],
             revised=fixed,
             gaps=[f"{h.symbol} 현재가 {h.price:,.0f} ≤ 손절 {h.stop:,.0f}" for h in hits],
-            mode=mode,
+            market_open=market_open, mode=mode,
         )
     conn.close()
 

@@ -171,3 +171,21 @@ def test_감시_스톱_빠짐은_경고_등급(sent):
     notify.notify_watch_summary(positions=2, missing=1, registered=1)
     assert sent[0]["level"] == "warning"
     assert "등록 1건" in sent[0]["message"]
+
+
+def test_마감_후에는_주문을_못_낸다고_밝힌다(sent):
+    """장이 닫힌 뒤 실행은 장부만 맞춘다 — 등록했다고 적으면 거짓이 된다."""
+    notify.notify_watch_summary(
+        positions=1, missing=0, registered=0, market_open=False)
+    m = sent[0]["message"]
+    assert "장 마감 후 정리" in m and "장부만 맞췄습니다" in m
+
+
+def test_마감_후_손절_없는_보유는_즉시_확인_등급(sent):
+    """고칠 수단이 없는 채로 밤을 넘기므로 장중의 '빠짐'보다 심각하다."""
+    notify.notify_watch_summary(
+        positions=1, missing=1, registered=0, market_open=False)
+    m = sent[0]["message"]
+    assert sent[0]["level"] == "critical"
+    assert "장이 닫혀 등록하지 못했습니다" in m
+    assert "손절 없이 밤을 넘깁니다" in m

@@ -248,7 +248,7 @@ def notify_stop_filled(
 def notify_watch_summary(
     *, positions: int, missing: int, registered: int,
     stale: Sequence[str] = (), revised: Sequence[str] = (),
-    gaps: Sequence[str] = (), mode: str = "real",
+    gaps: Sequence[str] = (), market_open: bool = True, mode: str = "real",
 ) -> bool:
     """장중 보유 감시 결과 — 트레일링(손절선 정정)이 실제로 반영됐는지가 핵심이다.
 
@@ -256,8 +256,14 @@ def notify_watch_summary(
     알림 자체가 배경 소음이 되어 진짜 경보를 놓친다. 안 도는 것은 heartbeat가 잡는다.
     """
     out = [f"보유 {positions}종목 감시 · `{mode}`"]
-    out.append("① 상주 스톱: " +
-               ("정상" if not missing else f"빠짐 {missing}종목 → 등록 {registered}건"))
+    if not market_open:
+        out.append("장 마감 후 정리 — 주문은 낼 수 없어 장부만 맞췄습니다.")
+    if not missing:
+        out.append("① 상주 스톱: 정상")
+    elif market_open:
+        out.append(f"① 상주 스톱: 빠짐 {missing}종목 → 등록 {registered}건")
+    else:
+        out.append(f"① 상주 스톱: 빠짐 {missing}종목 — 장이 닫혀 등록하지 못했습니다")
     if stale:
         out.append(f"② 손절선 정정 {len(revised)}/{len(stale)}건")
         out += [f"· {t}" for t in stale]
@@ -266,8 +272,13 @@ def notify_watch_summary(
     else:
         out.append("② 손절선: 장부와 KIS 예약 일치(정정할 것 없음)")
     out.append("③ 손절 구멍: " + ("없음" if not gaps else ", ".join(gaps)))
+    # 마감 후에 손절 없는 보유가 남아 있으면 밤사이 갭에 그대로 노출된다.
+    if not market_open and missing:
+        out.append("")
+        out.append("**손절 없이 밤을 넘깁니다.** 다음 거래일 09:00 감시가 재등록을 "
+                   "시도하지만, 갭하락은 그 전에 벌어집니다.")
 
-    level = "critical" if gaps else (
+    level = "critical" if gaps or (missing and not market_open) else (
         "warning" if (missing or len(revised) < len(stale)) else "info")
     return send("\n".join(out), level=level,
                 title="보유 감시" + ("" if level == "info" else " — 조치 필요"))

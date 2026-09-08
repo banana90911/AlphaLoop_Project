@@ -18,8 +18,23 @@ MAILTO=""
 # 실제 주문을 내려면 아래 줄의 run_cycle.py 뒤에 --live 를 붙인다.
 30 14 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_cycle.py >> /var/log/alphaloop/cycle.log 2>&1
 
-# 보유 감시 — 장중 30분 간격, 상주 손절의 무결성만 본다.
-0,30 9-15 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_watch.py >> /var/log/alphaloop/watch.log 2>&1
+# 보유 감시 — 장중 30분 간격. 상주 손절의 무결성과 트레일링 반영을 보고,
+# 걸어 둔 손절이 스스로 체결됐으면 장부에 반영한다(10-ops 10.13).
+#
+# 간격이 두 군데 어긋나 있는데(14:25, 15:25) 둘 다 이유가 있다. 그 탓에 14:25~15:00만
+# 35분 간격이 되지만, 이건 이미 체결된 손절을 얼마나 늦게 아느냐일 뿐 손실과는 무관하다.
+#   · 14:25 — 정기 사이클(14:30) 직전. 손절 체결을 먼저 장부에 넣어야 사이클의
+#     잔고 대조가 정상 손절을 '보유 불일치'로 보고 매매 전체를 멈추지 않는다.
+#     14:30에 둘을 같이 띄우면 같은 DB·같은 계좌를 동시에 건드린다.
+#   · 15:25 — 정규장 종료는 15:30이고 판정이 '미만'이라 15:30 실행은 그냥 죽는다.
+0,30 9-13 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_watch.py >> /var/log/alphaloop/watch.log 2>&1
+0,25 14 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_watch.py >> /var/log/alphaloop/watch.log 2>&1
+0,25 15 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_watch.py >> /var/log/alphaloop/watch.log 2>&1
+
+# 마감 정리 — 동시호가(15:20~15:30) 체결은 장이 닫힌 뒤에야 확정된다. 이 줄이 없으면
+# 15:00 이후에 발동한 손절을 다음 거래일 09:00까지 모른다(약 18시간).
+# --force는 정규장 판정만 우회한다 — 장이 닫혀 있으면 주문은 내지 않고 장부만 맞춘다.
+35 15 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_watch.py --force >> /var/log/alphaloop/watch.log 2>&1
 
 # 백업 — 장 마감 후 DB 전체 스냅샷 1개 (10-ops 10.6)
 0 16 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python -m ops.backup full >> /var/log/alphaloop/backup.log 2>&1

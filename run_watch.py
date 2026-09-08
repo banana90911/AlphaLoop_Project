@@ -12,6 +12,7 @@ from broker.kis_client import KISClient
 from config.settings import get_settings
 from core.timeutils import kst_today, now_utc
 from core.trading_days import is_session_open
+from exec import exits
 from exec.exits import StopPosition, detect_stop_gaps
 from exec.orders import STOP_ORD_DVSN
 from memory import journal
@@ -34,12 +35,77 @@ def load_open_positions(conn) -> list[dict]:
     ).fetchall()
 
 
-def find_missing_stops(conn, client: KISClient, positions: list[dict]) -> list[dict]:
-    """상주 스톱이 없거나 KIS에서 이미 사라진 보유를 찾는다."""
+def fetch_daily_orders(client: KISClient) -> list[dict]:
+    """오늘의 KIS 주문·체결 목록. 조회 실패는 빈 목록으로 돌린다.
+
+    한 번만 받아 아래 판정들이 나눠 쓴다 — 판정마다 부르면 호출 한도를 갉아먹고
+    그 사이에 상태가 바뀌어 판정끼리 어긋난다.
+    """
     try:
-        orders = client.get_daily_orders(kst_today().strftime("%Y%m%d"))
+        return client.get_daily_orders(kst_today().strftime("%Y%m%d"))
     except Exception:
-        orders = []                    # 조회 실패 시 장부만 보고 판단(과잉 등록보다 낫다)
+        return []                      # 장부만 보고 판단(과잉 등록보다 낫다)
+
+
+def find_filled_stops(orders: list[dict], positions: list[dict]) -> list[dict]:
+    """걸어 둔 손절이 체결됐는데 장부는 아직 보유 중인 건을 찾는다.
+
+    손절 예약은 우리가 부르지 않아도 장중에 스스로 체결된다. 그걸 모르고 두면 다음
+    사이클의 잔고 대조가 "보유 불일치"로 매매 전체를 정지시킨다 — 정상적으로 작동한
+    손절인데 사고로 다뤄지는 것이다(05-risk 5.2).
+    """
+    by_odno = {str(o["odno"]): o for o in orders if o.get("odno")}
+    hits = []
+    for p in positions:
+        if not p["kis_order_no"]:
+            continue
+        o = by_odno.get(str(p["kis_order_no"]))
+        if o is None:
+            continue
+        filled = int(o.get("tot_ccld_qty") or 0)
+        if filled <= 0:
+            continue
+        hits.append({
+            "position": p,
+            "filled": min(filled, int(p["quantity"])),
+            # 체결가 미파싱이면 발동가로 대신한다 — 손익을 0으로 남기는 것보다 낫다
+            "price": float(o.get("avg_prvs") or 0) or None,
+        })
+    return hits
+
+
+def settle_filled_stops(conn, hits: list[dict], *, mode: str) -> list[dict]:
+    """체결된 손절을 장부에 반영한다(Orders 갱신 + Outcomes 적재 + Positions 정리)."""
+    done = []
+    for h in hits:
+        p = h["position"]
+        row = conn.execute(
+            'SELECT * FROM positions WHERE position_id=%s', (p["position_id"],)
+        ).fetchone()
+        if row is None or row["status"] != "open":
+            continue                   # 사이클이 먼저 정리했다 — 두 번 적재하지 않는다
+        price = h["price"] or float(p["current_stop_price"] or row["average_price"])
+        filled = h["filled"]
+        journal.mark_order_filled(
+            conn, client_order_id=p["active_stop_order_id"], filled_quantity=filled,
+            average_fill_price=h["price"],
+            status="filled" if filled >= int(row["quantity"]) else "partial",
+        )
+        summary = exits.book_exit(
+            conn, row, outcome_id=f"{p['active_stop_order_id']}-out", filled=filled,
+            exit_price=price, trade_date=kst_today(), exit_reason="stopHit",
+            full=filled >= int(row["quantity"]), mode=mode,
+        )
+        done.append({"code": p["symbol_id"], **summary})
+    return done
+
+
+def find_missing_stops(orders: list[dict], positions: list[dict]) -> list[dict]:
+    """상주 스톱이 없거나 KIS에서 이미 사라진 보유를 찾는다.
+
+    체결된 손절은 호출부가 미리 걸러 넘긴다 — 방금 팔린 종목에 손절을 다시 걸면
+    보유하지도 않은 주식에 매도 예약이 서게 된다.
+    """
     live_by_code = {
         o.get("pdno") for o in orders
         if o.get("ord_dvsn_cd") == STOP_ORD_DVSN and _is_alive(o)
@@ -183,9 +249,34 @@ def main() -> None:
         conn.close()
         return
     print(f"[{mode}] 보유 {len(positions)}종목 감시")
+    orders = fetch_daily_orders(client)
+
+    # ⓪ 걸어 둔 손절이 스스로 체결됐나 — 나머지 판정보다 먼저 봐야 한다.
+    #    팔린 종목에 손절을 다시 걸거나, 다음 사이클이 잔고 불일치로 전체를 멈추는 것을 막는다.
+    filled = find_filled_stops(orders, positions)
+    settled: list[dict] = []
+    if filled:
+        for h in filled:
+            print(f"  ⓪ 손절 체결 {h['position']['symbol_id']} {h['filled']}주 "
+                  f"@ {h['price'] or 0:,.0f}")
+        if not args.check:
+            settled = settle_filled_stops(conn, filled, mode=mode)
+            for d in settled:
+                notify.notify_stop_filled(
+                    d["code"], quantity=int(d["quantity"]), entry=d["entry"],
+                    exit_price=d["exit"], net=d["net"],
+                    return_percent=d["return_percent"], mode=mode,
+                )
+            positions = load_open_positions(conn)      # 정리된 보유를 빼고 다시 본다
+            if not positions:
+                print("  손절 체결로 보유가 비었다 — 나머지 점검 없음")
+                conn.close()
+                return
+    else:
+        print("  ⓪ 손절 체결 없음")
 
     # ① 상주 스톱 무결성
-    missing = find_missing_stops(conn, client, positions)
+    missing = find_missing_stops(orders, positions)
     ids: list[str] = []
     if missing:
         codes = [p["symbol_id"] for p in missing]
@@ -221,7 +312,9 @@ def main() -> None:
     else:
         notify.notify_watch_summary(
             positions=len(positions), missing=len(missing), registered=len(ids),
-            stale=len(stale), revised=len(fixed),
+            stale=[f"{p['symbol_id']} {float(p['broker_stop_price']):,.0f}"
+                   f" → {float(p['current_stop_price']):,.0f}" for p in stale],
+            revised=fixed,
             gaps=[f"{h.symbol} 현재가 {h.price:,.0f} ≤ 손절 {h.stop:,.0f}" for h in hits],
             mode=mode,
         )

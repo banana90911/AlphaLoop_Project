@@ -139,47 +139,138 @@ def notify_ingest_summary(
     )
 
 
+class TradeLine(NamedTuple):
+    """사이클이 실제로 낸 매매 한 건 — `orders` 한 행을 알림용으로 줄인 것."""
+    code: str
+    name: str | None
+    side: str                   # buy / sell
+    purpose: str                # entry / exit / stop / stopAmend
+    quantity: int               # 체결 수량(미체결이면 0)
+    price: float | None         # 평균 체결가
+    status: str
+
+
+class HoldingLine(NamedTuple):
+    """사이클이 끝난 뒤의 보유 한 건."""
+    code: str
+    name: str | None
+    quantity: int
+    average_price: float
+    stop_price: float | None
+
+
+def _label(code: str, name: str | None) -> str:
+    return f"{name}({code})" if name else f"`{code}`"
+
+
+_PURPOSE = {"entry": "매수", "exit": "매도", "stop": "손절예약", "stopAmend": "손절정정"}
+
+
 def notify_cycle_summary(
     cycle_id: str, status: str, *, action: str, watchlist: int, planned: int,
-    submitted: int, live: bool, reason: str | None = None, mode: str = "real",
+    live: bool, trades: Sequence[TradeLine] = (), holdings: Sequence[HoldingLine] = (),
+    reason: str | None = None, mode: str = "real",
 ) -> bool:
-    """정기 사이클 결과 요약(정상·건너뜀). 실패는 `notify_cycle_failure`가 따로 보낸다.
+    """정기 사이클 결과 — 무엇을 사고 팔았고 지금 무엇을 들고 있는지.
 
-    같은 사이클에 알림이 두 번 가지 않도록 호출부에서 갈라 부른다.
+    실패는 `notify_cycle_failure`가 따로 보낸다. 같은 사이클에 알림이 두 번 가지
+    않도록 호출부에서 갈라 부른다.
     """
     skipped = status != "recorded"
-    head = f"사이클: `{cycle_id}` · `{mode}`\n결과: {status} ({action})"
+    out = [f"사이클: `{cycle_id}` · `{mode}`", f"결과: {status} ({action})"]
     if reason:
-        head += f"\n사유: {reason}"
-    body = (f"\n워치리스트 {watchlist:,}종목 · 집행계획 {planned}건"
-            f" · 송출 {submitted}건" if not skipped else "")
-    tail = "" if live else "\n\n드라이런 — 계획만 세우고 주문은 내지 않았습니다(`--live` 없음)."
+        out.append(f"사유: {reason}")
+    if skipped:
+        return send("\n".join(out), level="warning", title="사이클 건너뜀")
+
+    out.append(f"워치리스트 {watchlist:,}종목 · 집행계획 {planned}건")
+
+    buys = [t for t in trades if t.purpose == "entry"]
+    sells = [t for t in trades if t.purpose == "exit"]
+    stops = [t for t in trades if t.purpose in ("stop", "stopAmend")]
+
+    out.append("")
+    out.append(f"**매수** {len(buys)}건" if buys else "**매수** 없음")
+    out += [f"· {_trade_line(t)}" for t in buys]
+    out.append(f"**매도** {len(sells)}건" if sells else "**매도** 없음")
+    out += [f"· {_trade_line(t)}" for t in sells]
+    if stops:
+        out.append(f"**손절 예약** {len(stops)}건")
+        out += [f"· {_trade_line(t)}" for t in stops]
+
+    out.append("")
+    if holdings:
+        total = sum(h.quantity * h.average_price for h in holdings)
+        out.append(f"**보유** {len(holdings)}종목 · 매입금액 {total:,.0f}원")
+        for h in holdings:
+            stop = f" 손절 {h.stop_price:,.0f}" if h.stop_price else " 손절 없음"
+            out.append(f"· {_label(h.code, h.name)} {h.quantity}주 "
+                       f"@ {h.average_price:,.0f}{stop}")
+    else:
+        out.append("**보유** 없음")
+
+    if not live:
+        out.append("")
+        out.append("드라이런 — 계획만 세우고 주문은 내지 않았습니다(`--live` 없음).")
+    # 손절 없는 보유가 하나라도 있으면 밤사이 갭에 무방비다 — 눈에 띄게 올린다.
+    naked = [h for h in holdings if h.stop_price is None]
+    return send("\n".join(out),
+                level="warning" if naked else "info", title="사이클 완료")
+
+
+def _trade_line(t: TradeLine) -> str:
+    what = _PURPOSE.get(t.purpose, t.purpose)
+    if t.quantity <= 0:
+        return f"{_label(t.code, t.name)} {what} 미체결(`{t.status}`)"
+    at = f" @ {t.price:,.0f}원" if t.price else ""
+    return f"{_label(t.code, t.name)} {what} {t.quantity}주{at}"
+
+
+def notify_stop_filled(
+    code: str, *, quantity: int, entry: float, exit_price: float, net: float,
+    return_percent: float, name: str | None = None, mode: str = "real",
+) -> bool:
+    """걸어 둔 손절이 스스로 체결됐음을 알린다.
+
+    우리가 낸 주문이 아니라 브로커가 발동시킨 매도라, 알려주지 않으면 사람은 다음
+    사이클 결과를 볼 때까지 팔린 줄도 모른다.
+    """
+    sign = "+" if net >= 0 else "−"
     return send(
-        head + body + tail,
-        level="warning" if skipped else "info",
-        title="사이클 건너뜀" if skipped else "사이클 완료",
+        f"{_label(code, name)} {quantity}주가 손절가에 닿아 체결됐습니다. · `{mode}`\n"
+        f"매수 {entry:,.0f}원 → 매도 {exit_price:,.0f}원\n"
+        f"실현손익 {sign}{abs(net):,.0f}원 ({return_percent * 100:+.2f}%)\n\n"
+        "보유와 손익은 장부에 이미 반영했습니다. 따로 하실 일은 없습니다.",
+        level="warning", title="손절 체결",
     )
 
 
 def notify_watch_summary(
-    *, positions: int, missing: int, registered: int, stale: int, revised: int,
+    *, positions: int, missing: int, registered: int,
+    stale: Sequence[str] = (), revised: Sequence[str] = (),
     gaps: Sequence[str] = (), mode: str = "real",
 ) -> bool:
-    """장중 보유 감시 결과 요약.
+    """장중 보유 감시 결과 — 트레일링(손절선 정정)이 실제로 반영됐는지가 핵심이다.
 
     보유가 0이면 호출부가 아예 부르지 않는다 — 30분마다 "보유 없음"이 13번 오면
     알림 자체가 배경 소음이 되어 진짜 경보를 놓친다. 안 도는 것은 heartbeat가 잡는다.
     """
-    lines = [
-        f"① 상주 스톱: {'정상' if not missing else f'빠짐 {missing}종목 → 등록 {registered}건'}",
-        f"② 손절선 정합: {'일치' if not stale else f'어긋남 {stale}종목 → 정정 {revised}건'}",
-        f"③ 손절 구멍: {'없음' if not gaps else ', '.join(gaps)}",
-    ]
-    level = "critical" if gaps else ("warning" if (missing or stale) else "info")
-    return send(
-        f"보유 {positions}종목 감시 · `{mode}`\n" + "\n".join(lines),
-        level=level, title="보유 감시" + ("" if level == "info" else " — 조치 발생"),
-    )
+    out = [f"보유 {positions}종목 감시 · `{mode}`"]
+    out.append("① 상주 스톱: " +
+               ("정상" if not missing else f"빠짐 {missing}종목 → 등록 {registered}건"))
+    if stale:
+        out.append(f"② 손절선 정정 {len(revised)}/{len(stale)}건")
+        out += [f"· {t}" for t in stale]
+        if len(revised) < len(stale):
+            out.append("  일부가 정정되지 않았습니다 — 그 종목은 옛 손절가 그대로입니다.")
+    else:
+        out.append("② 손절선: 장부와 KIS 예약 일치(정정할 것 없음)")
+    out.append("③ 손절 구멍: " + ("없음" if not gaps else ", ".join(gaps)))
+
+    level = "critical" if gaps else (
+        "warning" if (missing or len(revised) < len(stale)) else "info")
+    return send("\n".join(out), level=level,
+                title="보유 감시" + ("" if level == "info" else " — 조치 필요"))
 
 
 def notify_stop_not_registered(code: str, qty: int, stop_price: float, status: str) -> bool:

@@ -511,6 +511,30 @@ def record_order(
     conn.commit()
 
 
+def mark_order_filled(
+    conn: psycopg.Connection,
+    *,
+    client_order_id: str,
+    filled_quantity: int,
+    average_fill_price: float | None = None,
+    status: str = "filled",
+    filled_at: datetime | None = None,
+) -> None:
+    """이미 적재된 주문 1건을 체결 상태로 갱신한다.
+
+    브로커에 걸어 둔 손절 예약처럼 **우리가 송출하지 않은 시점에 체결되는** 주문이
+    있다. 그 체결을 나중에 조회로 알게 됐을 때 원래 행을 고치는 경로다.
+    """
+    conn.execute(
+        'UPDATE orders SET filled_quantity=%s, average_fill_price=COALESCE(%s, '
+        'average_fill_price), status=%s, filled_date_time=%s '
+        'WHERE client_order_id=%s',
+        (filled_quantity, average_fill_price, status, filled_at or now_utc(),
+         client_order_id),
+    )
+    conn.commit()
+
+
 def upsert_entry_position(
     conn: psycopg.Connection,
     *,

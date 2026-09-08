@@ -39,6 +39,46 @@ def build_account(client: KISClient, market_map: dict[str, str]) -> tuple[Accoun
     return account, {holding.code: holding.qty for holding in balance.holdings}
 
 
+def _cycle_trades(conn, cycle_id: str) -> list[notify.TradeLine]:
+    """이 사이클이 실제로 낸 주문을 장부에서 읽어 온다.
+
+    `CycleResult.order_ids`는 식별자뿐이라 무엇을 얼마에 샀는지가 없다. 계획이 아니라
+    **체결된 결과**를 알려야 하므로 기록된 쪽(`orders`)을 읽는다.
+    """
+    rows = conn.execute(
+        'SELECT o.symbol_id, s.name, o.side, o.purpose, o.filled_quantity, '
+        'o.average_fill_price, o.status FROM orders o '
+        'LEFT JOIN symbols s ON s.symbol_id = o.symbol_id '
+        'WHERE o.cycle_id = %s ORDER BY o.ordered_date_time',
+        (cycle_id,),
+    ).fetchall()
+    return [
+        notify.TradeLine(
+            r["symbol_id"], r["name"], r["side"], r["purpose"],
+            int(r["filled_quantity"] or 0),
+            float(r["average_fill_price"]) if r["average_fill_price"] else None,
+            r["status"],
+        )
+        for r in rows
+    ]
+
+
+def _open_holdings(conn) -> list[notify.HoldingLine]:
+    """사이클이 끝난 시점의 보유 목록."""
+    rows = conn.execute(
+        'SELECT p.symbol_id, s.name, p.quantity, p.average_price, p.current_stop_price '
+        'FROM positions p LEFT JOIN symbols s ON s.symbol_id = p.symbol_id '
+        "WHERE p.status = 'open' AND p.quantity > 0 ORDER BY p.symbol_id"
+    ).fetchall()
+    return [
+        notify.HoldingLine(
+            r["symbol_id"], r["name"], int(r["quantity"]), float(r["average_price"]),
+            float(r["current_stop_price"]) if r["current_stop_price"] else None,
+        )
+        for r in rows
+    ]
+
+
 def main() -> None:
     """CLI 진입점 — 잔고·시세·게이트 입력을 모아 cycle.run에 넘기고 결과를 출력한다."""
     ap = argparse.ArgumentParser(description="AlphaLoop 매매 사이클")
@@ -131,8 +171,8 @@ def main() -> None:
         notify.notify_cycle_summary(
             res.cycle_id, status, action=res.cycle_action,
             watchlist=len(res.watchlist), planned=len(res.planned_orders),
-            submitted=len(res.order_ids), live=args.live,
-            reason=res.blocked_reason, mode=mode,
+            live=args.live, trades=_cycle_trades(conn, res.cycle_id),
+            holdings=_open_holdings(conn), reason=res.blocked_reason, mode=mode,
         )
         if status == "skipped":
             heartbeat.ping_failure(f"{status}: {res.blocked_reason}")

@@ -266,6 +266,38 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,
     )
     if filled <= 0:                                   # 미체결 → 포지션 유지(에스컬레이션은 후속)
         return coid
+    book_exit(
+        conn, r, outcome_id=f"{coid}-out", filled=filled, exit_price=exit_price,
+        trade_date=trade_date, exit_reason=EXIT_REASONS[act.reason],
+        full=act.action == "exit_full", new_stop=act.new_stop, mode=mode,
+        tax_params=tax_params,
+    )
+    return coid
+
+
+def book_exit(
+    conn,
+    r,
+    *,
+    outcome_id: str,
+    filled: int,
+    exit_price: float,
+    trade_date: date | None,
+    exit_reason: str,
+    full: bool,
+    new_stop: float | None = None,
+    mode: str = "paper",
+    tax_params: dict | None = None,
+) -> dict[str, float]:
+    """체결된 매도 1건을 `Outcomes`에 적재하고 `Positions`를 줄이거나 닫는다.
+
+    주문 송출과 분리해 둔 이유는, **우리가 송출하지 않은 매도**도 같은 방식으로
+    장부에 반영해야 하기 때문이다 — 브로커에 걸어 둔 손절 예약이 장중에 스스로
+    체결되는 경우가 그렇다(`run_watch`가 조회로 뒤늦게 알게 된다).
+
+    반환: 알림·로그가 그대로 쓸 수 있는 실현손익 요약.
+    """
+    code = r["symbol_id"]
     entry = float(r["average_price"])
     mkt = r["market"] or "KOSPI"                       # 종목→시장 매핑 부재 시 기본(TODO)
     end = trade_date or kst_today()
@@ -276,26 +308,28 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,
     net = gross - buy_cost["total"] - sell_cost["total"]
     risk = r["initial_stop_price"]
     r_per_share = entry - float(risk) if risk is not None else None
+    ret = net / (entry * filled) if entry * filled else 0.0
     journal.record_outcome(
-        conn, outcome_id=f"{coid}-out", position_id=r["position_id"],
+        conn, outcome_id=outcome_id, position_id=r["position_id"],
         entry_decision_id=r["entry_decision_id"], symbol_id=code, entry_price=entry,
         exit_price=exit_price, quantity=filled,
         entry_date=entry_date, exit_date=end,
         holding_days=_days_held(r["entry_date"], end),
         gross_profit_loss=gross, net_profit_loss=net,
         fee=buy_cost["commission"] + sell_cost["commission"], tax=sell_cost["tax"],
-        return_percent=net / (entry * filled) if entry * filled else 0.0,
+        return_percent=ret,
         r_multiple=net / (r_per_share * filled) if r_per_share else None,
-        exit_kind="full" if act.action == "exit_full" else "partial",
-        exit_reason=EXIT_REASONS[act.reason], mode=mode,
+        exit_kind="full" if full else "partial",
+        exit_reason=exit_reason, mode=mode,
     )
-    if act.action == "exit_full" or filled >= r["quantity"]:
+    if full or filled >= r["quantity"]:
         journal.close_position(conn, r["position_id"])
     else:
         journal.reduce_position(
-            conn, r["position_id"], sell_quantity=filled, new_stop=act.new_stop,
+            conn, r["position_id"], sell_quantity=filled, new_stop=new_stop,
         )
-    return coid
+    return {"entry": entry, "exit": exit_price, "quantity": filled,
+            "net": net, "return_percent": ret}
 
 
 def _days_held(entry_date: date | None, asof: date | None) -> int:

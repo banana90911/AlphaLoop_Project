@@ -89,14 +89,17 @@ def ingest_bars_and_flows(
     skip_done = skip_done or set()
     targets = [c for c in codes if c not in skip_done]
     bar_rows = flow_rows = bar_ok = flow_ok = 0
-    errors: list[str] = []
+    # 두 단계는 각자의 행으로 기록되므로 오류도 따로 모은다. 한 목록을 공유하면
+    # 수급만 실패한 종목이 일봉 행에도 "오류"로 찍혀, 성공한 단계가 실패로 보인다.
+    bar_errors: list[str] = []
+    flow_errors: list[str] = []
     s, e = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
 
     for code in targets:
         try:
             df = kis_history.fetch_ohlcv_range(client, code, s, e)
         except Exception as ex:
-            errors.append(f"{code} bars {type(ex).__name__}")
+            bar_errors.append(f"{code} {type(ex).__name__}")
             continue
         # 장이 열리기 전에 당일을 조회하면 KIS가 전일 종가로 채운 거래량 0짜리 봉을 준다.
         # 그대로 넣으면 고가=저가라 ATR이 0이 되고 변동성이 과소평가된다 — 확정 봉만 받는다.
@@ -114,7 +117,7 @@ def ingest_bars_and_flows(
         try:                                    # 수급 실패는 일봉을 막지 않는다
             flows = _recent_flows(client, code)
         except Exception as ex:
-            errors.append(f"{code} flows {type(ex).__name__}")
+            flow_errors.append(f"{code} {type(ex).__name__}")
             continue
         flow_ok += 1             # 위와 같다 — 예외가 없었으면 조회는 성공한 것이다
         if flows:
@@ -125,12 +128,16 @@ def ingest_bars_and_flows(
             return "failed"
         return "ok" if ok == len(targets) else "partial"
 
-    msg = "; ".join(errors[:20]) or None
+    def msg(errs: list[str]) -> str | None:
+        head = "; ".join(errs[:20])
+        rest = len(errs) - 20
+        return None if not head else (head if rest <= 0 else f"{head} 외 {rest}종목")
+
     return (
         StepResult("daily_bars", "kis_daily_chart", status(bar_ok),
-                   len(targets), bar_ok, bar_rows, msg),
+                   len(targets), bar_ok, bar_rows, msg(bar_errors)),
         StepResult("daily_flows", "kis_investor", status(flow_ok),
-                   len(targets), flow_ok, flow_rows, msg),
+                   len(targets), flow_ok, flow_rows, msg(flow_errors)),
     )
 
 
@@ -244,8 +251,10 @@ def compute_daily_scores(conn, *, trade_date: date) -> StepResult:
                     else int(ranks[code]),
         })
     n = journal.upsert_daily_scores(conn, score_date, rows)
-    return StepResult("daily_scores", "journal", "ok", len(panel), len(passed), n,
-                      None if score_date == trade_date else f"기준일 {score_date}")
+    # 기준일(score_date)은 오류 칸에 적지 않는다. 장 시작 전 배치는 당일 봉이 없어
+    # **항상** 전 거래일 기준이라 신호가 없고, 배치 날짜와 달라 보여 오해만 부른다.
+    # 어느 날짜로 저장됐는지는 daily_scores.trade_date가 그대로 갖고 있다.
+    return StepResult("daily_scores", "journal", "ok", len(panel), len(passed), n)
 
 
 def _pct(pool: pd.DataFrame, col: str, higher_better: bool) -> pd.Series:

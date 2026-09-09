@@ -298,7 +298,6 @@ function CycleRow({ c }: { c: FailedCycle }) {
 }
 
 function IngestRow({ r }: { r: IngestRun }) {
-  const ok = r.status === 'ok'
   return (
     <Row
       tone={r.status === 'failed' ? 'border-warn/40' : 'border-ink-800'}
@@ -316,26 +315,13 @@ function IngestRow({ r }: { r: IngestRun }) {
       }
       detail={
         <>
-          <p className="mb-1.5 text-ink-200">
-            {ok
-              ? '이 단계는 대상을 전부 조회해 적재를 마쳤습니다. 사이클은 이 표를 신선한 데이터로 봅니다.'
-              : '그날 데이터가 낡았다는 뜻입니다. 낡은 값으로 낸 점수는 오늘의 시장이 아니므로, 사이클이 신선도 검사에서 스스로 멈출 수 있습니다.'}
-          </p>
-          {!ok && (
-            <>
-              <p>배치를 다시 돌립니다 — 이어받기가 되므로 성공한 종목은 다시 받지 않습니다.</p>
-              <code className="mt-2 block rounded border border-ink-800 bg-ink-950 px-2 py-1.5 font-mono">
-                python run_daily_ingest.py --resume
-              </code>
-            </>
-          )}
-          <p className="mt-2">적재 {(r.rows_written ?? 0).toLocaleString()}행</p>
-          {r.error_message && (
-            <p className="mt-2 break-all text-ink-200">오류: {r.error_message}</p>
-          )}
-          <p className="mt-1 font-mono">
+          <p className="font-mono">
             {fmtStamp(r.started_date_time)} → {fmtStamp(r.finished_date_time)}
           </p>
+          <p className="mt-1">적재 {(r.rows_written ?? 0).toLocaleString()}행</p>
+          {r.error_message && (
+            <p className="mt-1 break-all text-warn">{r.error_message}</p>
+          )}
         </>
       }
     />

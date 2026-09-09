@@ -333,11 +333,28 @@ export type IngestRun = {
   finished_date_time: string | null
 }
 
+export type WatchRun = {
+  run_id: string
+  trade_date: string
+  market_open: boolean
+  positions: number
+  filled_stops: number
+  missing_stops: number
+  registered_stops: number
+  stale_stops: number
+  revised_stops: number
+  stop_gaps: number
+  note: string | null
+  mode: string
+  ran_date_time: string
+}
+
 export type AlertsResponse = {
   safe_stops: SafeStopEvent[]
   active_stop: boolean
   failed_cycles: FailedCycle[]
   ingests: IngestRun[]        // 성공까지 포함한 최근 배치 기록
+  watches: WatchRun[]         // 성공까지 포함한 최근 장중 감시 기록
   unlabeled_flows: CashFlow[]
   unlabeled_flow_hint: string
 }

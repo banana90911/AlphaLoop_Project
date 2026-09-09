@@ -246,13 +246,19 @@ def main() -> None:
     mode = get_settings().trading_mode
     conn = init_db()
     client = KISClient(mode=mode)
+    run_id = now_utc().strftime("W%Y%m%dT%H%M%S%fZ")
 
     positions = load_open_positions(conn)
     if not positions:
-        # 알림을 보내지 않는다. 보유가 0인 날 30분마다 "보유 없음"이 13번 오면
+        # 알림은 보내지 않는다. 보유가 0인 날 30분마다 "보유 없음"이 13번 오면
         # 알림 자체가 배경 소음이 되어 진짜 경보를 놓친다 — 안 도는 것은 cron 로그와
-        # heartbeat가 잡는다.
+        # heartbeat가 잡는다. 다만 **기록은 남긴다**: 이 행이 곧 "감시가 돌긴 돌았다"는
+        # 증거이고, 그게 없으면 대시보드에서 안 도는 것과 구별할 수 없다.
         print("보유 없음 — 감시할 대상이 없다")
+        journal.record_watch_run(
+            conn, run_id=run_id, trade_date=kst_today(), market_open=market_open,
+            positions=0, note="보유 없음", mode=mode,
+        )
         conn.close()
         return
     print(f"[{mode}] 보유 {len(positions)}종목 감시")
@@ -274,9 +280,15 @@ def main() -> None:
                     exit_price=d["exit"], net=d["net"],
                     return_percent=d["return_percent"], mode=mode,
                 )
+            held_before = len(positions)
             positions = load_open_positions(conn)      # 정리된 보유를 빼고 다시 본다
             if not positions:
                 print("  손절 체결로 보유가 비었다 — 나머지 점검 없음")
+                journal.record_watch_run(
+                    conn, run_id=run_id, trade_date=kst_today(),
+                    market_open=market_open, positions=held_before,
+                    filled_stops=len(settled), note="손절 체결로 보유 청산", mode=mode,
+                )
                 conn.close()
                 return
     else:
@@ -313,6 +325,14 @@ def main() -> None:
         print("  → 정리는 사이클의 청산 경로가 한다(run_cycle)")
     else:
         print("  ③ 손절 구멍 없음")
+
+    journal.record_watch_run(
+        conn, run_id=run_id, trade_date=kst_today(), market_open=market_open,
+        positions=len(positions), filled_stops=len(settled), missing_stops=len(missing),
+        registered_stops=len(ids), stale_stops=len(stale), revised_stops=len(fixed),
+        stop_gaps=len(hits), mode=mode,
+        note="점검 모드(주문 없음)" if args.check else None,
+    )
 
     if args.check:
         print("\n점검 모드 — 주문을 내지 않았다")

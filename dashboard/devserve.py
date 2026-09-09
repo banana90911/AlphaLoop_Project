@@ -406,6 +406,22 @@ def seed(conn) -> None:
              None, ts(days[-1], 8, 18), ts(days[-1], 8, 19)),
         ],
     )
+    many(
+        conn,
+        'INSERT INTO watch_runs(run_id,trade_date,market_open,positions,filled_stops,'
+        'missing_stops,registered_stops,stale_stops,revised_stops,stop_gaps,note,mode,'
+        'ran_date_time) VALUES(' + ",".join(["%s"] * 13) + ")",
+        [
+            ("W1", days[-1], True, 3, 0, 0, 0, 1, 1, 0, None, "paper",
+             ts(days[-1], 13, 0)),
+            ("W2", days[-1], True, 3, 0, 1, 1, 0, 0, 0, None, "paper",
+             ts(days[-1], 14, 25)),
+            ("W3", days[-1], True, 2, 1, 0, 0, 0, 0, 0, None, "paper",
+             ts(days[-1], 15, 0)),
+            ("W4", days[-1], False, 2, 0, 1, 0, 0, 0, 1, "마감 정리", "paper",
+             ts(days[-1], 15, 35)),
+        ],
+    )
     conn.commit()
 
 

@@ -71,7 +71,7 @@
 | 04  | [04-data](docs/04-data.md)                         | 데이터 구성·품질 보정·후보 선별·vintage     |
 | 05  | [05-risk-engine](docs/05-risk-engine.md)           | 리스크 엔진 — 하드룰·검사 순서·안전 정지       |
 | 06  | [06-sizing-portfolio](docs/06-sizing-portfolio.md) | 포지션 사이징·청산                     |
-| 07  | [07-data-model](docs/07-data-model.md)             | 데이터 모델 (PostgreSQL 17개 표)      |
+| 07  | [07-data-model](docs/07-data-model.md)             | 데이터 모델 (PostgreSQL 19개 표)      |
 | 08  | [08-dashboard](docs/08-dashboard.md)               | 대시보드 — 불변식·화면 구성·접속·로그인        |
 | 09  | [09-evaluation](docs/09-evaluation.md)             | 성과 평가·벤치마크·백테스트·게이트·실행 이력      |
 | 10  | [10-operations](docs/10-operations.md)             | 운영 — 멱등성·DB 권한·백업·배포·조용한 실패 차단 |

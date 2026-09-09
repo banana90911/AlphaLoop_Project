@@ -59,7 +59,7 @@ python run_walkforward.py             # 워크포워드 OOS 검증 (그리드는
 
 ### 저장소 — PostgreSQL 단일 진실원
 
-- 매매 코어·대시보드·모든 배치가 같은 PostgreSQL을 공유점으로 쓴다. 스키마는 `memory/schema.sql`(17개 표, `docs/07-data-model.md`가 정본), 마이그레이션은 아직 Alembic 미도입 상태로 `memory/migrations/README.md`에 절차만 있다.
+- 매매 코어·대시보드·모든 배치가 같은 PostgreSQL을 공유점으로 쓴다. 스키마는 `memory/schema.sql`(19개 표, `docs/07-data-model.md`가 정본), 마이그레이션은 아직 Alembic 미도입 상태로 `memory/migrations/README.md`에 절차만 있다.
 - **DB 연결은 반드시 `memory/db.py`의 `connect()`/`init_db()`를 거친다.** `psycopg.connect`/`sqlite3.connect` 직접 호출은 `ruff`의 `banned-api` 룰로 차단된다(`pyproject.toml`).
 - 쓰기·조회 계정이 분리되어 있다(`db_dsn` vs `db_dsn_readonly`) — 대시보드 API는 조회 전용 계정만 쓴다.
 - 테스트는 실 PostgreSQL이 없어도 된다: `tests/conftest.py`의 `conn` 픽스처가 `pgserver`로 1인용 서버를 띄우고 테스트마다 임시 스키마를 만들었다 지운다. DSN 우선순위는 `ALPHALOOP_TEST_DSN` 환경변수 → pgserver → 설정값.

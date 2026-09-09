@@ -444,6 +444,37 @@ def test_alerts_lists_failed_cycles_and_ingests(conn, client):
     assert by_id["R2"]["range_end_date"] == _DAY.isoformat()   # 화면이 거래일로 묶는다
 
 
+def test_alerts_lists_watch_runs_including_quiet_ones(conn, client):
+    """감시는 조치할 게 있을 때만 다른 표에 흔적을 남긴다.
+
+    "돌았는데 이상 없었다"를 이 표가 아니면 "아예 안 돌았다"와 구별할 수 없다.
+    """
+    journal.record_watch_run(
+        conn, run_id="W1", trade_date=_DAY, market_open=True, positions=0,
+        note="보유 없음", mode="paper",
+    )
+    journal.record_watch_run(
+        conn, run_id="W2", trade_date=_DAY, market_open=False, positions=2,
+        filled_stops=1, stop_gaps=1, mode="paper",
+    )
+    body = client.get("/api/alerts").json()
+    by_id = {w["run_id"]: w for w in body["watches"]}
+    assert set(by_id) == {"W1", "W2"}
+    assert by_id["W1"]["positions"] == 0 and by_id["W1"]["note"] == "보유 없음"
+    assert by_id["W2"]["market_open"] is False    # 마감 정리 실행
+    assert by_id["W2"]["filled_stops"] == 1 and by_id["W2"]["stop_gaps"] == 1
+
+
+def test_watch_run_is_idempotent(conn, client):
+    """같은 실행이 두 번 적히면 '몇 번 돌았나'를 셀 수 없게 된다."""
+    for _ in range(2):
+        journal.record_watch_run(
+            conn, run_id="W1", trade_date=_DAY, market_open=True, positions=1,
+            mode="paper",
+        )
+    assert len(client.get("/api/alerts").json()["watches"]) == 1
+
+
 # ── 외부 현금흐름 반영 (08-dashboard 8.4) ────────────────────────
 def _flow(conn, cycle_id: str, *, kind: str, amount: float, status: str = "unconfirmed"):
     return journal.record_cash_flow(

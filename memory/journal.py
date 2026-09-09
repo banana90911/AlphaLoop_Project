@@ -851,6 +851,41 @@ def upsert_daily_scores(
     return n
 
 
+def record_watch_run(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+    trade_date: date,
+    market_open: bool,
+    positions: int,
+    filled_stops: int = 0,
+    missing_stops: int = 0,
+    registered_stops: int = 0,
+    stale_stops: int = 0,
+    revised_stops: int = 0,
+    stop_gaps: int = 0,
+    note: str | None = None,
+    mode: str = "paper",
+    ran_at: datetime | None = None,
+) -> None:
+    """장중 보유 감시 1회의 결과를 `WatchRuns`에 남긴다.
+
+    보유가 0이라 아무것도 안 한 실행도 남긴다 — 그 행이 곧 "감시가 돌긴 돌았다"는
+    증거이고, 그게 없으면 안 도는 것과 구별할 수 없다.
+    """
+    conn.execute(
+        'INSERT INTO watch_runs(run_id, trade_date, market_open, positions, '
+        'filled_stops, missing_stops, registered_stops, stale_stops, revised_stops, '
+        'stop_gaps, note, mode, ran_date_time) '
+        "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        'ON CONFLICT (run_id) DO NOTHING',
+        (run_id, trade_date, market_open, positions, filled_stops, missing_stops,
+         registered_stops, stale_stops, revised_stops, stop_gaps, note, mode,
+         ran_at or now_utc()),
+    )
+    conn.commit()
+
+
 def record_ingest_run(
     conn: psycopg.Connection,
     *,

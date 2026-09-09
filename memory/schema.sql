@@ -110,6 +110,25 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
     finished_date_time timestamptz               -- 신선도 판정의 기준
 );
 
+-- 장중 보유 감시 1회의 결과. 감시는 조치할 게 있을 때만 Orders·Outcomes에 흔적을
+-- 남기므로, 이 표가 없으면 "돌았는데 이상 없었다"와 "아예 안 돌았다"를 가릴 수 없다.
+-- 매매 판단을 하지 않으므로 Cycles가 아니라 별도 표다(03-arch 3-1).
+CREATE TABLE IF NOT EXISTS watch_runs (
+    run_id            text PRIMARY KEY,
+    trade_date         date NOT NULL,
+    market_open        boolean NOT NULL,          -- false면 마감 정리 실행(주문 없음)
+    positions         integer NOT NULL,          -- 감시 대상 보유 종목 수
+    filled_stops       integer NOT NULL,          -- 스스로 체결된 손절(10-ops 10.13)
+    missing_stops      integer NOT NULL,          -- 상주 스톱이 빠진 보유
+    registered_stops   integer NOT NULL,          -- 그중 다시 등록한 건수
+    stale_stops        integer NOT NULL,          -- 장부와 KIS 예약의 발동가 불일치
+    revised_stops      integer NOT NULL,          -- 그중 정정에 성공한 건수
+    stop_gaps         integer NOT NULL,          -- 손절선을 이탈했는데 아직 보유 중
+    note              text,
+    mode              text NOT NULL,
+    ran_date_time      timestamptz NOT NULL
+);
+
 -- ════════════════════════════════════════════════════════════
 -- 7.2 판단 — 사이클이 계산한 것
 -- ════════════════════════════════════════════════════════════

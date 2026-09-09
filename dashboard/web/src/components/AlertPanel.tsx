@@ -10,7 +10,14 @@
 
 import type { ReactNode } from 'react'
 import { useState } from 'react'
-import type { AlertsResponse, CashFlow, FailedCycle, IngestRun, SafeStopEvent } from '../api'
+import type {
+  AlertsResponse,
+  CashFlow,
+  FailedCycle,
+  IngestRun,
+  SafeStopEvent,
+  WatchRun,
+} from '../api'
 import { fmtDate, fmtStamp, fmtWonSigned } from '../format'
 import { Badge, Empty, ErrorLine, Panel, Skeleton } from './ui'
 
@@ -85,6 +92,7 @@ export function AlertPanel({
   const stops = data?.safe_stops ?? []
   const cycles = data?.failed_cycles ?? []
   const ingests = data?.ingests ?? []
+  const watches = data?.watches ?? []
   const flows = data?.unlabeled_flows ?? []
   // 배치는 성공까지 함께 온다 — 문제 건수에는 성공을 세지 않는다.
   const badIngests = ingests.filter((r) => r.status !== 'ok')
@@ -164,6 +172,26 @@ export function AlertPanel({
               </li>
             ) : (
               ingests.map((r) => <IngestRow key={r.run_id} r={r} />)
+            )}
+          </Group>
+          {/* 감시는 조치할 게 있을 때만 다른 표에 흔적을 남긴다 — 돌았다는 사실 자체를 보여준다 */}
+          <Group
+            title="장중 감시"
+            count={watches.length}
+            note={
+              watches[0] ? (
+                <span className="font-normal text-ink-400">
+                  최근 {fmtStamp(watches[0].ran_date_time)}
+                </span>
+              ) : undefined
+            }
+          >
+            {watches.length === 0 ? (
+              <li className="px-1 py-2 text-xs text-ink-400">
+                감시 기록이 없습니다 — 30분마다 도는 장중 감시가 아직 한 번도 돌지 않았습니다.
+              </li>
+            ) : (
+              watches.map((w) => <WatchRow key={w.run_id} w={w} />)
             )}
           </Group>
         </div>
@@ -317,6 +345,37 @@ function IngestRow({ r }: { r: IngestRun }) {
           {r.error_message && (
             <p className="mt-1 break-all text-warn">{r.error_message}</p>
           )}
+        </>
+      }
+    />
+  )
+}
+
+function WatchRow({ w }: { w: WatchRun }) {
+  // 손절 구멍은 손절선을 이탈했는데 아직 들고 있다는 뜻이라 가장 급하다.
+  const bad = w.stop_gaps > 0 || w.missing_stops > w.registered_stops
+  const acted = w.filled_stops + w.registered_stops + w.revised_stops
+  return (
+    <Row
+      tone={bad ? 'border-warn/40' : 'border-ink-800'}
+      head={
+        <span className="flex items-center gap-2">
+          <Badge tone={bad ? 'warn' : acted > 0 ? 'flow' : 'buy'}>
+            {bad ? '조치 필요' : acted > 0 ? '조치함' : '이상 없음'}
+          </Badge>
+          <span className="text-ink-50">보유 {w.positions}종목</span>
+          {!w.market_open && <span className="text-ink-400">마감 정리</span>}
+        </span>
+      }
+      meta={fmtStamp(w.ran_date_time)}
+      detail={
+        <>
+          <p>
+            손절 체결 {w.filled_stops} · 스톱 빠짐 {w.missing_stops}(등록 {w.registered_stops})
+            {' · '}손절선 어긋남 {w.stale_stops}(정정 {w.revised_stops}) · 손절 구멍{' '}
+            {w.stop_gaps}
+          </p>
+          {w.note && <p className="mt-1 text-ink-200">{w.note}</p>}
         </>
       }
     />

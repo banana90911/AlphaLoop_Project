@@ -505,6 +505,11 @@ def get_alerts(conn: DbConn) -> dict:
     ingests = conn.execute(
         'SELECT * FROM ingest_runs ORDER BY started_date_time DESC LIMIT 40'
     ).fetchall()
+    # 장중 감시도 성공까지 준다 — 감시는 조치할 게 있을 때만 다른 표에 흔적을 남기므로,
+    # 이 표가 없으면 "돌았는데 이상 없었다"와 "아예 안 돌았다"가 화면에서 똑같다.
+    watches = conn.execute(
+        'SELECT * FROM watch_runs ORDER BY ran_date_time DESC LIMIT 20'
+    ).fetchall()
     unlabeled = conn.execute(
         'SELECT * FROM cash_flows WHERE status = \'unconfirmed\' '
         'ORDER BY detected_date_time DESC LIMIT 50'
@@ -515,6 +520,7 @@ def get_alerts(conn: DbConn) -> dict:
         "active_stop": any(r["released_date_time"] is None for r in safe_stops),
         "failed_cycles": [dict(r) for r in cycles],
         "ingests": [dict(r) for r in ingests],
+        "watches": [dict(r) for r in watches],
         # 대시보드는 읽기 전용이라 라벨을 못 붙인다 — 붙이는 방법만 알려준다
         "unlabeled_flows": [dict(r) for r in unlabeled],
         "unlabeled_flow_hint": "python -m ops.cashflow confirm --id <FlowId> --kind deposit",

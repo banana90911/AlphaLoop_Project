@@ -24,6 +24,7 @@
 | 〃      | `corporate_actions` | 권리락 등 기업행위         | 초기  |
 | 〃      | `market_indices`    | 코스피·코스닥 지수·레짐 라벨   | 초기  |
 | 〃      | `ingest_runs`       | 배치 실행 이력·결측 추적     | 초기  |
+| 〃      | `watch_runs`        | 장중 보유 감시 실행 이력      | 초기  |
 | 판단     | `cycles`           | 사이클 1회의 상태 머신      | 초기  |
 | 〃      | `account_snapshots` | 사이클 시점 자본 스냅샷      | 초기  |
 | 〃      | `daily_scores`      | 하루 1회 전 종목 점수(1단계) | 초기  |
@@ -137,6 +138,29 @@
 | `regime`            | `uptrend`/`downtrend` |
 | `collected_date_time` | 수집 시각                 |
 
+
+`watch_runs`
+> - 장중 보유 감시(30분 간격) 1회의 결과
+> - **보유가 0이라 아무것도 안 한 실행도 남긴다.** 감시는 조치할 게 있을 때만
+>   `orders`·`outcomes`에 흔적을 남기므로, 이 표가 없으면 "돌았는데 이상 없었다"와
+>   "아예 안 돌았다"를 가릴 수 없다
+> - 매매 판단을 하지 않으므로 `cycles`가 아니라 별도 표다(03-arch 3-1)
+
+| 컬럼                 | 의미                                    |
+| ------------------ | ------------------------------------- |
+| `run_id` (PK)       | 실행 시각 기반. 재실행이 행을 늘리지 않는다             |
+| `trade_date`        | 거래일                                   |
+| `market_open`       | false면 마감 정리 실행 — 주문을 낼 수 없어 장부만 맞춘다  |
+| `positions`        | 감시 대상 보유 종목 수                         |
+| `filled_stops`      | 스스로 체결된 손절을 장부에 반영한 건수(10-ops 10.13)  |
+| `missing_stops`     | 상주 스톱이 빠진 보유 / `registered_stops` 재등록 |
+| `stale_stops`       | 발동가 불일치 / `revised_stops` 정정 성공       |
+| `stop_gaps`        | 손절선을 이탈했는데 아직 보유 중                    |
+| `note`             | 조기 종료 사유(보유 없음·점검 모드 등)               |
+| `mode`             |                                       |
+| `ran_date_time`     |                                       |
+
+---
 
 `ingest_runs`
 > - 배치 실행 1회의 결과. 배치가 잘 돌았는지의 기록

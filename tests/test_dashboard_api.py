@@ -462,11 +462,52 @@ def test_account_reports_net_flow_and_safe_withdrawable(conn, client):
         total_asset=10_000_000, base_asset=8_000_000,
         net_flow_since_base=2_000_000, flow_this_snapshot=2_000_000, trade_date=_DAY,
     )
+    _flow(conn, "C1", kind="deposit", amount=2_000_000)
     body = client.get("/api/account").json()
     assert body["cumulative_net_flow"] == 2_000_000
     assert body["twr_return"] == pytest.approx(0.0)
     # 미체결 매수가 없으면 예수금 전액이 안전 출금 가능액
     assert body["safe_withdrawable"] == 8_000_000
+
+
+def test_net_flow_counts_the_table_not_the_snapshot_running_sum(conn, client):
+    """누적 순입금은 CashFlows 합계다 — 스냅샷 러닝합은 수기 등록을 못 받는다.
+
+    2026-09-09 실측: `ops.cashflow add`로 넣은 751원 입금이 스냅샷에 영영
+    반영되지 않아 누적 순입금이 0원으로 남았다.
+    """
+    _cycle(conn, "C1")
+    journal.record_account_snapshot(
+        conn, cycle_id="C1", cash=751, position_value=0, total_asset=751,
+        base_asset=751, net_flow_since_base=0, flow_this_snapshot=0, trade_date=_DAY,
+    )
+    _flow(conn, "C1", kind="deposit", amount=751, status="confirmed")
+    assert client.get("/api/account").json()["cumulative_net_flow"] == 751
+
+
+def test_net_flow_excludes_profit_kinds(conn, client):
+    """배당·이자·수수료는 손익이지 이체가 아니다 — 빼면 수익이 사라진다."""
+    _cycle(conn, "C1")
+    journal.record_account_snapshot(
+        conn, cycle_id="C1", cash=1_000_000, position_value=0, total_asset=1_000_000,
+        base_asset=1_000_000, trade_date=_DAY,
+    )
+    _flow(conn, "C1", kind="deposit", amount=1_000_000, status="confirmed")
+    _flow(conn, "C1", kind="dividend", amount=5_000, status="confirmed")
+    _flow(conn, "C1", kind="fee", amount=-300, status="confirmed")
+    assert client.get("/api/account").json()["cumulative_net_flow"] == 1_000_000
+
+
+def test_net_flow_nets_withdrawal_against_deposit(conn, client):
+    """넣은 만큼 빼면 순입금 0 — 누적 손익(총자본 − 순입금)도 0이 된다."""
+    _cycle(conn, "C1")
+    journal.record_account_snapshot(
+        conn, cycle_id="C1", cash=0, position_value=0, total_asset=0,
+        base_asset=0, trade_date=_DAY,
+    )
+    _flow(conn, "C1", kind="deposit", amount=751, status="confirmed")
+    _flow(conn, "C1", kind="withdrawal", amount=-751, status="confirmed")
+    assert client.get("/api/account").json()["cumulative_net_flow"] == 0
 
 
 def test_safe_withdrawable_subtracts_pending_buys(conn, client):

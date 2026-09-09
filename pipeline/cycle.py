@@ -437,11 +437,12 @@ def run(
         if verdict.result == "safeStop" and held_stop is None:
             safe_stop_id = _raise_safe_stop(conn, cycle_id, verdict.reason)
 
-        # 미수·대형 유출로 멈춘 게 아니라면 잔차를 외부 현금흐름으로 남기고 그대로 간다.
-        # 기대 예수금 기준점 재동기화는 위 스냅샷이 실제 예수금을 그대로 적어서 이미 됐다 —
-        # 흡수한 잔차까지 매번 재동기화해야 몇 원씩 쌓여 가짜 이체가 되는 일이 없다.
-        if verdict.action != "halt":
-            _record_cash_flow(conn, cycle_id, recon, mode=run_mode)
+        # 잔차는 **정지했더라도** 남긴다. 기록은 행동이 아니라 증거이고, 기준선을 옮길지는
+        # 위 스냅샷에서 이미 따로 결정됐다. 예전에는 halt면 건너뛰었는데, 그러면 정지시킬
+        # 만큼 큰 현금 이동일수록 아무 기록이 남지 않았다 — 사람이 원인을 확인해 해제해야
+        # 하는 상황에서 확인할 근거가 사라진다(2026-09-09 실측: 751원 전액 출금이
+        # SafeStop을 걸었는데 CashFlows에 한 줄도 남지 않았다).
+        _record_cash_flow(conn, cycle_id, recon, mode=run_mode)
 
         if verdict.action in ("proceed", "new_blocked"):
             candidates = [

@@ -26,6 +26,10 @@ from memory.db import init_db
 # 현실에서 절대 0이 안 된다. 1원까지 이체로 기록하면 CashFlows가 쓰레기로 찬다.
 ABSORB_MIN_KRW = 1_000.0
 ABSORB_EQUITY_RATIO = 0.0001      # 자본의 0.01%
+# 흡수 임계의 상한. 자본의 이 비율을 넘는 잔차는 무슨 일이 있어도 "잡음"일 수 없다.
+# 상한이 없으면 소액 계좌에서 임계가 자본보다 커진다 — 자본 751원인 계좌의 임계가
+# 1,000원이라 전액을 빼도 수수료로 흡수됐다(2026-09-09 실측: 출금이 TWR −100%가 됐다).
+ABSORB_MAX_EQUITY_RATIO = 0.05    # 자본의 5%
 
 # 알림 임계 — 관찰 모드에서는 이 값 이상만 Discord로 울린다(자잘한 잔차로 안 깨우려고).
 ALERT_EQUITY_RATIO = 0.01         # 자본의 1%
@@ -37,8 +41,14 @@ SIGNATURE_MODULUS = 1_000
 
 
 def absorb_threshold(equity: float) -> float:
-    """흡수 임계 = max(1,000원, 자본의 0.01%)."""
-    return max(ABSORB_MIN_KRW, abs(equity) * ABSORB_EQUITY_RATIO)
+    """흡수 임계 = max(1,000원, 자본의 0.01%). 단 **자본의 5%를 넘지 않는다**.
+
+    하한만 있으면 자본이 작을 때 임계가 자본을 넘어서, 그 계좌에서는 어떤 이체도
+    원리적으로 감지될 수 없다. 상한은 그 구멍만 막는다 — 자본 2만원 이상에서는
+    5% 상한이 1,000원보다 크므로 종전과 동작이 같다.
+    """
+    floor = max(ABSORB_MIN_KRW, abs(equity) * ABSORB_EQUITY_RATIO)
+    return min(floor, abs(equity) * ABSORB_MAX_EQUITY_RATIO)
 
 
 def alert_threshold(equity: float) -> float:
@@ -91,13 +101,17 @@ def classify_residual(
     if signature_enabled is None:
         signature_enabled = cfg.cashflow_signature_enabled
 
+    if residual == 0:
+        # 어긋난 게 없다. 남길 것도, 기준선을 옮길 것도 없다. 자본이 0일 때는 임계도
+        # 0이 되므로, 이 갈래가 없으면 0원 잔차가 '이체'로 분류된다.
+        return FlowResolution(record=False, absorbed=True, kind="fee",
+                              source="residual", alert=False)
+
     if abs(residual) < absorb_threshold(equity):
         # 흡수 — 관찰 모드에서는 분포를 모으려고 기록만 남긴다. Kind가 'fee'인 것은
         # 이 크기의 잔차를 수익 계열로 보아 순외부흐름에서 빼기 위해서다.
-        # 다만 잔차가 정확히 0이면 분포에 보탤 것이 없다. 매매가 없는 날마다 0원 행이
-        # 하나씩 쌓여 거래 리포트만 채우므로 남기지 않는다.
         return FlowResolution(
-            record=observation_mode and residual != 0, absorbed=True, kind="fee",
+            record=observation_mode, absorbed=True, kind="fee",
             source="residual", alert=False,
         )
 

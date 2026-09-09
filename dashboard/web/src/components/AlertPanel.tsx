@@ -280,17 +280,12 @@ function CycleRow({ c }: { c: FailedCycle }) {
       meta={`${fmtDate(c.trade_date)} ${fmtStamp(c.started_date_time).slice(-5)}`}
       detail={
         <>
-          <p className="mb-1.5 text-ink-200">
-            {failed
-              ? '사이클이 중간에 멈췄습니다. 그 단계 이후의 판단·주문은 일어나지 않았습니다.'
-              : '사이클이 조건에 따라 통째로 건너뛰어졌습니다(휴장·정지 등).'}
-          </p>
-          <p>
-            {failed
-              ? '로그에서 해당 CycleId를 찾아 원인을 확인합니다. 5단계(주문 실행)에서 멈췄다면 KIS 주문 조회로 실제 송출 여부를 먼저 확인해야 중복 주문을 피합니다.'
-              : '정상 동작일 수 있습니다. 사유를 확인하세요.'}
-          </p>
-          <p className="mt-2 font-mono">CycleId {c.cycle_id}</p>
+          {c.skip_reason && (
+            <p className="mb-1 text-ink-200">
+              {SKIP_REASON[c.skip_reason] ?? c.skip_reason}
+            </p>
+          )}
+          <p className="font-mono">CycleId {c.cycle_id}</p>
         </>
       }
     />

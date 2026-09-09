@@ -30,6 +30,32 @@ def test_absorb_threshold_floor_and_ratio():
     assert cashflow.absorb_threshold(100_000_000) == 10_000.0  # 0.01%=10,000 > 하한
 
 
+def test_absorb_threshold_capped_by_equity_share():
+    """임계가 자본을 넘어서면 그 계좌에서는 어떤 이체도 감지될 수 없다.
+
+    2026-09-09 실측: 자본 751원인 계좌의 임계가 1,000원이라, 전액 출금이
+    '수수료'로 흡수돼 TWR이 −100%가 됐다. 상한은 그 구멍만 막는다.
+    """
+    assert cashflow.absorb_threshold(751) == 751 * 0.05        # 하한이 아니라 5% 상한
+    assert cashflow.absorb_threshold(0) == 0.0
+    # 자본 2만원부터는 5%가 하한을 넘으므로 종전과 같다
+    assert cashflow.absorb_threshold(20_000) == 1_000.0
+    assert cashflow.absorb_threshold(1_000_000) == 1_000.0
+
+
+def test_full_withdrawal_from_small_account_is_a_transfer():
+    """소액 계좌의 전액 출금은 손익이 아니라 이체다 — 기준선을 옮겨야 한다."""
+    r = cashflow.classify_residual(-751, 0, observation_mode=True)
+    assert not r.absorbed and r.kind == "unknown"
+    assert r.shifts_baseline          # TWR에서 빠져야 −100%가 나오지 않는다
+
+
+def test_zero_residual_never_recorded_even_on_empty_account():
+    """자본이 0이면 임계도 0이라, 0원 갈래가 없으면 0원 잔차가 이체로 잡힌다."""
+    r = cashflow.classify_residual(0.0, 0.0, observation_mode=True)
+    assert r.absorbed and not r.record
+
+
 def test_small_residual_is_absorbed_not_a_transfer():
     """수수료 절사·이자 수준의 잔차는 이체가 아니라 손익으로 흡수한다."""
     r = cashflow.classify_residual(430, 10_000_000, observation_mode=False)

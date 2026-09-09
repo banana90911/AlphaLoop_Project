@@ -144,7 +144,7 @@ def get_account(conn: DbConn) -> dict:
         "snapshot": dict(snap) if snap else None,
         "holdings": holdings,
         # 개시 이후 누적 순입금. `TotalAsset − 이 값 = 누적 순손익`으로 검산된다(07-model)
-        "cumulative_net_flow": float(snap["cumulative_net_flow"]) if snap else 0.0,
+        "cumulative_net_flow": _cumulative_net_flow(conn),
         # TWR 지수를 수익률로 환산 — 이체가 섞여도 안 흔들리는 유일한 비율 지표(09-eval)
         "twr_return": (
             float(snap["twr_index"]) - 1.0
@@ -153,6 +153,25 @@ def get_account(conn: DbConn) -> dict:
         # 이체 전에 폰에서 이 숫자를 보는 게 미수를 막는 실질적 유일한 수단(08-dashboard 8.4)
         "safe_withdrawable": _safe_withdrawable(conn, snap),
     }
+
+
+def _cumulative_net_flow(conn) -> float:
+    """개시 이후 누적 순입금 — `cash_flows`의 외부 흐름을 그대로 더한다.
+
+    스냅샷의 `cumulative_net_flow`를 쓰지 않는다. 그 값은 사이클이 감지한 잔차만
+    한 방향으로 쌓은 러닝합이라 (1) 나중에 라벨을 고쳐도 반영되지 않고, (2) 감지
+    경로를 타지 않은 수기 등록(`ops.cashflow add`)은 아예 들어가지 않으며,
+    (3) 한 번 잘못 쌓이면 되돌릴 방법이 없다. 표를 매번 더하는 쪽이 항상 진실을
+    말한다 — 행이 몇 년 쌓여도 수백 줄이라 비용도 문제가 되지 않는다.
+
+    `fee`·`dividend`·`interest`·`taxRefund`는 손익이지 이체가 아니므로 빠진다
+    (`EXTERNAL_KINDS` = deposit/withdrawal/unknown, 07-model).
+    """
+    row = conn.execute(
+        'SELECT COALESCE(SUM(amount), 0) AS v FROM cash_flows WHERE kind = ANY(%s)',
+        (list(journal.EXTERNAL_KINDS),),
+    ).fetchone()
+    return float(row["v"] or 0)
 
 
 def _safe_withdrawable(conn, snap) -> float | None:

@@ -584,3 +584,69 @@ def test_trade_date_separate_from_asof(conn):
         'SELECT trade_date FROM cycles WHERE cycle_id=%s', (res.cycle_id,)
     ).fetchone()
     assert row["trade_date"] == date(2026, 8, 28)   # 지표 기준일이 아니라 사이클 날짜
+
+
+# ── 외부 현금흐름 기록 (05-risk 5.2 검사 1-b / 10-ops 10.18) ──────────────
+def _prior_snapshot(conn, cash: float) -> None:
+    """직전 사이클이 남긴 스냅샷 — 기대 예수금의 기준점이 된다."""
+    journal.create_cycle(conn, "PREV")
+    journal.record_account_snapshot(
+        conn, cycle_id="PREV", cash=cash, position_value=0.0, total_asset=cash,
+        base_asset=cash, trade_date=date(2026, 9, 8),
+    )
+    journal.advance_status(conn, "PREV", "recorded")
+
+
+def _flows(conn) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        'SELECT kind, amount, status FROM cash_flows ORDER BY detected_date_time'
+    ).fetchall()]
+
+
+def test_large_outflow_halts_and_still_records_the_flow(conn):
+    """정지시킬 만큼 큰 현금 이동일수록 기록이 꼭 남아야 한다.
+
+    예전에는 halt면 `_record_cash_flow`를 통째로 건너뛰어, 사람이 원인을 확인해
+    해제해야 하는 상황에서 확인할 근거가 사라졌다(2026-09-09 실측: 751원 전액
+    출금이 SafeStop을 걸었는데 CashFlows에 한 줄도 남지 않았다).
+    """
+    _prior_snapshot(conn, 751.0)
+    acc = Account(start_capital=751, cash=0.0)          # 전액 출금 — 잔차 −751
+    res = cycle.run(conn, market_data=_universe(), account=acc,
+                    market_state=MarketState())
+
+    assert res.safe_stop_id is not None                 # 대형 유출로 정지
+    assert res.cycle_action == "halt"
+    flows = _flows(conn)
+    assert len(flows) == 1
+    assert flows[0]["kind"] == "unknown"                # 수수료가 아니라 이체다
+    assert float(flows[0]["amount"]) == -751.0
+
+
+def test_full_withdrawal_does_not_become_a_loss(conn):
+    """전액 출금은 −100% 손실이 아니다 — TWR 지수가 유지돼야 한다."""
+    _prior_snapshot(conn, 751.0)
+    acc = Account(start_capital=751, cash=0.0)
+    cycle.run(conn, market_data=_universe(), account=acc, market_state=MarketState())
+
+    snap = conn.execute(
+        'SELECT twr_index, cumulative_net_flow FROM account_snapshots '
+        'ORDER BY recorded_date_time DESC LIMIT 1'
+    ).fetchone()
+    assert float(snap["twr_index"]) == 1.0              # 0.0이면 −100%로 표시된다
+    assert float(snap["cumulative_net_flow"]) == -751.0
+
+
+def test_small_fee_on_a_normal_account_is_still_absorbed(conn):
+    """상한을 씌워도 정상 자본에서는 수수료급 잔차가 그대로 흡수돼야 한다."""
+    _prior_snapshot(conn, 10_000_000.0)
+    acc = Account(start_capital=10_000_000, cash=10_000_000 - 430)
+    cycle.run(conn, market_data=_universe(), account=acc, market_state=MarketState())
+
+    flows = _flows(conn)
+    assert len(flows) == 1 and flows[0]["kind"] == "fee"   # 관찰 모드 기록
+    snap = conn.execute(
+        'SELECT cumulative_net_flow FROM account_snapshots '
+        'ORDER BY recorded_date_time DESC LIMIT 1'
+    ).fetchone()
+    assert float(snap["cumulative_net_flow"]) == 0.0       # 손익이므로 순입금 불변

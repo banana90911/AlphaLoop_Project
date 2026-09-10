@@ -153,8 +153,7 @@ export function TradeReport({
 
   return (
     <Panel
-      title="거래 리포트"
-      subtitle="매매와 입출금을 한 줄씩 시간순으로"
+      title="거래"
       right={<Toggle options={SIDE_OPTIONS} value={side} onChange={onSideChange} size="sm" />}
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-ink-800 px-5 py-3 text-xs text-ink-400">

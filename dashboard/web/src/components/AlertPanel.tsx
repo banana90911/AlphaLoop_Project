@@ -116,7 +116,6 @@ export function AlertPanel({
   return (
     <Panel
       title="오류 · 정지"
-      subtitle="차단은 미수와 대형 유출 SafeStop 둘뿐. 나머지는 알려만 준다"
       right={
         data?.active_stop ? (
           <Badge tone="up">지금 정지 중</Badge>

@@ -52,31 +52,37 @@ const INGEST_TONE: Record<string, 'buy' | 'warn' | 'neutral'> = {
   failed: 'warn',
 }
 
-/** 행을 고르면 원인과 "무엇을 확인하고 어떻게 해제하는지"를 함께 보여준다(8.4 ④) */
-function stopGuide(e: SafeStopEvent): { what: string; how: string; manual: boolean } {
-  const cause = e.cause.toLowerCase()
-  if (cause.includes('balance') || cause.includes('잔고') || cause.includes('sync'))
+/** 행을 고르면 원인과 "무엇을 확인하고 어떻게 해제하는지"를 함께 보여준다(8.4 ④)
+ *
+ * 코드가 만드는 원인 문자열은 네 개뿐이다(risk/risk_engine.py) — 그 문자열을 그대로
+ * 맞춰 본다. 예전에는 '신선'으로 찾느라 "시세 데이터 이상"을 못 알아보고 뭉뚱그린
+ * 문구를 내보냈다(2026-09-10). 새 원인이 생기면 여기에 한 줄을 더한다.
+ */
+function stopGuide(e: SafeStopEvent): { what: string; how: string } {
+  const cause = e.cause
+  if (cause.includes('보유 불일치') || cause.includes('balance'))
     return {
       what: '우리 기록의 보유 수량과 KIS 실잔고가 어긋났습니다. 어긋난 채로 주문하면 없는 주식을 팔거나 두 번 살 수 있어 전체를 멈춥니다.',
       how: 'KIS에서 실제 보유를 확인해 Positions를 맞춘 뒤 사람이 직접 해제합니다. 자동 해제는 없습니다.',
-      manual: true,
     }
-  if (cause.includes('data') || cause.includes('fresh') || cause.includes('신선'))
+  if (cause.includes('미수') || cause.includes('예수금 음수'))
     return {
-      what: '결정에 쓰는 데이터가 낡았습니다. 낡은 값으로 낸 점수는 오늘의 시장이 아닙니다.',
-      how: '일일 배치를 다시 돌려 데이터를 채운 뒤 해제합니다 — python run_daily_ingest.py',
-      manual: true,
+      what: '예수금이 마이너스입니다. 살 돈이 없는데 주문이 나간 상태라 즉시 멈춥니다.',
+      how: '증권사 앱에서 미수 금액을 확인해 입금하거나 보유를 정리한 뒤 해제합니다.',
     }
-  if (['cash', 'withdraw', 'outflow', '유출'].some((k) => cause.includes(k)))
+  if (cause.includes('현금 유출') || cause.includes('outflow'))
     return {
       what: '설명되지 않는 큰 현금 유출이 감지됐습니다. 내가 뺀 돈인지 사고인지 가리기 전에는 매매를 멈춥니다.',
       how: '증권사 앱에서 이체 내역을 확인하고, 내 이체가 맞으면 라벨을 붙인 뒤 해제합니다.',
-      manual: true,
+    }
+  if (cause.includes('시세 데이터') || cause.includes('데이터 이상'))
+    return {
+      what: '오늘 일일 배치가 온전히 끝나지 않아, 결정에 쓸 데이터가 낡았습니다. 낡은 값으로 낸 점수는 오늘의 시장이 아닙니다. 위 "일일 배치"에서 어느 단계가 실패했는지 볼 수 있습니다.',
+      how: '실패한 종목만 다시 받은 뒤 해제합니다 — python run_daily_ingest.py --resume',
     }
   return {
     what: '자동 규칙이 매매 전체를 멈췄습니다. 신규 주문만 막히고 보유 청산은 계속 돕니다.',
     how: '원인을 확인한 뒤 사람이 직접 해제합니다.',
-    manual: true,
   }
 }
 

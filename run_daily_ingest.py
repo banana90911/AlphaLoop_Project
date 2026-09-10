@@ -89,39 +89,80 @@ def ingest_bars_and_flows(
     skip_done = skip_done or set()
     targets = [c for c in codes if c not in skip_done]
     bar_rows = flow_rows = bar_ok = flow_ok = 0
-    # 두 단계는 각자의 행으로 기록되므로 오류도 따로 모은다. 한 목록을 공유하면
-    # 수급만 실패한 종목이 일봉 행에도 "오류"로 찍혀, 성공한 단계가 실패로 보인다.
-    bar_errors: list[str] = []
-    flow_errors: list[str] = []
+    # 종목별 마지막 예외 — 오류 메시지를 만들 때만 쓴다.
+    errs: dict[str, Exception] = {}
     s, e = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
 
-    for code in targets:
-        try:
-            df = kis_history.fetch_ohlcv_range(client, code, s, e)
-        except Exception as ex:
-            bar_errors.append(f"{code} {type(ex).__name__}")
-            continue
-        # 장이 열리기 전에 당일을 조회하면 KIS가 전일 종가로 채운 거래량 0짜리 봉을 준다.
-        # 그대로 넣으면 고가=저가라 ATR이 0이 되고 변동성이 과소평가된다 — 확정 봉만 받는다.
-        if "volume" in df.columns:
-            df = df[df["volume"] > 0]
-        if df.empty:
-            # 조회는 성공했다. 상장폐지·거래정지라 받을 봉이 없을 뿐이다
-            # (10-ops 10.3 — 이걸 실패로 세면 영원히 partial이 된다).
-            # 봉이 없는 종목은 수급도 있을 리 없으므로 조회하지 않고 둘 다 성공으로 센다.
+    def sweep(todo: list[str]) -> tuple[list[str], list[str]]:
+        """일봉→수급 한 바퀴. 반환: (일봉 실패 종목, 수급만 실패한 종목)."""
+        nonlocal bar_rows, flow_rows, bar_ok, flow_ok
+        bar_fail: list[str] = []
+        flow_fail: list[str] = []
+        for code in todo:
+            try:
+                df = kis_history.fetch_ohlcv_range(client, code, s, e)
+            except Exception as ex:
+                bar_fail.append(code)
+                errs[code] = ex
+                continue
+            # 장이 열리기 전에 당일을 조회하면 KIS가 전일 종가로 채운 거래량 0짜리 봉을 준다.
+            # 그대로 넣으면 고가=저가라 ATR이 0이 되고 변동성이 과소평가된다 — 확정 봉만 받는다.
+            if "volume" in df.columns:
+                df = df[df["volume"] > 0]
+            if df.empty:
+                # 조회는 성공했다. 상장폐지·거래정지라 받을 봉이 없을 뿐이다
+                # (10-ops 10.3 — 이걸 실패로 세면 영원히 partial이 된다).
+                # 봉이 없는 종목은 수급도 있을 리 없으므로 조회하지 않고 둘 다 성공으로 센다.
+                bar_ok += 1
+                flow_ok += 1
+                continue
+            bar_rows += journal.upsert_daily_bars(conn, code, df.to_dict("records"))
             bar_ok += 1
+            try:                                # 수급 실패는 일봉을 막지 않는다
+                flows = _recent_flows(client, code)
+            except Exception as ex:
+                flow_fail.append(code)
+                errs[code] = ex
+                continue
+            flow_ok += 1         # 위와 같다 — 예외가 없었으면 조회는 성공한 것이다
+            if flows:
+                flow_rows += journal.upsert_daily_flows(conn, code, flows)
+        return bar_fail, flow_fail
+
+    def sweep_flows(todo: list[str]) -> list[str]:
+        """수급만 다시 받는다 — 일봉은 이미 성공했으므로 두 번 세지 않는다."""
+        nonlocal flow_rows, flow_ok
+        fail: list[str] = []
+        for code in todo:
+            try:
+                flows = _recent_flows(client, code)
+            except Exception as ex:
+                fail.append(code)
+                errs[code] = ex
+                continue
             flow_ok += 1
-            continue
-        bar_rows += journal.upsert_daily_bars(conn, code, df.to_dict("records"))
-        bar_ok += 1
-        try:                                    # 수급 실패는 일봉을 막지 않는다
-            flows = _recent_flows(client, code)
-        except Exception as ex:
-            flow_errors.append(f"{code} {type(ex).__name__}")
-            continue
-        flow_ok += 1             # 위와 같다 — 예외가 없었으면 조회는 성공한 것이다
-        if flows:
-            flow_rows += journal.upsert_daily_flows(conn, code, flows)
+            if flows:
+                flow_rows += journal.upsert_daily_flows(conn, code, flows)
+        return fail
+
+    bar_fail, flow_fail = sweep(targets)
+
+    # 실패한 종목만 같은 실행 안에서 한 번 더 시도한다. 전 종목 배치는 2,500번 넘게
+    # 호출하므로 그중 한 번만 끊겨도 그날이 `partial`이 되고, 신선도 검사가 사이클을
+    # 통째로 멈춘다(2026-09-09·09-10 이틀 연속, 매번 다른 종목). 클라이언트가 이미
+    # 연결 실패를 3회 백오프로 재시도하므로 여기까지 온 것은 장애가 그보다 길었던
+    # 경우다 — 배치가 한 바퀴 도는 8분 사이에 대개 회복된다. 전체를 다시 받지 않으니
+    # 비용은 실패 건수에 비례한다.
+    if bar_fail or flow_fail:
+        print(f"  재시도: 일봉 {len(bar_fail)}종목 · 수급 {len(flow_fail)}종목")
+        retry_bar_fail, retry_flow_fail = sweep(bar_fail)
+        flow_fail = sweep_flows(flow_fail) + retry_flow_fail
+        bar_fail = retry_bar_fail
+
+    # 두 단계는 각자의 행으로 기록되므로 오류도 따로 모은다. 한 목록을 공유하면
+    # 수급만 실패한 종목이 일봉 행에도 "오류"로 찍혀, 성공한 단계가 실패로 보인다.
+    bar_errors = [f"{c} {type(errs[c]).__name__}" for c in bar_fail]
+    flow_errors = [f"{c} {type(errs[c]).__name__}" for c in flow_fail]
 
     def status(ok: int) -> str:
         if ok == 0 and targets:

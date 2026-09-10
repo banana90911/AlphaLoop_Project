@@ -316,7 +316,8 @@ function FlowRow({
         <td className={CELL}>
           <Badge tone="flow">{FLOW_KIND[flow.kind] ?? flow.kind}</Badge>
         </td>
-        <td className={`${CELL} font-sans text-ink-400`}>계좌 이체</td>
+        {/* 현금 변동에는 종목이 없다. 실제 구분은 왼쪽 배지가 말한다 */}
+        <td className={`${CELL} text-ink-700`}>N/A</td>
         <td className={`${CELL} text-right text-ink-700`}>—</td>
         <td className={`${CELL} text-right text-ink-700`}>—</td>
         {/* 부호 규칙을 매매와 그대로 잇는다 — 거래대금이 곧 현금 방향(8.4 ③) */}

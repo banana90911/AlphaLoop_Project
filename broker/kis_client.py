@@ -80,6 +80,19 @@ def _num(v: Any) -> float:
         return 0.0
 
 
+def _num_or_none(v: Any) -> float | None:
+    """`_num`과 같되 **못 읽으면 None**을 준다.
+
+    "값이 0"과 "값이 없음"을 가려야 하는 자리에 쓴다. `_num`은 둘 다 0.0으로 만들어,
+    `a or b` 폴백에서 진짜 0이 "없음"으로 오인된다(2026-09-10 실측: 어제 잔고가
+    진짜 0원이었는데 오늘 총자산으로 폴백해 당일 손익률이 −50%로 나왔다).
+    """
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class Holding:
     """정규화한 보유 1건. KIS 응답 필드명을 바깥으로 새어나가지 않게 하는 경계."""
@@ -196,18 +209,33 @@ class KISClient:
         }
 
     def _get(self, domain: str, path: str, tr_id: str, params: dict[str, str]) -> dict[str, Any]:
-        """조회 GET — 일시적 5xx는 지수 백오프로 재시도한다."""
+        """조회 GET — 일시적 5xx와 연결 실패는 지수 백오프로 재시도한다.
+
+        연결 자체가 끊기면(`ConnectionError`·`Timeout`) 상태 코드가 없어서 5xx 판정에
+        걸리지 못하고 예외가 그대로 빠져나갔다. 성격은 5xx와 같은 일시적 장애인데
+        재시도 한 번 없이 실패로 기록됐다 — 전 종목 배치에서 2,535번 중 한 번만 끊겨도
+        그날 배치가 `partial`이 되고 신선도 검사가 사이클을 통째로 멈춘다
+        (2026-09-09·09-10 이틀 연속 발생, 매번 다른 종목).
+        """
         url = f"{domain}{path}"
+        last: Exception | None = None
         for attempt in range(self._max_retries):
             self._throttle()
-            response = requests.get(
-                url, headers=self._headers(tr_id), params=params, timeout=10
-            )
+            try:
+                response = requests.get(
+                    url, headers=self._headers(tr_id), params=params, timeout=10
+                )
+            except (requests.ConnectionError, requests.Timeout) as e:
+                last = e
+                if attempt < self._max_retries - 1:
+                    time.sleep(self._backoff_base * (2**attempt))
+                    continue
+                raise KISError(f"{tr_id} 연결 실패 — 재시도 소진: {e}") from e
             if response.status_code in _RETRYABLE and attempt < self._max_retries - 1:
                 time.sleep(self._backoff_base * (2**attempt))
                 continue
             return self._unwrap(response, tr_id)
-        raise KISError(f"{tr_id} 재시도 소진")
+        raise KISError(f"{tr_id} 재시도 소진{f': {last}' if last else ''}")
 
     def _post_order(self, path: str, tr_id: str, body: dict[str, str]) -> dict[str, Any]:
         """주문 POST — 재시도하지 않는다(중복 주문 방지)."""
@@ -268,12 +296,18 @@ class KISClient:
         ]
         cash = _num(summary.get("dnca_tot_amt"))
 
+        # 0원을 "값이 없다"로 읽으면 안 된다. 계좌가 정말 비어 있던 날 KIS는
+        # 전일 총자산을 '0'으로 **정확히** 돌려주는데, 그걸 폴백으로 흘려보내면
+        # 기준선이 오늘 총자산이 되고, 그 위에 오늘 입금액을 또 더해 손익률이
+        # 반토막 난다(2026-09-10 실측: +13,694원 입금이 당일 −50%로 찍혔다).
+        total = _num_or_none(summary.get("tot_evlu_amt"))
+        bfdy = _num_or_none(summary.get("bfdy_tot_asst_evlu_amt"))
         return Balance(
             cash=cash,
-            total_asset=_num(summary.get("tot_evlu_amt")) or cash,
-            # 전일 총자산이 비면(계좌 개설 첫날 등) 오늘 총자산을 기준선으로 삼는다
-            base_asset=(_num(summary.get("bfdy_tot_asst_evlu_amt"))
-                             or _num(summary.get("tot_evlu_amt")) or cash),
+            total_asset=total if total is not None else cash,
+            # 전일 총자산 필드가 아예 없을 때만(계좌 개설 첫날 등) 오늘 값으로 대신한다
+            base_asset=bfdy if bfdy is not None
+                       else (total if total is not None else cash),
             holdings=holdings,
         )
 

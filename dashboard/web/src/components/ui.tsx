@@ -198,3 +198,67 @@ export function FieldGroup({ title, children }: { title: string; children: React
     </div>
   )
 }
+
+
+/** 쪽번호. 쪽이 많아지면 현재 쪽 주변만 보여주고 양끝은 항상 남긴다. */
+export function Pager({
+  page,
+  pages,
+  onChange,
+}: {
+  page: number
+  pages: number
+  onChange: (p: number) => void
+}) {
+  const nums: (number | 'gap')[] = []
+  for (let i = 0; i < pages; i++) {
+    if (i === 0 || i === pages - 1 || Math.abs(i - page) <= 1) nums.push(i)
+    else if (nums[nums.length - 1] !== 'gap') nums.push('gap')
+  }
+
+  const btn =
+    'min-w-[1.75rem] rounded-md border px-1.5 py-1 font-mono text-[11px] transition-colors'
+  return (
+    <div className="mt-3 flex items-center justify-center gap-1">
+      <button
+        type="button"
+        onClick={() => onChange(page - 1)}
+        disabled={page === 0}
+        className={`${btn} border-ink-800 text-ink-400 enabled:hover:bg-ink-850 enabled:hover:text-ink-50 disabled:opacity-30`}
+        aria-label="이전 쪽"
+      >
+        ‹
+      </button>
+      {nums.map((n, i) =>
+        n === 'gap' ? (
+          <span key={`gap${i}`} className="px-1 text-[11px] text-ink-700">
+            …
+          </span>
+        ) : (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onChange(n)}
+            aria-current={n === page ? 'page' : undefined}
+            className={
+              n === page
+                ? `${btn} border-ink-700 bg-ink-850 text-ink-50`
+                : `${btn} border-ink-800 text-ink-400 hover:bg-ink-850 hover:text-ink-50`
+            }
+          >
+            {n + 1}
+          </button>
+        ),
+      )}
+      <button
+        type="button"
+        onClick={() => onChange(page + 1)}
+        disabled={page >= pages - 1}
+        className={`${btn} border-ink-800 text-ink-400 enabled:hover:bg-ink-850 enabled:hover:text-ink-50 disabled:opacity-30`}
+        aria-label="다음 쪽"
+      >
+        ›
+      </button>
+    </div>
+  )
+}

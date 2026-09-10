@@ -20,7 +20,7 @@ import {
   fmtWon,
   fmtWonSigned,
 } from '../format'
-import { Badge, Empty, ErrorLine, Field, FieldGroup, Panel, Skeleton, Toggle } from './ui'
+import { Badge, Empty, ErrorLine, Field, FieldGroup, Pager, Panel, Skeleton, Toggle } from './ui'
 
 export type SideFilter = 'all' | 'buy' | 'sell' | 'flow'
 
@@ -93,6 +93,10 @@ const DECISION_REASON: Record<string, string> = {
   costExceedsEdge: '비용이 엣지를 넘음',
 }
 
+// 한 쪽에 보여줄 줄 수. 오류·정지(10)보다 큰 이유는 여기가 촘촘한 표라서다 —
+// 560px 안에 15줄쯤 들어가므로 10이면 쪽넘김만 잦아진다.
+const PAGE_SIZE = 20
+
 /** 주문과 입출금을 한 종류의 행으로 접어 시간순으로 합친다 */
 type Row =
   | { key: string; at: number; kind: 'order'; order: Order }
@@ -137,7 +141,15 @@ export function TradeReport({
   onRangeChange: (r: { start: string; end: string }) => void
 }) {
   const [openKey, setOpenKey] = useState<string | null>(null)
+  const [page, setPage] = useState(0)
   const rows = buildRows(data)
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  // 60초마다 다시 조회하므로 줄 수가 줄어들 수 있다 — 범위를 벗어난 쪽에 머물지 않게 자른다
+  const current = Math.min(page, pages - 1)
+  const shown = rows.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE)
+
+  // 필터를 바꾸면 결과가 통째로 달라진다 — 3쪽에 머문 채로 보여주면 빈 화면처럼 보인다
+  useEffect(() => setPage(0), [side, start, end])
 
   return (
     <Panel
@@ -187,7 +199,7 @@ export function TradeReport({
       ) : rows.length === 0 ? (
         <Empty>이 조건에 맞는 거래가 없습니다.</Empty>
       ) : (
-        <div className="max-h-[560px] overflow-auto">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] text-sm">
             <thead className="sticky top-0 z-10 bg-ink-900">
               <tr className="border-b border-ink-800 text-left text-[11px] font-medium text-ink-400">
@@ -204,7 +216,7 @@ export function TradeReport({
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-800/70">
-              {rows.map((r) =>
+              {shown.map((r) =>
                 r.kind === 'order' ? (
                   <OrderRow
                     key={r.key}
@@ -223,6 +235,11 @@ export function TradeReport({
               )}
             </tbody>
           </table>
+        </div>
+      )}
+      {rows.length > PAGE_SIZE && (
+        <div className="border-t border-ink-800 px-5 py-3">
+          <Pager page={current} pages={pages} onChange={setPage} />
         </div>
       )}
     </Panel>

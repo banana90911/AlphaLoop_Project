@@ -9,7 +9,7 @@
  */
 
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { Children, useState } from 'react'
 import type {
   AlertsResponse,
   CashFlow,
@@ -206,6 +206,9 @@ export function AlertPanel({
   )
 }
 
+// 한 화면에 보여줄 줄 수. 이보다 많으면 아래에 쪽번호가 붙는다.
+const PAGE_SIZE = 10
+
 function Group({
   title,
   count,
@@ -219,6 +222,13 @@ function Group({
   note?: ReactNode
   children: ReactNode
 }) {
+  const [page, setPage] = useState(0)
+  const items = Children.toArray(children)
+  const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+  // 60초마다 다시 조회하므로 줄 수가 줄어들 수 있다 — 범위를 벗어난 쪽에 머물지 않게 자른다
+  const current = Math.min(page, pages - 1)
+  const shown = pages > 1 ? items.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE) : items
+
   return (
     <div className="px-5 py-4">
       <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold text-ink-200">
@@ -227,7 +237,71 @@ function Group({
         {info && <Badge tone="neutral">정보성 · 매매를 막지 않음</Badge>}
         {note}
       </h3>
-      <ul className="space-y-1.5">{children}</ul>
+      <ul className="space-y-1.5">{shown}</ul>
+      {pages > 1 && <Pager page={current} pages={pages} onChange={setPage} />}
+    </div>
+  )
+}
+
+/** 쪽번호. 쪽이 많아지면 현재 쪽 주변만 보여주고 양끝은 항상 남긴다. */
+function Pager({
+  page,
+  pages,
+  onChange,
+}: {
+  page: number
+  pages: number
+  onChange: (p: number) => void
+}) {
+  const nums: (number | 'gap')[] = []
+  for (let i = 0; i < pages; i++) {
+    if (i === 0 || i === pages - 1 || Math.abs(i - page) <= 1) nums.push(i)
+    else if (nums[nums.length - 1] !== 'gap') nums.push('gap')
+  }
+
+  const btn =
+    'min-w-[1.75rem] rounded-md border px-1.5 py-1 font-mono text-[11px] transition-colors'
+  return (
+    <div className="mt-3 flex items-center justify-center gap-1">
+      <button
+        type="button"
+        onClick={() => onChange(page - 1)}
+        disabled={page === 0}
+        className={`${btn} border-ink-800 text-ink-400 enabled:hover:bg-ink-850 enabled:hover:text-ink-50 disabled:opacity-30`}
+        aria-label="이전 쪽"
+      >
+        ‹
+      </button>
+      {nums.map((n, i) =>
+        n === 'gap' ? (
+          <span key={`gap${i}`} className="px-1 text-[11px] text-ink-700">
+            …
+          </span>
+        ) : (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onChange(n)}
+            aria-current={n === page ? 'page' : undefined}
+            className={
+              n === page
+                ? `${btn} border-ink-700 bg-ink-850 text-ink-50`
+                : `${btn} border-ink-800 text-ink-400 hover:bg-ink-850 hover:text-ink-50`
+            }
+          >
+            {n + 1}
+          </button>
+        ),
+      )}
+      <button
+        type="button"
+        onClick={() => onChange(page + 1)}
+        disabled={page >= pages - 1}
+        className={`${btn} border-ink-800 text-ink-400 enabled:hover:bg-ink-850 enabled:hover:text-ink-50 disabled:opacity-30`}
+        aria-label="다음 쪽"
+      >
+        ›
+      </button>
     </div>
   )
 }

@@ -21,9 +21,11 @@ log = logging.getLogger(__name__)
 TIMEOUT_S = 5
 MAX_LEN = 1900          # Discord 본문 2000자 제한 - 제목·꾸밈 여유
 
-# 심각도 → 표시. 정지·사고는 즉시 확인이 필요하고, 경보는 하루 안에 보면 된다.
+# 심각도 → 제목 앞에 붙일 표시. 세 등급을 같은 문자로 두었으므로 심각도는 제목
+# 문구 자체가 말한다("완료"/"부분 성공"/"실패"/"경고"). 등급별로 다르게 보이고
+# 싶으면 여기 값만 바꾸면 된다 — 다른 곳은 손댈 필요가 없다.
 LEVELS = ("info", "warning", "critical")
-_MARK = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}
+_MARK = {"info": "---", "warning": "---", "critical": "---"}
 
 # 메시지에 섞여 들어갈 수 있는 시크릿 형태 — 보내기 전에 지운다.
 _SECRET_PATTERNS = (

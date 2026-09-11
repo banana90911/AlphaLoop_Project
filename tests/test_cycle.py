@@ -104,7 +104,11 @@ def test_no_account_skips_decision(conn):
 def test_circuit_breaker_blocks_new_entries(conn):
     p = copy.deepcopy(load_params("risk_params"))    # 캐시 원본 오염 방지(lru_cache)
     p["decision"]["entry_threshold"] = 0.0           # 정상이면 모든 후보 buy 시도
-    acc = Account(start_capital=1_000_000, cash=940_000)  # 당일 -6% → daily_loss 발동
+    # 첫 사이클은 비교할 기준선이 없어 손익률을 재지 않는다 — 둘째 날로 세운다.
+    # 손실은 예수금이 아니라 보유 평가액에서 나야 한다(예수금만 줄면 그건 출금이다).
+    _prior_snapshot(conn, 0.0, position_value=1_000_000)
+    acc = Account(start_capital=1_000_000, cash=0.0,     # 당일 -6% → daily_loss 발동
+                  positions=[Position("UP1", 94, 10_000.0)])
     res = cycle.run(conn, market_data=_universe(), account=acc, params=p)
     assert res.cycle_action == "new_blocked"
     assert all(
@@ -226,7 +230,10 @@ def test_account_snapshot_recorded(conn):
 
 
 def test_account_snapshot_computes_day_return(conn):
-    acc = Account(start_capital=10_000_000, cash=9_000_000)   # 당일 −10%
+    # 둘째 날부터 손익률이 의미를 갖는다 — 첫 사이클은 기준선을 세우기만 한다.
+    _prior_snapshot(conn, 0.0, position_value=10_000_000)
+    acc = Account(start_capital=10_000_000, cash=0.0,         # 당일 −10%
+                  positions=[Position("UP1", 900, 10_000.0)])
     res = cycle.run(conn, market_data=_universe(), account=acc)
     row = conn.execute(
         'SELECT day_return_percent FROM account_snapshots WHERE cycle_id=%s',
@@ -587,12 +594,13 @@ def test_trade_date_separate_from_asof(conn):
 
 
 # ── 외부 현금흐름 기록 (05-risk 5.2 검사 1-b / 10-ops 10.18) ──────────────
-def _prior_snapshot(conn, cash: float) -> None:
-    """직전 사이클이 남긴 스냅샷 — 기대 예수금의 기준점이 된다."""
+def _prior_snapshot(conn, cash: float, position_value: float = 0.0) -> None:
+    """직전 사이클이 남긴 스냅샷 — 기대 예수금과 서킷브레이커 기준선의 기준점."""
     journal.create_cycle(conn, "PREV")
+    total = cash + position_value
     journal.record_account_snapshot(
-        conn, cycle_id="PREV", cash=cash, position_value=0.0, total_asset=cash,
-        base_asset=cash, trade_date=date(2026, 9, 8),
+        conn, cycle_id="PREV", cash=cash, position_value=position_value,
+        total_asset=total, base_asset=total, trade_date=date(2026, 9, 8),
     )
     journal.advance_status(conn, "PREV", "recorded")
 
@@ -650,3 +658,37 @@ def test_small_fee_on_a_normal_account_is_still_absorbed(conn):
         'ORDER BY recorded_date_time DESC LIMIT 1'
     ).fetchone()
     assert float(snap["cumulative_net_flow"]) == 0.0       # 손익이므로 순입금 불변
+
+
+def test_first_cycle_treats_today_as_the_baseline(conn):
+    """첫 사이클은 하루를 재는 게 아니라 기준선을 세우는 것이다.
+
+    비교할 직전 스냅샷이 없는데 브로커의 '전일 총자산'을 기준선으로 쓰면, 그 사이에
+    오간 돈이 전부 성과로 둔갑한다(2026-09-11 실측: 10만원 계좌에 10만원을 넣었더니
+    당일 손익률 +100%). 반대로 출금이면 큰 손실로 보여 서킷브레이커까지 헛발동한다.
+    """
+    acc = Account(start_capital=100_000, cash=200_000)   # 어제 10만 → 오늘 20만(입금)
+    cycle.run(conn, market_data=_universe(), account=acc, market_state=MarketState())
+
+    snap = conn.execute(
+        'SELECT base_asset, total_asset, day_return_percent FROM account_snapshots '
+        'ORDER BY recorded_date_time DESC LIMIT 1'
+    ).fetchone()
+    assert float(snap["total_asset"]) == 200_000
+    assert float(snap["base_asset"]) == 200_000          # 10만이면 +100%가 된다
+    assert float(snap["day_return_percent"]) == 0.0
+
+
+def test_second_cycle_keeps_the_brokers_baseline(conn):
+    """직전 스냅샷이 생긴 뒤에는 종전대로 전일 총자산을 기준선으로 쓴다."""
+    _prior_snapshot(conn, 100_000.0)
+    acc = Account(start_capital=100_000, cash=110_000)   # 잔차 +1만 = 이체로 감지됨
+    cycle.run(conn, market_data=_universe(), account=acc, market_state=MarketState())
+
+    snap = conn.execute(
+        'SELECT base_asset, day_return_percent FROM account_snapshots '
+        'ORDER BY recorded_date_time DESC LIMIT 1'
+    ).fetchone()
+    assert float(snap["base_asset"]) == 100_000          # 브로커 값 그대로
+    # 이체는 기준선을 같이 밀어주므로 손익률은 0이어야 한다
+    assert float(snap["day_return_percent"]) == 0.0

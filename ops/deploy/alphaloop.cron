@@ -36,5 +36,10 @@ MAILTO=""
 # --force는 정규장 판정만 우회한다 — 장이 닫혀 있으면 주문은 내지 않고 장부만 맞춘다.
 35 15 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python run_watch.py --force >> /var/log/alphaloop/watch.log 2>&1
 
+# 서버 자원 감시 — 디스크 80%·스왑·DB 연결 (10-ops 10.4/10.10)
+# 거래일만이 아니라 매일 돈다. 디스크는 장이 쉬는 날에도 찬다.
+# 이상이 있을 때만 알린다 — 고칠 때까지 매일 오는 게 맞다(저절로 줄지 않는다).
+30 16 * * * root cd /opt/alphaloop && ./.venv/bin/python -m ops.sysmon >> /var/log/alphaloop/sysmon.log 2>&1
+
 # 백업 — 장 마감 후 DB 전체 스냅샷 1개 (10-ops 10.6)
 0 16 * * 1-5 root cd /opt/alphaloop && ./.venv/bin/python -m ops.backup full >> /var/log/alphaloop/backup.log 2>&1

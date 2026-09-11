@@ -368,6 +368,14 @@ def run(
         recon = _reconcile_cash(conn, account, mode=run_mode)
         # 기준선을 옮길 금액을 계좌에 실어 보낸다 — 서킷브레이커가 이걸 분모에 쓴다
         account = replace(account, net_external_flow=recon.net_external_flow)
+        if not recon.comparable:
+            # 첫 사이클 — 비교할 직전 스냅샷이 없다. 이때 브로커가 주는 "전일 총자산"을
+            # 기준선으로 쓰면, 그 사이에 들어오고 나간 돈이 전부 성과로 둔갑한다
+            # (2026-09-11 실측: 10만원 계좌에 10만원을 넣었더니 당일 손익률 +100%).
+            # 반대로 출금이면 큰 손실로 보여 서킷브레이커까지 헛발동한다.
+            # 첫 스냅샷은 하루를 재는 것이 아니라 **기준선을 세우는 것**이므로,
+            # 오늘 자산을 그대로 기준선으로 삼아 당일 손익률을 0에서 출발시킨다.
+            account = replace(account, start_capital=account.equity)
 
     # 사이클 시점 자본 스냅샷 — 사이징 분모이자 대시보드 ①의 원천
     if account is not None:

@@ -105,6 +105,9 @@ class StepLine(NamedTuple):
 
 
 _STEP_MARK = {"ok": "✅", "partial": "🔸", "failed": "❌"}
+# 심각도 순서·표식 — 여러 측정값 중 가장 나쁜 것이 전체 등급이 된다.
+_WORST_LEVEL = ("info", "warning", "critical")
+_STEP_MARK_BY_LEVEL = {"info": "✅", "warning": "🔸", "critical": "❌"}
 # 단계 하나라도 나쁘면 전체가 그 등급이 된다 — 나쁜 쪽이 이긴다.
 _WORST_ORDER = ("ok", "partial", "failed")
 _INGEST_TITLE = {
@@ -282,6 +285,30 @@ def notify_watch_summary(
         "warning" if (missing or len(revised) < len(stale)) else "info")
     return send("\n".join(out), level=level,
                 title="보유 감시" + ("" if level == "info" else " — 조치 필요"))
+
+
+def notify_system_health(
+    readings: Sequence[tuple[str, str, str]], *, healthy: bool = False,
+) -> bool:
+    """서버 자원 상태 알림(10-ops 10.4·10.10).
+
+    이상이 있을 때만 호출부가 부른다. 고칠 때까지 매일 같은 알림이 오는데, 그게
+    맞다 — 디스크는 저절로 줄지 않고, 차는 순간 DB·로그·백업이 한꺼번에 멈춘다.
+    """
+    worst = "info"
+    for _, level, _ in readings:
+        if _WORST_LEVEL.index(level) > _WORST_LEVEL.index(worst):
+            worst = level
+    lines = [f"{_STEP_MARK_BY_LEVEL[level]} {name}: {line}" for name, level, line in readings]
+    tail = "" if healthy else (
+        "\n\n디스크가 차면 DB·로그·백업이 한꺼번에 멈춥니다. 오래된 백업"
+        "(`/var/backups/alphaloop`)과 시스템 로그(`journalctl --vacuum-size=`)부터 줄이세요."
+    )
+    return send(
+        "\n".join(lines) + tail,
+        level=worst,
+        title="서버 상태 정상" if healthy else "서버 자원 경고",
+    )
 
 
 def notify_stop_not_registered(code: str, qty: int, stop_price: float, status: str) -> bool:

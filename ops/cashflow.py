@@ -198,7 +198,9 @@ def main(argv: list[str] | None = None, conn=None) -> int:
             status="confirmed", note=args.note, trade_date=trade_date,
         )
         print(f"등록 완료: {flow_id} · {args.kind} {args.amount:+,.0f}원")
-        print("  다음 사이클의 계좌 스냅샷부터 누적 순입금에 반영됩니다.")
+        # 누적 순입금은 화면을 열 때마다 CashFlows를 더해서 낸다(10-ops 10.18).
+        # 스냅샷 러닝합을 쓰던 시절의 "다음 사이클부터" 안내는 더 이상 맞지 않는다.
+        print("  대시보드 누적 순입금에 바로 반영됩니다(새로고침).")
         return 0
 
     ok = journal.confirm_cash_flow(conn, args.id, kind=args.kind, by="cli", note=args.note)

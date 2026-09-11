@@ -36,14 +36,14 @@ _SECRET_PATTERNS = (
 
 
 def _mask(text: str) -> str:
-    """시크릿으로 보이는 토막을 가린다."""
+    """시크릿으로 보이는 토막을 가리기"""
     for pat in _SECRET_PATTERNS:
         text = pat.sub("***", text)
     return text
 
 
 def send(message: str, *, level: str = "info", title: str | None = None) -> bool:
-    """Discord 웹훅으로 한 건 보낸다(실패해도 예외를 올리지 않는다). 반환: 성공 여부."""
+    """Discord 웹훅으로 send -> 성공 여부"""
     if level not in LEVELS:
         level = "info"
     url = get_settings().discord_webhook_url
@@ -64,13 +64,13 @@ def send(message: str, *, level: str = "info", title: str | None = None) -> bool
 
 
 def notify_safe_stop(cause: str, cycle_id: str | None = None) -> bool:
-    """전체 정지 알림을 보낸다(사람이 풀어줘야 하는 상태)."""
+    """SafeStop 알림"""
     where = f"\n사이클: `{cycle_id}`" if cycle_id else ""
     return send(
         f"매매를 전체 정지했습니다.\n원인: {cause}{where}\n\n"
-        "신규 주문이 차단됩니다(보유 청산은 계속 돕니다). "
-        "잔고 불일치·데이터 오류는 확인 후 사람이 직접 해제해야 합니다.",
-        level="critical", title="SafeStop 발생",
+        "신규 주문 차단(보유 청산 상관X). "
+        "잔고 불일치·데이터 오류는 확인 후 사람이 직접 해제 필요",
+        level="critical", title="SafeStop",
     )
 
 
@@ -78,27 +78,24 @@ def notify_cash_flow(
     flow_id: str, amount: float, *, expected: float, actual: float,
     kind: str = "unknown", cycle_id: str | None = None,
 ) -> bool:
-    """외부 현금흐름 감지 알림. 차단이 아니라 "기록했고 그대로 진행했다"는 통지다."""
+    """외부 현금흐름 감지 알림"""
     direction = "입금" if amount >= 0 else "출금"
-    where = f"\n감지 사이클: `{cycle_id}`" if cycle_id else ""
+    where = f"\n사이클: `{cycle_id}`" if cycle_id else ""
     return send(
-        f"{direction} {abs(amount):,.0f}원으로 보이는 현금 변동을 감지했습니다.\n"
+        f"{direction} {abs(amount):,.0f}원 현금 변동 감지\n"
         f"기대 예수금: {expected:,.0f}원 / 실제 예수금: {actual:,.0f}원\n"
         f"분류: `{kind}`{where}\n\n"
-        "보유 종목·수량은 일치하므로 **매매는 그대로 계속됩니다.** "
-        "서킷브레이커 기준선은 이 금액만큼 자동으로 옮겼습니다.\n"
-        "라벨만 나중에 붙여주세요:\n"
-        f"`python -m ops.cashflow confirm --id {flow_id} --kind deposit`\n"
-        "(배당이면 `--kind dividend` — 입금은 수익률에서 빼고 배당은 수익으로 잡습니다.)",
+        "보유 종목·수량은 일치하므로 **매매는 continue** \n"
+        "나중에 라벨 붙이도록:\n"
+        "`ssh -i ~/.ssh/banana9091Key.pem root@49.50.134.48 "
+        "'cd /opt/alphaloop && ./.venv/bin/python -m ops.cashflow add "
+        "--kind deposit --amount [금액] --note [비고]'`",
         level="info", title="외부 현금흐름 감지",
     )
 
 
 class StepLine(NamedTuple):
-    """배치 한 단계 요약 — `run_daily_ingest`의 `StepResult`를 알림용으로 줄인 것.
-
-    알림 모듈이 배치 모듈을 import하면 순환이 되므로, 필요한 값만 여기로 옮겨 받는다.
-    """
+    """배치 요약"""
     table: str
     status: str                 # ok / partial / failed
     success: int                # 조회 성공 종목 수 (종목 단위가 아닌 단계는 0)
@@ -121,11 +118,7 @@ _INGEST_LEVEL = {"ok": "info", "partial": "warning", "failed": "critical"}
 def notify_ingest_summary(
     trade_date: date, steps: Sequence[StepLine], *, mode: str = "real",
 ) -> bool:
-    """일일 배치 결과 요약. 실패만이 아니라 **성공도 매번 보낸다**.
-
-    조용한 성공은 "안 돈 것"과 구별되지 않는다(10-ops 10.4). 하루 한 번뿐이라
-    알림이 넘치지도 않는다.
-    """
+    """일일 배치 결과 요약"""
     worst = "ok"
     for s in steps:
         if _WORST_ORDER.index(s.status) > _WORST_ORDER.index(worst):
@@ -134,18 +127,14 @@ def notify_ingest_summary(
     for s in steps:
         scope = f"{s.success:,}/{s.target:,}종목 · " if s.target else ""
         lines.append(f"{_STEP_MARK.get(s.status, '·')} `{s.table}` {scope}{s.rows:,}행")
-    tail = "" if worst == "ok" else (
-        "\n\n오늘 사이클은 데이터 신선도 검사에서 멈출 수 있습니다. "
-        "`python run_daily_ingest.py --resume`으로 못 받은 종목만 재시도하세요."
-    )
     return send(
-        f"거래일 {trade_date} · `{mode}`\n" + "\n".join(lines) + tail,
+        f"거래일 {trade_date} · `{mode}`\n" + "\n".join(lines),
         level=_INGEST_LEVEL[worst], title=_INGEST_TITLE[worst],
     )
 
 
 class TradeLine(NamedTuple):
-    """사이클이 실제로 낸 매매 한 건 — `orders` 한 행을 알림용으로 줄인 것."""
+    """매매 알림 (1 건) — `orders` 한 행"""
     code: str
     name: str | None
     side: str                   # buy / sell
@@ -156,7 +145,7 @@ class TradeLine(NamedTuple):
 
 
 class HoldingLine(NamedTuple):
-    """사이클이 끝난 뒤의 보유 한 건."""
+    """사이클이 끝난 뒤의 보유 한 건"""
     code: str
     name: str | None
     quantity: int
@@ -176,11 +165,7 @@ def notify_cycle_summary(
     live: bool, trades: Sequence[TradeLine] = (), holdings: Sequence[HoldingLine] = (),
     reason: str | None = None, mode: str = "real",
 ) -> bool:
-    """정기 사이클 결과 — 무엇을 사고 팔았고 지금 무엇을 들고 있는지.
-
-    실패는 `notify_cycle_failure`가 따로 보낸다. 같은 사이클에 알림이 두 번 가지
-    않도록 호출부에서 갈라 부른다.
-    """
+    """정기 사이클 결과"""
     skipped = status != "recorded"
     out = [f"사이클: `{cycle_id}` · `{mode}`", f"결과: {status} ({action})"]
     if reason:
@@ -216,7 +201,7 @@ def notify_cycle_summary(
 
     if not live:
         out.append("")
-        out.append("드라이런 — 계획만 세우고 주문은 내지 않았습니다(`--live` 없음).")
+        out.append("드라이런")
     # 손절 없는 보유가 하나라도 있으면 밤사이 갭에 무방비다 — 눈에 띄게 올린다.
     naked = [h for h in holdings if h.stop_price is None]
     return send("\n".join(out),
@@ -235,18 +220,13 @@ def notify_stop_filled(
     code: str, *, quantity: int, entry: float, exit_price: float, net: float,
     return_percent: float, name: str | None = None, mode: str = "real",
 ) -> bool:
-    """걸어 둔 손절이 스스로 체결됐음을 알린다.
-
-    우리가 낸 주문이 아니라 브로커가 발동시킨 매도라, 알려주지 않으면 사람은 다음
-    사이클 결과를 볼 때까지 팔린 줄도 모른다.
-    """
+    """손절 체결 알림"""
     sign = "+" if net >= 0 else "−"
     return send(
-        f"{_label(code, name)} {quantity}주가 손절가에 닿아 체결됐습니다. · `{mode}`\n"
+        f"{_label(code, name)} {quantity} 손절/체결 · `{mode}`\n"
         f"매수 {entry:,.0f}원 → 매도 {exit_price:,.0f}원\n"
-        f"실현손익 {sign}{abs(net):,.0f}원 ({return_percent * 100:+.2f}%)\n\n"
-        "보유와 손익은 장부에 이미 반영했습니다. 따로 하실 일은 없습니다.",
-        level="warning", title="손절 체결",
+        f"실현손익 {sign}{abs(net):,.0f}원 ({return_percent * 100:+.2f}%)",
+        level="warning", title="손절/체결 완",
     )
 
 
@@ -255,33 +235,27 @@ def notify_watch_summary(
     stale: Sequence[str] = (), revised: Sequence[str] = (),
     gaps: Sequence[str] = (), market_open: bool = True, mode: str = "real",
 ) -> bool:
-    """장중 보유 감시 결과 — 트레일링(손절선 정정)이 실제로 반영됐는지가 핵심이다.
-
-    보유가 0이면 호출부가 아예 부르지 않는다 — 30분마다 "보유 없음"이 13번 오면
-    알림 자체가 배경 소음이 되어 진짜 경보를 놓친다. 안 도는 것은 heartbeat가 잡는다.
-    """
+    """장중 보유 감시 결과"""
     out = [f"보유 {positions}종목 감시 · `{mode}`"]
     if not market_open:
-        out.append("장 마감 후 정리 — 주문은 낼 수 없어 장부만 맞췄습니다.")
+        out.append("장 마감 후 정리")
     if not missing:
         out.append("① 상주 스톱: 정상")
     elif market_open:
         out.append(f"① 상주 스톱: 빠짐 {missing}종목 → 등록 {registered}건")
     else:
-        out.append(f"① 상주 스톱: 빠짐 {missing}종목 — 장이 닫혀 등록하지 못했습니다")
+        out.append(f"① 상주 스톱: 빠짐 {missing}종목 — 장 닫힘")
     if stale:
         out.append(f"② 손절선 정정 {len(revised)}/{len(stale)}건")
         out += [f"· {t}" for t in stale]
         if len(revised) < len(stale):
-            out.append("  일부가 정정되지 않았습니다 — 그 종목은 옛 손절가 그대로입니다.")
+            out.append("  일부가 정정 안됨")
     else:
         out.append("② 손절선: 장부와 KIS 예약 일치(정정할 것 없음)")
     out.append("③ 손절 구멍: " + ("없음" if not gaps else ", ".join(gaps)))
     # 마감 후에 손절 없는 보유가 남아 있으면 밤사이 갭에 그대로 노출된다.
     if not market_open and missing:
         out.append("")
-        out.append("**손절 없이 밤을 넘깁니다.** 다음 거래일 09:00 감시가 재등록을 "
-                   "시도하지만, 갭하락은 그 전에 벌어집니다.")
 
     level = "critical" if gaps or (missing and not market_open) else (
         "warning" if (missing or len(revised) < len(stale)) else "info")
@@ -314,20 +288,19 @@ def notify_system_health(
 
 
 def notify_stop_not_registered(code: str, qty: int, stop_price: float, status: str) -> bool:
-    """손절 스톱이 걸리지 않은 채 보유가 생겼음을 알린다 — 장 마감 후 갭에 무방비인 상태다."""
+    """손절 스톱 걸리지 않은 채 보유 알림"""
     return send(
         f"종목: `{code}` {qty}주\n걸려던 손절: {stop_price:,.0f}원\n브로커 응답: `{status}`\n\n"
-        "매수는 체결됐는데 손절 예약이 서지 않았습니다. 다음 감시(30분 내)가 재등록을 시도하지만, "
-        "계속 실패하면 장 마감 전에 직접 손절을 걸거나 보유를 정리하세요.",
+        "매수는 체결됐는데 손절 예약 안걸림. 다음 감시(30분 내)가 재등록 시도 예정",
         level="critical", title="손절 미등록 보유 발생",
     )
 
 
 def notify_stop_not_revised(code: str, new_stop: float, reason: str) -> bool:
-    """손절선을 올리려 했는데 브로커 예약을 못 고쳤음을 알린다 — 이익 보존이 깨진 상태다."""
+    """손절선 올리려 했는데 실패"""
     return send(
         f"종목: `{code}`\n올리려던 손절: {new_stop:,.0f}원\n실패 사유: {reason}\n\n"
-        "장부의 손절선만 올라가고 증권사 예약은 옛 가격 그대로입니다. "
+        "DB 손절선만 올라가고 예약은 옛 가격 그대로 "
         "파산 방지(초기 손절)는 살아 있지만 밤사이 갭에서는 옛 가격으로 체결됩니다.",
         level="warning", title="손절 정정 실패",
     )

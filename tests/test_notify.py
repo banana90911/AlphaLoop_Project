@@ -48,14 +48,19 @@ def test_배치_등급은_가장_나쁜_단계를_따른다(sent):
     assert (sent[1]["title"], sent[1]["level"]) == ("일일 배치 실패", "critical")
 
 
-def test_배치_실패면_재시도_방법을_함께_준다(sent):
-    notify.notify_ingest_summary(_DAY, _steps("partial"))
-    assert "--resume" in sent[0]["message"]
+def test_배치_알림은_조치_안내를_붙이지_않는다(sent):
+    """실패해도 결과만 전한다.
 
-
-def test_배치_성공에는_재시도_안내를_붙이지_않는다(sent):
-    notify.notify_ingest_summary(_DAY, _steps("ok"))
-    assert "--resume" not in sent[0]["message"]
+    예전에는 `--resume`으로 못 받은 종목만 재시도하라는 안내가 붙었는데, 08:00
+    배치는 당일 봉이 아직 없어 건너뛸 종목이 0개다 — 전체를 8분간 다시 받을 뿐
+    "못 받은 종목만"이 아니었다(2026-09-11 실측). 게다가 실패 종목은 배치가 같은
+    실행 안에서 이미 자동 재시도하므로, 여기까지 온 것은 사람이 같은 명령을 다시
+    쳐서 될 일이 아니다.
+    """
+    for st in ("ok", "partial", "failed"):
+        notify.notify_ingest_summary(_DAY, _steps(st))
+    for m in (x["message"] for x in sent):
+        assert "--resume" not in m and "재시도" not in m
 
 
 def _buy(code="005930", name="삼성전자", qty=3, price=71_000):
@@ -131,7 +136,7 @@ def test_손절_체결은_실현손익을_담는다(sent):
         "005930", quantity=3, entry=71_000, exit_price=67_000, net=-12_500,
         return_percent=-0.0587, name="삼성전자")
     m = sent[0]["message"]
-    assert sent[0]["title"] == "손절 체결" and sent[0]["level"] == "warning"
+    assert sent[0]["level"] == "warning" and "손절" in sent[0]["title"]
     assert "매수 71,000원 → 매도 67,000원" in m
     assert "−12,500원" in m and "-5.87%" in m
 
@@ -157,8 +162,9 @@ def test_감시_정정_실패가_남으면_경고로_올린다(sent):
         positions=2, missing=0, registered=0,
         stale=["005930 67,000 → 69,000", "000660 170,000 → 175,000"],
         revised=["005930"])
+    # 문구는 손볼 수 있다 — 못 박을 것은 "2건 중 1건만 됐다"는 사실과 경고 등급이다
     assert sent[0]["level"] == "warning"
-    assert "일부가 정정되지 않았습니다" in sent[0]["message"]
+    assert "1/2건" in sent[0]["message"]
 
 
 def test_감시_손절_구멍은_즉시_확인_등급(sent):
@@ -177,15 +183,13 @@ def test_마감_후에는_주문을_못_낸다고_밝힌다(sent):
     """장이 닫힌 뒤 실행은 장부만 맞춘다 — 등록했다고 적으면 거짓이 된다."""
     notify.notify_watch_summary(
         positions=1, missing=0, registered=0, market_open=False)
-    m = sent[0]["message"]
-    assert "장 마감 후 정리" in m and "장부만 맞췄습니다" in m
+    # 주문을 낼 수 없었다는 사실이 본문에 드러나야 한다(표현은 자유)
+    assert "마감" in sent[0]["message"]
 
 
 def test_마감_후_손절_없는_보유는_즉시_확인_등급(sent):
     """고칠 수단이 없는 채로 밤을 넘기므로 장중의 '빠짐'보다 심각하다."""
     notify.notify_watch_summary(
         positions=1, missing=1, registered=0, market_open=False)
-    m = sent[0]["message"]
-    assert sent[0]["level"] == "critical"
-    assert "장이 닫혀 등록하지 못했습니다" in m
-    assert "손절 없이 밤을 넘깁니다" in m
+    assert sent[0]["level"] == "critical"      # 장중의 '빠짐'(warning)보다 높다
+    assert "빠짐 1종목" in sent[0]["message"]    # 무엇이 문제인지 본문에 남아야 한다

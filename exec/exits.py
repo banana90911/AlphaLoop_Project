@@ -12,7 +12,7 @@ from datetime import date
 import pandas as pd
 
 from config.settings import load_params
-from core import costs
+from core import costs, ticks
 from core.timeutils import kst_today, now_utc
 from core.trading_days import trading_days_between
 from memory import journal
@@ -188,13 +188,22 @@ def execute_exits(
         if act.action == "hold":
             continue
         if act.action == "raise_stop":
+            # 판정은 실수로 하고(백테스트와 같은 `decide_exit`), 브로커로 나갈 값만
+            # 여기서 호가단위에 맞춘다. 판정 안에서 맞추면 백테스트 결과가 바뀐다.
+            new_stop = float(ticks.align_down(act.new_stop))
+            cur = float(r["current_stop_price"])
             # 장부만 고치면 소용이 없다 — 밤에 실제로 발동하는 것은 KIS에 걸린 예약이다.
             # 먼저 브로커 예약을 정정하고, 그 결과와 무관하게 장부는 갱신한다
             # (정정이 실패해도 다음 감시가 다시 시도할 수 있어야 하므로).
-            _revise_broker_stop(conn, broker, r, act.new_stop, code)
+            if new_stop > cur:
+                _revise_broker_stop(conn, broker, r, new_stop, code)
+            else:
+                # 내림 정렬로 현재 손절선 아래가 됐다 — 트레일링은 상향만이므로
+                # 손절선은 그대로 두되, 아래 완료 표시는 반드시 남긴다.
+                new_stop = cur
             # 본전 상향이면 완료 표시까지 남긴다 — 안 남기면 다음 사이클에 ③이 또 걸린다.
             journal.update_stop(
-                conn, r["position_id"], act.new_stop,
+                conn, r["position_id"], new_stop,
                 breakeven_done=True if act.reason == "breakeven" else None,
             )
             continue
@@ -234,7 +243,10 @@ def _revise_broker_stop(conn, broker, row, new_stop: float, code: str) -> bool:
         trigger_price=trigger, limit_price=trigger,
     )
     if fill.status not in ("submitted", "filled", "partial"):
-        notify.notify_stop_not_revised(code, new_stop, f"브로커 응답 {fill.status}")
+        notify.notify_stop_not_revised(
+            code, new_stop,
+            f"브로커 응답 {fill.status}" + (f" — {fill.reason}" if fill.reason else ""),
+        )
         return False
     journal.record_stop_revision(
         conn, client_order_id=stop_order["client_order_id"], trigger_price=float(trigger),
@@ -269,7 +281,8 @@ def _settle_exit(conn, broker, r, sell_qty, price, act, cycle_id, trade_date,
     book_exit(
         conn, r, outcome_id=f"{coid}-out", filled=filled, exit_price=exit_price,
         trade_date=trade_date, exit_reason=EXIT_REASONS[act.reason],
-        full=act.action == "exit_full", new_stop=act.new_stop, mode=mode,
+        full=act.action == "exit_full", mode=mode,
+        new_stop=None if act.new_stop is None else float(ticks.align_down(act.new_stop)),
         tax_params=tax_params,
     )
     return coid

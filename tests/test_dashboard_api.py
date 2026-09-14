@@ -491,7 +491,7 @@ def test_account_reports_net_flow_and_safe_withdrawable(conn, client):
     journal.record_account_snapshot(
         conn, cycle_id="C1", cash=8_000_000, position_value=2_000_000,
         total_asset=10_000_000, base_asset=8_000_000,
-        net_flow_since_base=2_000_000, flow_this_snapshot=2_000_000, trade_date=_DAY,
+        flow_this_snapshot=2_000_000, trade_date=_DAY,
     )
     _flow(conn, "C1", kind="deposit", amount=2_000_000)
     body = client.get("/api/account").json()
@@ -510,7 +510,7 @@ def test_net_flow_counts_the_table_not_the_snapshot_running_sum(conn, client):
     _cycle(conn, "C1")
     journal.record_account_snapshot(
         conn, cycle_id="C1", cash=751, position_value=0, total_asset=751,
-        base_asset=751, net_flow_since_base=0, flow_this_snapshot=0, trade_date=_DAY,
+        base_asset=751, flow_this_snapshot=0, trade_date=_DAY,
     )
     _flow(conn, "C1", kind="deposit", amount=751, status="confirmed")
     assert client.get("/api/account").json()["cumulative_net_flow"] == 751

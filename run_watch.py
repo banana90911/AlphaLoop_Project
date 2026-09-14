@@ -10,6 +10,7 @@ import argparse
 
 from broker.kis_client import KISClient
 from config.settings import get_settings
+from core import ticks
 from core.timeutils import kst_today, now_utc
 from core.trading_days import is_session_open
 from exec import exits
@@ -144,7 +145,7 @@ def register_missing_stops(conn, client: KISClient, missing: list[dict], *,
         if dry_run:
             ids.append(coid)
             continue
-        trigger = int(round(float(stop)))
+        trigger = ticks.align_down(float(stop))
         fill = client.place_stop(
             code=p["symbol_id"], qty=p["quantity"], trigger_price=trigger,
             limit_price=trigger, client_order_id=coid,
@@ -172,7 +173,10 @@ def find_stale_stops(positions: list[dict]) -> list[dict]:
         want, have = p["current_stop_price"], p["broker_stop_price"]
         if want is None or have is None:
             continue
-        if abs(float(want) - float(have)) >= 1.0:      # 원 단위 — 반올림 차이는 무시
+        # 장부 값도 호가단위로 맞춰 비교한다. 이 정렬이 없으면, 호가단위 도입 전에
+        # 저장된 비정렬 손절가(27,342)가 브로커의 정렬된 값(27,300)과 영원히 달라
+        # 감시마다 정정을 되풀이한다.
+        if abs(float(ticks.align_down(float(want))) - float(have)) >= 1.0:
             stale.append(p)
     return stale
 
@@ -185,7 +189,7 @@ def revise_stale_stops(conn, client: KISClient, stale: list[dict], *,
         if not p["kis_order_no"] or not p["kis_order_org_no"]:
             print(f"  {p['symbol_id']}: KIS 식별자가 없어 정정 불가(옛 주문)")
             continue
-        trigger = int(round(float(p["current_stop_price"])))
+        trigger = ticks.align_down(float(p["current_stop_price"]))
         if dry_run:
             done.append(p["symbol_id"])
             continue

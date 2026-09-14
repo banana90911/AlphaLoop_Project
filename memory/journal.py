@@ -84,9 +84,9 @@ def record_account_snapshot(
     position_value: float,
     total_asset: float,
     base_asset: float | None = None,
-    net_flow_since_base: float = 0.0,
     flow_this_snapshot: float = 0.0,
     trade_date: date | None = None,
+    mode: str | None = None,
 ) -> str:
     """사이클 시점 자본을 `AccountSnapshots`에 남긴다. 반환: SnapshotId.
 
@@ -94,18 +94,29 @@ def record_account_snapshot(
     분모는 거기에 그 사이 순외부흐름을 더한 `AdjustedBaseAsset`이다 — 이체는 손익이
     아니므로 기준선을 같이 밀어줘야 손익률이 진실을 말한다(05-risk 5.2).
 
-    `flow_this_snapshot`은 **직전 스냅샷 이후** 새로 감지된 순외부흐름이다.
-    누적 순입금(`CumulativeNetFlow`)과 TWR 지수는 직전 행에서 이어받아 갱신한다.
+    `flow_this_snapshot`은 이번 사이클이 **잔차로 새로 감지했지만 아직 `CashFlows`에
+    기록되지 않은** 흐름이다(`pipeline.cycle`은 스냅샷을 먼저 적고 흐름을 나중에 남긴다).
+    나머지 외부흐름은 전부 `CashFlows`에서 다시 합산한다 — 증분만 이어받으면 사람이
+    직접 등록한 흐름(`ops.cashflow add`)이 영영 반영되지 않아 **원금이 수익으로 잡힌다.**
     """
     prev = last_account_snapshot(conn)
 
     if base_asset is None:
         base_asset = float(prev["total_asset"]) if prev else total_asset
-    adjusted = base_asset + net_flow_since_base
-    day_return = total_asset / adjusted - 1.0 if adjusted else None
 
-    prev_cum = float(prev["cumulative_net_flow"]) if prev else 0.0
-    cumulative = prev_cum + flow_this_snapshot
+    # 누적 순입금은 증분 누적이 아니라 매번 CashFlows에서 다시 합산한다. 그래야 수동
+    # 등록분이 빠지지 않고, 과거에 틀어진 행이 있어도 다음 스냅샷부터 저절로 복구된다.
+    cumulative = cumulative_net_flow(conn, mode=mode) + flow_this_snapshot
+
+    # 기준선 평행이동 폭 = 직전 스냅샷 이후 새로 생긴 외부흐름 = 누적값의 차이.
+    # 감지 시각으로 거르지 않는 이유가 있다: 사이클은 스냅샷을 먼저 적고 CashFlows를
+    # 나중에 쓰므로, 그 행의 감지 시각은 이미 반영한 스냅샷보다 **뒤**다. 시각으로
+    # 세면 같은 돈이 다음 스냅샷에서 기준선을 한 번 더 민다.
+    # 첫 스냅샷은 base_asset이 곧 현재 자산이라 그 사이에 흐른 돈이 없다(0).
+    prev_cum = float(prev["cumulative_net_flow"] or 0.0) if prev else 0.0
+    flow = cumulative - prev_cum if prev else 0.0
+    adjusted = base_asset + flow
+    day_return = total_asset / adjusted - 1.0 if adjusted else None
 
     # TWR 구간수익률 — 기초자산에 이번 구간의 흐름을 얹은 값이 분모다.
     # 흐름을 빼지 않으면 입금이 그대로 "수익"으로 잡힌다(09-eval).
@@ -114,7 +125,7 @@ def record_account_snapshot(
     if prev_total is None:
         twr_index = 1.0
     else:
-        denom = prev_total + flow_this_snapshot
+        denom = prev_total + flow
         twr_index = (
             prev_index * (total_asset / denom) if denom > 0 else prev_index
         )
@@ -126,7 +137,7 @@ def record_account_snapshot(
         'adjusted_base_asset, cumulative_net_flow, twr_index, day_return_percent, '
         'recorded_date_time) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
         (sid, cycle_id, trade_date or kst_today(), cash, position_value, total_asset,
-         base_asset, net_flow_since_base, adjusted, cumulative, twr_index,
+         base_asset, flow, adjusted, cumulative, twr_index,
          day_return, now_utc()),
     )
     conn.commit()
@@ -947,6 +958,38 @@ def load_daily_score_candidates(conn: psycopg.Connection, trade_date: date) -> l
     return [r["symbol_id"] for r in rows]
 
 
+def load_bar_symbol_ids(
+    conn: psycopg.Connection, *, start: date, end: date
+) -> list[str]:
+    """그 기간에 일봉이 있는 종목코드를 반환한다(점수 계산의 청크 분할 기준).
+
+    `Symbols`가 아니라 `DailyBars`를 보는 이유는, 상장폐지된 종목도 이력이 남아 있는
+    동안은 점수 계산 대상이었기 때문이다 — 통짜로 읽던 때와 대상이 달라지면 안 된다.
+    """
+    rows = conn.execute(
+        'SELECT DISTINCT symbol_id FROM daily_bars '
+        'WHERE trade_date BETWEEN %s AND %s ORDER BY symbol_id',
+        (start, end),
+    ).fetchall()
+    return [r["symbol_id"] for r in rows]
+
+
+def latest_bar_date(
+    conn: psycopg.Connection, *, start: date, end: date
+) -> date | None:
+    """그 기간 일봉의 마지막 거래일(없으면 None) — 점수의 기준일 라벨이 된다.
+
+    종목을 나눠 읽으면 전체 최대일을 마지막 청크까지 가야 알게 된다. 그 전에
+    패널을 만들어야 하므로 여기서 한 번에 구해 둔다.
+    """
+    row = conn.execute(
+        'SELECT MAX(trade_date) AS last_date FROM daily_bars '
+        'WHERE trade_date BETWEEN %s AND %s',
+        (start, end),
+    ).fetchone()
+    return row["last_date"] if row else None
+
+
 def load_price_history(
     conn: psycopg.Connection, *, start: date, end: date, symbol_ids: list[str] | None = None
 ) -> dict[str, Any]:
@@ -973,6 +1016,12 @@ def load_price_history(
         "close": "close", "volume": "volume",
         "foreign_net": "foreign_net", "institution_net": "inst_net",
     })
+    # dtype을 명시적으로 고정한다. 수급은 LEFT JOIN이라 NULL이 섞이는데, 어떤 묶음을
+    # 읽었느냐에 따라 pandas가 float64 대신 object로 추론할 수 있다. 종목을 나눠 읽는
+    # 쪽(점수 배치의 청크)에서 묶음마다 dtype이 갈리면 같은 종목의 지표가 달라진다.
+    for col in ("open", "high", "low", "close", "volume", "foreign_net", "inst_net"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     out: dict[str, Any] = {}
     for code, g in df.groupby("symbol_id"):
         out[code] = g.drop(columns=["symbol_id"]).set_index("date").sort_index()

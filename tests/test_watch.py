@@ -15,6 +15,7 @@ from pipeline.cycle import PlannedOrder
 from run_watch import (
     find_filled_stops,
     find_missing_stops,
+    find_stale_stops,
     load_open_positions,
     settle_filled_stops,
 )
@@ -126,3 +127,24 @@ def test_체결된_보유를_빼고_나면_재등록_대상이_없다(conn, held
 
     settle_filled_stops(conn, find_filled_stops(orders, held), mode="paper")
     assert load_open_positions(conn) == []             # 보유가 없으니 대상도 없다
+
+
+# ── 손절선 어긋남 판정 (호가단위 도입 이후) ──────────────────────────────
+
+def _stop_row(want: float, have: float) -> dict:
+    """어긋남 판정에 필요한 두 값만 가진 보유 한 건."""
+    return {"symbol_id": "005930", "current_stop_price": want, "broker_stop_price": have}
+
+
+def test_장부와_예약이_같으면_어긋남이_아니다():
+    assert find_stale_stops([_stop_row(27_300, 27_300)]) == []
+
+
+def test_트레일링으로_올라갔으면_어긋남이다():
+    assert len(find_stale_stops([_stop_row(28_000, 27_300)])) == 1
+
+
+def test_호가단위_도입_전에_저장된_손절가는_어긋남이_아니다():
+    """옛 장부값 27,342는 브로커에 27,300으로 걸린다. 정렬해서 비교하지 않으면
+    영원히 '어긋남'으로 잡혀 감시마다 정정을 되풀이한다(무한 정정 루프)."""
+    assert find_stale_stops([_stop_row(27_342, 27_300)]) == []

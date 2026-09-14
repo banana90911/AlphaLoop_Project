@@ -9,6 +9,7 @@ remarks:
 from dataclasses import dataclass
 from typing import Protocol
 
+from core import ticks
 from core.timeutils import now_utc
 from memory import journal
 from ops import notify
@@ -32,6 +33,9 @@ class Fill:
     broker_org_no: str | None = None
     fee: float | None = None
     tax: float | None = None
+    # 거부·실패 사유(KIS 원응답의 rt_cd·msg1). 알림과 로그가 이걸 그대로 실어 나른다 —
+    # 이유 없는 'rejected'만 남으면 장 끝난 뒤에 원인을 밝힐 방법이 없다.
+    reason: str | None = None
 
 
 class Broker(Protocol):
@@ -71,7 +75,8 @@ def execute_entries(
     for seq, o in enumerate(planned):
         coid = f"{cycle_id}-{o.code}-buy-{seq}"
         did = decision_ids.get(o.code)
-        order_price = int(round(o.price))
+        # 현재가는 이미 호가단위에 맞지만, 어긋난 값이 흘러들어도 거부되지 않게 막는다
+        order_price = ticks.align_down(o.price)
         fill = broker.place_entry(
             code=o.code, qty=o.qty, price=order_price,
             ord_dvsn=ord_dvsn, client_order_id=coid,
@@ -108,7 +113,9 @@ def execute_entries(
 def _register_stop(conn, o, filled_qty, cycle_id, seq, did, mode, ts, broker) -> str:
     """체결 수량만큼 손절 스톱지정가(22)를 등록하고 Orders에 적재. 반환: 스톱 ClientOrderId."""
     stop_coid = f"{cycle_id}-{o.code}-stop-{seq}"
-    stop = int(round(o.stop))
+    # 계획 단계에서 이미 맞춰 오지만(pipeline.cycle), 다른 호출부가 생겨도
+    # 거래소가 거부하는 가격이 나가지 않게 여기서 한 번 더 막는다.
+    stop = ticks.align_down(o.stop)
     sf = broker.place_stop(
         code=o.code, qty=filled_qty, trigger_price=stop, limit_price=stop,
         client_order_id=stop_coid,
@@ -124,5 +131,7 @@ def _register_stop(conn, o, filled_qty, cycle_id, seq, did, mode, ts, broker) ->
     # 스톱이 서지 않았는데 조용히 넘어가면 장 마감 후 갭에 맨몸으로 노출된다.
     # 매매를 멈추지는 않되(이미 체결된 진입은 되돌릴 수 없다) 사람을 즉시 부른다.
     if sf.status not in _STOP_ACCEPTED:
-        notify.notify_stop_not_registered(o.code, filled_qty, float(stop), sf.status)
+        notify.notify_stop_not_registered(
+            o.code, filled_qty, float(stop), sf.status, sf.reason
+        )
     return stop_coid

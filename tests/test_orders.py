@@ -174,7 +174,7 @@ class RejectingStopBroker(FakeBroker):
 
     def place_stop(self, *, code, qty, trigger_price, limit_price, client_order_id) -> Fill:
         self.stops.append({"code": code, "qty": qty, "trigger": trigger_price})
-        return Fill(0, None, "rejected")
+        return Fill(0, None, "rejected", reason="rt_cd=1 msg1=호가단위 오류")
 
 
 def test_rejected_stop_alerts_the_operator(conn, monkeypatch):
@@ -190,7 +190,8 @@ def test_rejected_stop_alerts_the_operator(conn, monkeypatch):
         broker=RejectingStopBroker(), cycle_id="CY1", order_mode="real",
         market_map={"005930": "KOSPI"},
     )
-    assert sent == [("005930", 2, 65000.0, "rejected")]
+    # 사유까지 실려야 한다 — 'rejected'만으로는 장 끝난 뒤 원인을 못 밝힌다
+    assert sent == [("005930", 2, 65000.0, "rejected", "rt_cd=1 msg1=호가단위 오류")]
     # 거부됐다는 사실이 장부에도 남아야 사후에 되짚을 수 있다
     s = conn.execute(
         'SELECT status FROM orders WHERE client_order_id=\'CY1-005930-stop-0\''

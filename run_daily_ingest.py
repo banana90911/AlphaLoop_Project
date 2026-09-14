@@ -22,10 +22,15 @@ from data.panel import build_panel
 from data.sources import index_history, kis_history, universe
 from memory import journal
 from memory.db import init_db
-from ops import notify
+from ops import notify, sysmon
 
 # 12-1 모멘텀(252거래일) + 20일 스킵 + 휴장 여유. 점수 계산이 읽어갈 최소 이력이다.
 SCORE_LOOKBACK_DAYS = 450
+# 점수 계산이 한 번에 메모리에 올릴 종목 수(10-ops 10.12). 전 종목 450일치를 통짜로
+# 들면 램 1GB 서버에서 피크가 램을 넘겨 스왑이 나고, 그 순간 배치가 수십 배 느려진다.
+# 청크마다 이력을 버리므로 피크가 종목 수에 비례하지 않는다. 백분위·순위 같은 횡단면
+# 계산은 청크가 아니라 **다 모은 패널**에서 하므로 결과는 통짜 처리와 같다.
+SCORE_CHUNK_SYMBOLS = 200
 # 일상 배치의 기본 조회 창(달력일). 하루만 요청하면 그날이 아직 미확정일 때 받을 것이
 # 없어진다. 연휴가 껴도 확정 봉이 최소 하나는 들어오도록 넉넉히 잡는다.
 RECENT_WINDOW_DAYS = 10
@@ -237,11 +242,16 @@ def ingest_indices(conn, *, start: date, end: date) -> StepResult:
 
 # ── ④ 전 종목 점수 ───────────────────────────────────────────────
 def compute_daily_scores(conn, *, trade_date: date) -> StepResult:
-    """DB에 쌓인 일봉·수급으로 전 종목 점수를 계산해 `DailyScores`에 적재한다."""
-    hist = journal.load_price_history(
-        conn, start=trade_date - timedelta(days=SCORE_LOOKBACK_DAYS), end=trade_date
-    )
-    if not hist:
+    """DB에 쌓인 일봉·수급으로 전 종목 점수를 계산해 `DailyScores`에 적재한다.
+
+    이력은 종목 청크 단위로 올렸다 버린다(10-ops 10.12). 전 종목 450일치를 한 번에
+    들면 램을 넘겨 스왑이 나기 때문이다. 청크가 만드는 것은 종목당 한 줄짜리 패널
+    조각뿐이고, 점수·순위·백분위는 조각을 다 모은 뒤에 계산한다 — 횡단면 계산이
+    청크 경계에 영향받으면 안 되기 때문이다.
+    """
+    start = trade_date - timedelta(days=SCORE_LOOKBACK_DAYS)
+    codes = journal.load_bar_symbol_ids(conn, start=start, end=trade_date)
+    if not codes:
         return StepResult("daily_scores", "journal", "failed",
                           error_message="DailyBars가 비어 있다 — 먼저 --backfill")
 
@@ -249,13 +259,27 @@ def compute_daily_scores(conn, *, trade_date: date) -> StepResult:
     # (= 직전 거래일)로 점수를 찾기 때문이다(04-data 4.2). 장 시작 전 배치는 당일 봉이
     # 아직 없으므로 실제 기준일이 전 거래일이 되는데, 그걸 배치 날짜로 저장해 버리면
     # 사이클이 영영 점수를 못 찾는다.
-    score_date = max(
-        (df.index.max() for df in hist.values() if df is not None and not df.empty),
-        default=trade_date,
-    )
-    panel = build_panel(hist, asof=score_date)
+    score_date = journal.latest_bar_date(conn, start=start, end=trade_date) or trade_date
+
+    parts: list[pd.DataFrame] = []
+    loaded = 0
+    for i in range(0, len(codes), SCORE_CHUNK_SYMBOLS):
+        hist = journal.load_price_history(
+            conn, start=start, end=trade_date,
+            symbol_ids=codes[i:i + SCORE_CHUNK_SYMBOLS],
+        )
+        if not hist:
+            continue
+        loaded += len(hist)
+        part = build_panel(hist, asof=score_date)
+        if not part.empty:
+            parts.append(part)
+        # 다음 청크를 읽기 전에 놓아준다 — 이 한 줄이 청크 처리의 목적이다.
+        del hist
+
+    panel = pd.concat(parts) if parts else pd.DataFrame()
     if panel.empty:
-        return StepResult("daily_scores", "journal", "failed", len(hist), 0, 0,
+        return StepResult("daily_scores", "journal", "failed", loaded, 0, 0,
                           "패널이 비었다(전 종목 워밍업 미완 의심)")
 
     passed = eligible(panel)
@@ -403,7 +427,12 @@ def main() -> None:
           f"{scores.success_count:,}/{scores.target_count:,}종목 통과 "
           f"{scores.rows_written:,}행")
 
-    _notify_summary(trade_date, steps, mode)
+    # 최대 메모리 — 스왑이 나기 전에 추세로 먼저 보이게 남긴다(10-ops 10.12)
+    peak_mb = sysmon.peak_rss_bytes() / 1024 ** 2
+    if peak_mb:
+        print(f"  최대 메모리      {peak_mb:,.0f}MB")
+
+    _notify_summary(trade_date, steps, mode, peak_rss_mb=peak_mb or None)
 
     failed = [r for r in steps if r.status == "failed"]
     if failed:
@@ -411,7 +440,8 @@ def main() -> None:
     conn.close()
 
 
-def _notify_summary(trade_date: date, steps: list[StepResult], mode: str) -> None:
+def _notify_summary(trade_date: date, steps: list[StepResult], mode: str,
+                    *, peak_rss_mb: float | None = None) -> None:
     """단계 결과를 Discord로 한 건 요약해 보낸다.
 
     실패만이 아니라 성공도 보낸다 — 조용한 성공은 "배치가 안 돈 것"과 구별되지 않아서,
@@ -421,7 +451,7 @@ def _notify_summary(trade_date: date, steps: list[StepResult], mode: str) -> Non
         trade_date,
         [notify.StepLine(r.target_table, r.status, r.success_count, r.target_count,
                          r.rows_written) for r in steps],
-        mode=mode,
+        mode=mode, peak_rss_mb=peak_rss_mb,
     )
 
 

@@ -171,7 +171,7 @@ def test_snapshot_carries_flow_and_twr(conn):
     journal.record_account_snapshot(
         conn, cycle_id="C2", cash=12_000_000, position_value=0,
         total_asset=12_000_000, base_asset=10_000_000,
-        net_flow_since_base=2_000_000, flow_this_snapshot=2_000_000, trade_date=_DAY,
+        flow_this_snapshot=2_000_000, trade_date=_DAY,
     )
     row = journal.last_account_snapshot(conn)
     assert float(row["adjusted_base_asset"]) == 12_000_000
@@ -191,7 +191,7 @@ def test_twr_index_tracks_real_gain_after_deposit(conn):
     # 200만 입금 + 진짜 10% 수익 → 1,200만 × 1.1 = 1,320만
     journal.record_account_snapshot(
         conn, cycle_id="C2", cash=13_200_000, position_value=0, total_asset=13_200_000,
-        base_asset=10_000_000, net_flow_since_base=2_000_000,
+        base_asset=10_000_000,
         flow_this_snapshot=2_000_000, trade_date=_DAY,
     )
     assert journal.last_account_snapshot(conn)["twr_index"] == pytest.approx(1.10)

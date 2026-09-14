@@ -15,7 +15,7 @@ import pandas as pd
 import psycopg
 
 from config.settings import get_settings, load_params
-from core import costs
+from core import costs, ticks
 from core.schemas import DeciderOutput, OrderAction
 from core.timeutils import kst_today, now_utc
 from data.sources import universe
@@ -218,7 +218,11 @@ def _plan_entries(
         # 워밍업 미완·하락 모멘텀 무진입 (백테스트 정본 spec_engine과 같은 조건)
         if close is None or pd.isna(atr) or atr <= 0 or pd.isna(mom) or mom <= 0:
             continue
-        stop = float(close) - e["stop_atr_k"] * float(atr)
+        # 브로커가 실제로 받아주는 가격으로 여기서 확정한다. 거래소는 호가단위에
+        # 안 맞는 가격을 거부하는데, 손절가는 `종가 − k×ATR`이라 거의 항상 어긋난다.
+        # 장부와 KIS 예약이 같은 값을 갖게 하려는 목적도 있다 — 어긋나면 장중 감시가
+        # 매번 '손절선 어긋남'으로 보고 정정을 되풀이한다(run_watch.find_stale_stops).
+        stop = float(ticks.align_down(float(close) - e["stop_atr_k"] * float(atr)))
         if stop <= 0:
             continue
 
@@ -383,9 +387,9 @@ def run(
         journal.record_account_snapshot(
             conn, cycle_id=cycle_id, cash=account.cash, position_value=position_value,
             total_asset=account.equity, base_asset=account.start_capital,
-            net_flow_since_base=recon.net_external_flow,
             flow_this_snapshot=recon.net_external_flow,
             trade_date=today,
+            mode=run_mode,
         )
 
     # 1단계: 후보 선별 → 워치리스트

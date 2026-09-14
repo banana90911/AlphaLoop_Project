@@ -102,3 +102,18 @@ def test_db_failure_is_reported_not_raised(monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("끊김")))
     r = sysmon.check_db()
     assert r.level == "critical" and "끊김" in r.line
+
+
+def test_피크_메모리는_VmHWM을_읽는다(tmp_path, monkeypatch):
+    """현재값(VmRSS)이 아니라 최대치(VmHWM)여야 한다 — 배치가 끝난 뒤에 불러도
+    도중에 얼마나 부풀었는지 알아야 하기 때문이다."""
+    status = tmp_path / "status"
+    status.write_text("Name:\tpython3\nVmHWM:\t  731812 kB\nVmRSS:\t  100000 kB\n")
+    monkeypatch.setattr(sysmon, "_SELF_STATUS", status)
+    assert sysmon.peak_rss_bytes() == 731812 * 1024
+
+
+def test_피크_메모리는_proc이_없어도_잰다(tmp_path, monkeypatch):
+    """맥 개발 환경에는 /proc이 없다 — resource 폴백이 0을 주면 안 된다."""
+    monkeypatch.setattr(sysmon, "_SELF_STATUS", tmp_path / "없음")
+    assert sysmon.peak_rss_bytes() > 0

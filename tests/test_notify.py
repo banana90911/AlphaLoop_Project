@@ -41,6 +41,20 @@ def test_배치_전부_성공이면_알림이_나간다(sent):
     assert "2026-09-08" in sent[0]["message"]
 
 
+def test_배치_알림에_최대_메모리가_실린다(sent):
+    """추세를 보려면 매일 같은 자리에 찍혀야 한다(10-ops 10.12)."""
+    notify.notify_ingest_summary(_DAY, _steps("ok"), peak_rss_mb=715.4)
+    assert "최대 메모리 715MB" in sent[0]["message"]
+
+
+def test_최대_메모리를_못_재면_줄을_넣지_않는다(sent):
+    """0이나 None이면 '0MB'라고 거짓말하지 않고 아예 빼는 쪽이 맞다."""
+    notify.notify_ingest_summary(_DAY, _steps("ok"))
+    assert "최대 메모리" not in sent[0]["message"]
+    notify.notify_ingest_summary(_DAY, _steps("ok"), peak_rss_mb=0)
+    assert "최대 메모리" not in sent[1]["message"]
+
+
 def test_배치_등급은_가장_나쁜_단계를_따른다(sent):
     notify.notify_ingest_summary(_DAY, _steps("ok", "partial", "ok"))
     notify.notify_ingest_summary(_DAY, _steps("ok", "partial", "failed"))

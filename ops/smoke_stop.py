@@ -14,6 +14,7 @@ import sys
 
 from broker.kis_client import KISClient, KISError
 from config.settings import get_settings
+from core import ticks
 from core.timeutils import kst_today, now_utc
 from exec.orders import STOP_ORD_DVSN
 
@@ -48,7 +49,7 @@ def main() -> None:
 
     price = fetch_price(client, args.code)
     amount = price * args.qty
-    trigger = int(round(price * (1 - args.stop_pct)))
+    trigger = ticks.align_down(price * (1 - args.stop_pct))
 
     print(f"[{mode}] {args.code} 현재가 {price:,}원 × {args.qty}주 = {amount:,}원")
     print(f"       손절 트리거 {trigger:,}원 (−{args.stop_pct:.1%})")
@@ -89,7 +90,7 @@ def main() -> None:
     # ③ 손절선 정정 — 트레일링이 실제로 브로커에 닿는지가 이 스크립트의 두 번째 목적이다
     revised = None
     if stop is not None and stop.status != "rejected" and stop.broker_order_id:
-        new_trigger = int(round(trigger * 0.99))     # 1% 더 낮춰 정정만 확인한다
+        new_trigger = ticks.align_down(trigger * 0.99)   # 1% 더 낮춰 정정만 확인한다
         print(f"\n③ 손절 정정(TTTC0013U) {trigger:,} → {new_trigger:,}원…")
         if not stop.broker_org_no:
             print("   ✗ 조직번호를 받지 못했다 — 정정에 필요한 값이 없다")

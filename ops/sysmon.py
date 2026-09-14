@@ -9,6 +9,7 @@ remarks:            10-ops 10.4(스왑·DB 연결)·10.10(디스크 80%)이 요�
 
 import argparse
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,7 @@ DISK_CRIT_PCT = 90.0
 SWAP_WARN_RATIO = 0.10
 
 _MEMINFO = Path("/proc/meminfo")
+_SELF_STATUS = Path("/proc/self/status")
 
 
 @dataclass
@@ -76,6 +78,29 @@ def check_swap(meminfo: dict[str, int] | None = None) -> Reading:
     level = "warning" if ratio >= SWAP_WARN_RATIO else "info"
     return Reading("스왑", level,
                    f"{used / 1024 ** 2:,.0f}MB 사용 (램 {ram / 1024 ** 2:,.0f}MB의 {ratio:.0%})")
+
+
+def peak_rss_bytes() -> int:
+    """이 프로세스가 지금까지 쓴 램의 **최대치**를 바이트로 반환한다(못 재면 0).
+
+    지금 값이 아니라 피크를 재는 이유는, 배치가 끝난 뒤에 불러도 도중에 얼마나
+    부풀었는지 알 수 있어야 하기 때문이다(10-ops 10.12 "최대 메모리 기록").
+    리눅스는 `/proc/self/status`의 VmHWM이 정확하고, 없으면(맥 개발 환경)
+    `resource`로 대신한다.
+    """
+    if _SELF_STATUS.exists():
+        for line in _SELF_STATUS.read_text().splitlines():
+            if line.startswith("VmHWM:"):
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].isdigit():
+                    return int(parts[1]) * 1024          # status 단위는 kB
+    try:
+        import resource
+    except ImportError:                                   # 유닉스가 아니면 잴 방법이 없다
+        return 0
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # 같은 필드를 리눅스는 kB로, 맥은 바이트로 준다.
+    return int(peak) if sys.platform == "darwin" else int(peak) * 1024
 
 
 def check_db() -> Reading:

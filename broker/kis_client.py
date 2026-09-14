@@ -7,6 +7,7 @@ remarks:
 """
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -60,6 +61,9 @@ _QUOTE_TR = {
 
 _RETRYABLE = {500, 502, 503, 504}
 _CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
+
+
+log = logging.getLogger(__name__)
 
 
 class KISError(RuntimeError):
@@ -437,8 +441,12 @@ class KISClient:
                 "/uapi/domestic-stock/v1/trading/order-rvsecncl",
                 self._profile["tr"]["revise"], body,
             )
-        except KISError:
-            return Fill(0, None, "rejected")
+        except KISError as e:
+            # 거부 사유를 남기지 않으면 저녁에 로그를 열어도 원인을 못 밝힌다.
+            # KISError 메시지에 tr_id·rt_cd·msg1이 들어 있다(_unwrap).
+            log.warning("손절 정정 거부 %s %s주 발동가 %s: %s",
+                        code, qty, trigger_price, e)
+            return Fill(0, None, "rejected", reason=str(e))
         odno, org = _order_ids(resp)
         return Fill(0, None, "submitted", odno, broker_org_no=org)
 
@@ -455,8 +463,12 @@ class KISClient:
             )
             odno, org = _order_ids(resp)
             return Fill(0, None, "submitted", odno, broker_org_no=org)
-        except KISError:
-            return Fill(0, None, "rejected")
+        except KISError as e:
+            # 호가단위 위반·잔고 부족·거래정지가 전부 여기로 떨어진다. 사유를 안 남기면
+            # '맨몸 포지션'만 보이고 왜 그렇게 됐는지는 영영 알 수 없다.
+            log.warning("손절 등록 거부 %s %s주 발동가 %s: %s",
+                        code, qty, trigger_price, e)
+            return Fill(0, None, "rejected", reason=str(e))
 
     def place_exit(
         self, *, code: str, qty: int, ord_dvsn: str, client_order_id: str
@@ -465,22 +477,28 @@ class KISClient:
         from exec.orders import Fill
         odno: str | None = None
         org: str | None = None
+        reason: str | None = None
         try:
             resp = self.order_cash(code, qty, 0, side="sell", ord_dvsn=ord_dvsn)
             odno, org = _order_ids(resp)
-        except KISError:
-            pass
+        except KISError as e:
+            # 삼키되 흔적은 남긴다 — 아래 체결조회로 접수 여부를 다시 확인하기 때문에
+            # 여기서 멈추지는 않지만, 조회에도 안 잡히면 이 줄이 유일한 단서가 된다.
+            log.warning("청산 송출 실패 %s %s주: %s", code, qty, e)
+            reason = str(e)
         try:
             rows = self.get_daily_orders(_today_kst())
-        except KISError:
-            return Fill(0, None, "submitted", odno, broker_org_no=org)
+        except KISError as e:
+            log.warning("체결조회 실패 %s: %s", code, e)
+            return Fill(0, None, "submitted", odno, broker_org_no=org, reason=reason)
         match = next((r for r in rows if odno and r.get("odno") == odno), None)
         if match is None:
             cands = [r for r in rows if r.get("pdno") == code]
             match = cands[-1] if cands else None
         if match is None:
+            # 조회에도 안 잡혔다 — 송출 단계의 사유가 있으면 그게 유일한 단서다
             return Fill(0, None, "rejected" if odno is None else "submitted",
-                        odno, broker_org_no=org)
+                        odno, broker_org_no=org, reason=reason)
         filled = int(match.get("tot_ccld_qty") or 0)
         avg = float(match.get("avg_prvs") or 0) or None
         status = "filled" if filled >= qty else ("partial" if filled > 0 else "submitted")
@@ -493,22 +511,26 @@ class KISClient:
         from exec.orders import Fill
         odno: str | None = None
         org: str | None = None
+        reason: str | None = None
         try:
             resp = self.order_cash(code, qty, price, side="buy", ord_dvsn=ord_dvsn)
             odno, org = _order_ids(resp)
-        except KISError:
-            pass
+        except KISError as e:
+            log.warning("진입 송출 실패 %s %s주 %s원: %s", code, qty, price, e)
+            reason = str(e)
         try:
             rows = self.get_daily_orders(_today_kst())
-        except KISError:
-            return Fill(0, None, "submitted", odno, broker_org_no=org)
+        except KISError as e:
+            log.warning("체결조회 실패 %s: %s", code, e)
+            return Fill(0, None, "submitted", odno, broker_org_no=org, reason=reason)
         match = next((r for r in rows if odno and r.get("odno") == odno), None)
         if match is None:
             cands = [r for r in rows if r.get("pdno") == code]
             match = cands[-1] if cands else None
         if match is None:
+            # 조회에도 안 잡혔다 — 송출 단계의 사유가 있으면 그게 유일한 단서다
             return Fill(0, None, "rejected" if odno is None else "submitted",
-                        odno, broker_org_no=org)
+                        odno, broker_org_no=org, reason=reason)
         filled = int(match.get("tot_ccld_qty") or 0)
         avg = float(match.get("avg_prvs") or 0) or None
         status = "filled" if filled >= qty else ("partial" if filled > 0 else "submitted")

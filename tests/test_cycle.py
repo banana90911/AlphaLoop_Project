@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from config.settings import load_params
+from core import ticks
 from core.schemas import OrderAction, ProposedOrder
 from memory import journal
 from pipeline import cycle
@@ -558,7 +559,12 @@ def test_stop_uses_quote_price_and_prev_atr(conn):
         (res.cycle_id,),
     ).fetchone()
     up1 = next(o for o in res.planned_orders if o.code == "UP1")
-    assert abs(up1.stop - (7500.0 - 2.0 * row["atr"])) < 1e-6
+    # 손절가는 현재가(7,500)와 전일 ATR로 잡되, 거래소가 받는 호가단위로 내린다
+    raw = 7500.0 - 2.0 * row["atr"]
+    assert up1.stop == float(ticks.align_down(raw))
+    assert ticks.is_aligned(up1.stop)
+    # 내림은 한 틱 이내여야 한다 — 그 이상 내려가면 R이 의도보다 커진다
+    assert 0 <= raw - up1.stop < ticks.tick_size(raw)
 
 
 def test_quote_without_price_blocks_entry(conn):

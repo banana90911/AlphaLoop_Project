@@ -117,6 +117,7 @@ _INGEST_LEVEL = {"ok": "info", "partial": "warning", "failed": "critical"}
 
 def notify_ingest_summary(
     trade_date: date, steps: Sequence[StepLine], *, mode: str = "real",
+    peak_rss_mb: float | None = None,
 ) -> bool:
     """일일 배치 결과 요약"""
     worst = "ok"
@@ -127,6 +128,10 @@ def notify_ingest_summary(
     for s in steps:
         scope = f"{s.success:,}/{s.target:,}종목 · " if s.target else ""
         lines.append(f"{_STEP_MARK.get(s.status, '·')} `{s.table}` {scope}{s.rows:,}행")
+    # 최대 메모리는 매일 같은 자리에 찍어 둔다 — 한 번의 값보다 추세가 중요하다.
+    # 스왑이 나기 전에 늘어나는 게 보여야 한다(10-ops 10.12).
+    if peak_rss_mb:
+        lines.append(f"· 최대 메모리 {peak_rss_mb:,.0f}MB")
     return send(
         f"거래일 {trade_date} · `{mode}`\n" + "\n".join(lines),
         level=_INGEST_LEVEL[worst], title=_INGEST_TITLE[worst],
@@ -287,11 +292,13 @@ def notify_system_health(
     )
 
 
-def notify_stop_not_registered(code: str, qty: int, stop_price: float, status: str) -> bool:
+def notify_stop_not_registered(code: str, qty: int, stop_price: float, status: str,
+                               reason: str | None = None) -> bool:
     """손절 스톱 걸리지 않은 채 보유 알림"""
     return send(
-        f"종목: `{code}` {qty}주\n걸려던 손절: {stop_price:,.0f}원\n브로커 응답: `{status}`\n\n"
-        "매수는 체결됐는데 손절 예약 안걸림. 다음 감시(30분 내)가 재등록 시도 예정",
+        f"종목: `{code}` {qty}주\n걸려던 손절: {stop_price:,.0f}원\n브로커 응답: `{status}`\n"
+        + (f"사유: {reason}\n" if reason else "")
+        + "\n매수는 체결됐는데 손절 예약 안걸림. 다음 감시(30분 내)가 재등록 시도 예정",
         level="critical", title="손절 미등록 보유 발생",
     )
 
@@ -301,7 +308,7 @@ def notify_stop_not_revised(code: str, new_stop: float, reason: str) -> bool:
     return send(
         f"종목: `{code}`\n올리려던 손절: {new_stop:,.0f}원\n실패 사유: {reason}\n\n"
         "DB 손절선만 올라가고 예약은 옛 가격 그대로 "
-        "파산 방지(초기 손절)는 살아 있지만 밤사이 갭에서는 옛 가격으로 체결됩니다.",
+        "파산 방지(초기 손절)는 살아 있지만 밤사이 갭에서는 옛 가격으로 체결 예정",
         level="warning", title="손절 정정 실패",
     )
 

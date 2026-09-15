@@ -23,6 +23,7 @@ from data.sources import index_history, kis_history, universe
 from memory import journal
 from memory.db import init_db
 from ops import notify, sysmon
+from ops.guard import guard
 
 # 12-1 모멘텀(252거래일) + 20일 스킵 + 휴장 여유. 점수 계산이 읽어갈 최소 이력이다.
 SCORE_LOOKBACK_DAYS = 450
@@ -464,4 +465,5 @@ def _already_done(conn, trade_date: date) -> set[str]:
 
 
 if __name__ == "__main__":
-    main()
+    with guard("run_daily_ingest"):
+        main()

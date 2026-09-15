@@ -17,6 +17,7 @@ from data.sources import universe
 from memory import journal
 from memory.db import init_db
 from ops import heartbeat, notify
+from ops.guard import guard
 from pipeline import cycle, gates
 from risk.risk_engine import Account, Position
 
@@ -194,4 +195,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with guard("run_cycle"):
+        main()

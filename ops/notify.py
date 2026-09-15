@@ -313,6 +313,21 @@ def notify_stop_not_revised(code: str, new_stop: float, reason: str) -> bool:
     )
 
 
+def notify_entrypoint_crash(name: str, detail: str, trace: str = "") -> bool:
+    """진입점이 기록을 남기기도 전에 죽었을 때 — 조용한 실패를 막는 마지막 그물.
+
+    `notify_cycle_failure`는 Cycles 행이 있어야 부를 수 있다. 그 전에 죽는 구간
+    (KIS 조회·DB 연결·설정)을 덮는 것이 이쪽이다.
+    """
+    # traceback은 끝에서부터가 쓸모 있다 — 마지막 몇 줄에 진짜 원인이 있다.
+    tail = "\n".join(trace.strip().splitlines()[-6:]) if trace else ""
+    body = f"진입점: `{name}`\n원인: {detail}\n\n"
+    if tail:
+        body += f"```\n{tail}\n```\n"
+    body += "기록이 남기 전에 죽어 DB에는 흔적이 없습니다. 서버 로그를 확인하세요."
+    return send(body, level="critical", title="진입점 비정상 종료")
+
+
 def notify_cycle_failure(cycle_id: str, step: int | None, reason: str) -> bool:
     """사이클이 도중에 죽었을 때 어느 단계에서 멈췄는지 알린다."""
     at = f"{step}단계" if step else "단계 미상"

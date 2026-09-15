@@ -70,6 +70,21 @@ class KISError(RuntimeError):
     """KIS 응답 오류(rt_cd != 0 또는 영구 HTTP 오류)."""
 
 
+class KISTransientError(KISError):
+    """잠깐 기다리면 풀리는 KIS 오류 — 초당 호출 제한 등. 재시도 대상이다.
+
+    `KISError`를 상속하므로 기존 `except KISError`가 그대로 잡는다. 굳이 갈라 두는
+    이유는 재시도 여부가 갈리기 때문이다 — 잔고 부족·호가단위 위반은 100번 다시
+    보내도 같은 답이 오지만, 초당 제한은 1초만 쉬면 풀린다.
+    """
+
+
+# 일시적으로 판정할 근거. msg_cd가 오면 그걸 쓰고, 없으면 문구로 가린다.
+# 2026-09-15 실측 메시지: "원장에서 허용 가능한 초당 거래건수를 초과하였습니다."
+_TRANSIENT_CODES = frozenset({"EGW00201"})
+_TRANSIENT_HINTS = ("초당 거래건수", "초당거래건수", "잠시 후 다시", "일시적")
+
+
 @dataclass
 class _Token:
     access_token: str
@@ -238,7 +253,20 @@ class KISClient:
             if response.status_code in _RETRYABLE and attempt < self._max_retries - 1:
                 time.sleep(self._backoff_base * (2**attempt))
                 continue
-            return self._unwrap(response, tr_id)
+            try:
+                return self._unwrap(response, tr_id)
+            except KISTransientError as e:
+                # 초당 호출 제한은 5xx·연결 실패와 성격이 같은 일시적 장애인데,
+                # 응답 레벨 오류라 위 status_code 판정에 걸리지 못하고 그대로
+                # 빠져나갔다. 2026-09-15 실측: 잔고조회 첫 호출이 여기 걸려
+                # 그날 사이클이 시작도 못 했다(기록 전이라 알림도 없었다).
+                last = e
+                if attempt >= self._max_retries - 1:
+                    raise
+                wait = self._backoff_base * (2**attempt)
+                log.warning("%s 일시적 오류 — %.1f초 후 재시도(%d/%d): %s",
+                            tr_id, wait, attempt + 1, self._max_retries, e)
+                time.sleep(wait)
         raise KISError(f"{tr_id} 재시도 소진{f': {last}' if last else ''}")
 
     def _post_order(self, path: str, tr_id: str, body: dict[str, str]) -> dict[str, Any]:
@@ -259,7 +287,12 @@ class KISClient:
             raise KISError(f"{tr_id} 영구 오류 HTTP {response.status_code}: {response.text[:200]}")
         body = response.json()
         if str(body.get("rt_cd", "0")) not in ("0", ""):
-            raise KISError(f"{tr_id} rt_cd={body.get('rt_cd')} msg={body.get('msg1')}")
+            msg = str(body.get("msg1") or "")
+            code = str(body.get("msg_cd") or "")
+            detail = f"{tr_id} rt_cd={body.get('rt_cd')} msg_cd={code} msg={msg}"
+            if code in _TRANSIENT_CODES or any(h in msg for h in _TRANSIENT_HINTS):
+                raise KISTransientError(detail)
+            raise KISError(detail)
         return body
 
     # ── 조회 API ─────────────────────────────────────────────────────

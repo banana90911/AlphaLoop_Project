@@ -19,6 +19,7 @@ from exec.orders import STOP_ORD_DVSN
 from memory import journal
 from memory.db import init_db
 from ops import notify
+from ops.guard import guard
 
 # KIS에 살아 있다고 볼 주문 상태 — 체결·취소·거부는 '없는 것'으로 친다.
 _ALIVE = {"submitted", "partial"}
@@ -356,4 +357,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with guard("run_watch"):
+        main()

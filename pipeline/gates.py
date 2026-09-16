@@ -69,6 +69,9 @@ class Quote:
     """사이클 시점 종목 스냅샷 — 현재가와 매매가능 상태를 한 번의 조회로 함께 받는다."""
     last_price: float | None
     status: StockStatus
+    # 매도1호가 — 진입 지정가. 직전 체결가로 IOC를 내면 매도호가가 한 칸 위일 때
+    # 한 주도 못 사고 취소된다(10-ops 10.13, 2026-09-16 진입 4건 전부 취소).
+    ask_price: float | None = None
 
 
 def quote_of(payload: dict[str, Any]) -> Quote:
@@ -76,6 +79,13 @@ def quote_of(payload: dict[str, Any]) -> Quote:
     out = payload.get("output") if isinstance(payload.get("output"), dict) else payload
     price = _num((out or {}).get("stck_prpr"))
     return Quote(price if price and price > 0 else None, stock_status(payload))
+
+
+def ask_of(payload: dict[str, Any]) -> float | None:
+    """KIS 호가 응답에서 매도1호가를 꺼낸다. 없거나 0이면 None(상한가면 매도 물량이 없다)."""
+    out = payload.get("output1") if isinstance(payload.get("output1"), dict) else {}
+    ask = _num((out or {}).get("askp1"))
+    return ask if ask and ask > 0 else None
 
 
 def fetch_quotes(client: Any, codes: list[str]) -> dict[str, Quote]:
@@ -89,9 +99,17 @@ def fetch_quotes(client: Any, codes: list[str]) -> dict[str, Quote]:
     out: dict[str, Quote] = {}
     for code in codes:
         try:
-            out[code] = quote_of(client.get_price(code))
+            q = quote_of(client.get_price(code))
         except Exception as e:                      # 한 종목 실패가 사이클을 멈추지 않는다
             log.warning("현재가 조회 실패 %s: %s", code, type(e).__name__)
+            continue
+        # 호가는 따로 조회한다. 실패해도 종목을 빼지 않는다 — 상태는 이미 알고 있고,
+        # 진입가는 현재가로 대신하면 된다(IOC라 못 사면 취소될 뿐이다).
+        try:
+            q.ask_price = ask_of(client.get_asking_price(code))
+        except Exception as e:
+            log.warning("호가 조회 실패 %s: %s — 현재가로 대신", code, type(e).__name__)
+        out[code] = q
     return out
 
 

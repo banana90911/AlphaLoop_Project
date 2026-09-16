@@ -57,6 +57,7 @@ _QUOTE_TR = {
     "daily_chart": "FHKST03010100",
     "investor": "FHKST01010900",
     "short_sale": "FHPST04830000",
+    "asking_price": "FHKST01010200",
 }
 
 _RETRYABLE = {500, 502, 503, 504}
@@ -365,6 +366,15 @@ class KISClient:
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
         return self._get(self._profile["domain"], path, _QUOTE_TR["price"], params)
 
+    def get_asking_price(self, code: str) -> dict[str, Any]:
+        """호가 조회 — 매도1호가(`output1.askp1`)가 진입 지정가가 된다(10-ops 10.13).
+
+        현재가 조회(`inquire-price`)에는 호가 필드가 없어서 따로 부른다.
+        """
+        path = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
+        return self._get(self._profile["domain"], path, _QUOTE_TR["asking_price"], params)
+
     def get_daily_chart(
         self, code: str, start: str, end: str, *, adjusted: bool = True
     ) -> list[dict[str, Any]]:
@@ -566,8 +576,25 @@ class KISClient:
                         odno, broker_org_no=org, reason=reason)
         filled = int(match.get("tot_ccld_qty") or 0)
         avg = float(match.get("avg_prvs") or 0) or None
-        status = "filled" if filled >= qty else ("partial" if filled > 0 else "submitted")
-        return Fill(filled, avg, status, odno, broker_org_no=org)
+        return Fill(filled, avg, _entry_status(match, filled, qty), odno, broker_org_no=org)
+
+
+def _entry_status(row: dict[str, Any], filled: int, qty: int) -> str:
+    """진입 주문 한 건의 상태를 원장 행으로 판정한다.
+
+    IOC는 체결 안 된 잔량을 그 자리에서 취소한다. 체결 0주로 끝났는데 `submitted`로
+    적으면 이미 죽은 주문이 영원히 미체결로 남고, 대시보드 안전 출금 가능액이 그만큼
+    줄어 보인다(2026-09-16 실측). 취소 판정은 잔량(`rmn_qty`)이 0인지로만 한다 — 조회가
+    체결을 아직 반영하지 못한 순간이면 잔량이 남아 있으므로 `submitted`로 둔다.
+    """
+    if filled >= qty:
+        return "filled"
+    if filled > 0:
+        return "partial"
+    remaining = row.get("rmn_qty")
+    if remaining is not None and str(remaining).strip() != "" and int(_num(remaining)) == 0:
+        return "cancelled"
+    return "submitted"
 
 
 def _order_ids(resp: dict[str, Any]) -> tuple[str | None, str | None]:

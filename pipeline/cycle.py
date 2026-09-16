@@ -167,11 +167,18 @@ def _f(value) -> float | None:
 
 
 def _entry_price(code: str, row, quotes: dict[str, Quote] | None) -> float | None:
-    """진입 기준가 — 사이클 시점 현재가. 시세 미주입(드라이런·테스트)이면 전일 종가."""
+    """진입 기준가 — 사이클 시점 **매도1호가**. 시세 미주입(드라이런·테스트)이면 전일 종가.
+
+    진입 주문은 IOC 지정가라 이 값이 곧 주문 가격이다. 직전 체결가로 내면 매도호가가
+    한 칸 위일 때 한 주도 못 산다(10-ops 10.13). 수량·손절가·비용 판정도 실제로 치를
+    이 가격으로 한다. 호가를 못 받았으면 현재가로 대신한다.
+    """
     if quotes is None:                       # 시세 경로가 아예 없는 실행(테스트·드라이런)
         return _f(row.get("close"))
     q = quotes.get(code)
-    return q.last_price if q is not None else None
+    if q is None:
+        return None
+    return q.ask_price if q.ask_price is not None else q.last_price
 
 
 def _plan_entries(

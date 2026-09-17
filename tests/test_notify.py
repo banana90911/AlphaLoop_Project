@@ -187,8 +187,15 @@ def test_감시_손절_구멍은_즉시_확인_등급(sent):
     assert sent[0]["level"] == "critical"
 
 
-def test_감시_스톱_빠짐은_경고_등급(sent):
-    notify.notify_watch_summary(positions=2, missing=1, registered=1)
+def test_아침_손절_재등록이_다_되면_일반_등급(sent):
+    """손절은 매일 만료돼 아침마다 다시 건다 — 전부 걸렸으면 조치할 게 없다(10-ops 10.13)."""
+    notify.notify_watch_summary(positions=2, missing=2, registered=2)
+    assert sent[0]["level"] == "info"
+    assert "등록 2건" in sent[0]["message"]
+
+
+def test_손절을_다_못_걸면_경고_등급(sent):
+    notify.notify_watch_summary(positions=2, missing=2, registered=1)
     assert sent[0]["level"] == "warning"
     assert "등록 1건" in sent[0]["message"]
 
@@ -201,9 +208,9 @@ def test_마감_후에는_주문을_못_낸다고_밝힌다(sent):
     assert "마감" in sent[0]["message"]
 
 
-def test_마감_후_손절_없는_보유는_즉시_확인_등급(sent):
-    """고칠 수단이 없는 채로 밤을 넘기므로 장중의 '빠짐'보다 심각하다."""
+def test_마감_후_손절_만료는_경보가_아니다(sent):
+    """당일 주문이라 마감 후엔 전부 만료되는 게 정상이다. 밤사이엔 정규장 거래가 없고,
+    다음 장 시작 감시가 다시 건다 — 매일 밤 critical이 오면 진짜 경보를 덮는다."""
     notify.notify_watch_summary(
-        positions=1, missing=1, registered=0, market_open=False)
-    assert sent[0]["level"] == "critical"      # 장중의 '빠짐'(warning)보다 높다
-    assert "빠짐 1종목" in sent[0]["message"]    # 무엇이 문제인지 본문에 남아야 한다
+        positions=1, missing=0, registered=0, market_open=False)
+    assert sent[0]["level"] == "info"

@@ -332,7 +332,9 @@ class KISClient:
             for row in (body.get("output1") or [])
             if int(_num(row.get("hldg_qty"))) > 0
         ]
-        cash = _num(summary.get("dnca_tot_amt"))
+        # D+2 예수금. 예수금총금액(dnca)은 결제(T+2) 전까지 매수 대금이 안 빠져 자본이 이중 계산된다
+        d2 = _num_or_none(summary.get("prvs_rcdl_excc_amt"))
+        cash = d2 if d2 is not None else _num(summary.get("dnca_tot_amt"))
 
         # 0원을 "값이 없다"로 읽으면 안 된다. 계좌가 정말 비어 있던 날 KIS는
         # 전일 총자산을 '0'으로 **정확히** 돌려주는데, 그걸 폴백으로 흘려보내면

@@ -592,6 +592,16 @@ def upsert_entry_position(
     return pid
 
 
+def close_expired_stop(conn: psycopg.Connection, client_order_id: str) -> None:
+    """당일 만료된 손절 예약 행을 닫는다(`cancelled`). 체결된 행은 건드리지 않는다."""
+    conn.execute(
+        "UPDATE orders SET status='cancelled' "
+        "WHERE client_order_id=%s AND status IN ('submitted','partial')",
+        (client_order_id,),
+    )
+    conn.commit()
+
+
 def set_active_stop(conn: psycopg.Connection, position_id: str, client_order_id: str) -> None:
     """KIS에 상주 중인 스톱 주문을 포지션에 연결한다."""
     conn.execute(

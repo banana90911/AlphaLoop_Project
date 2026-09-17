@@ -258,12 +258,10 @@ def notify_watch_summary(
     else:
         out.append("② 손절선: 장부와 KIS 예약 일치(정정할 것 없음)")
     out.append("③ 손절 구멍: " + ("없음" if not gaps else ", ".join(gaps)))
-    # 마감 후에 손절 없는 보유가 남아 있으면 밤사이 갭에 그대로 노출된다.
-    if not market_open and missing:
-        out.append("")
-
-    level = "critical" if gaps or (missing and not market_open) else (
-        "warning" if (missing or len(revised) < len(stale)) else "info")
+    # 손절은 매일 만료돼 아침마다 다시 건다(10-ops 10.13) — 전부 다시 걸렸으면 일상이다
+    unfixed = max(0, missing - registered)
+    level = "critical" if gaps else (
+        "warning" if (unfixed or len(revised) < len(stale)) else "info")
     return send("\n".join(out), level=level,
                 title="보유 감시" + ("" if level == "info" else " — 조치 필요"))
 

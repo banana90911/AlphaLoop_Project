@@ -37,8 +37,8 @@ def load_open_positions(conn) -> list[dict]:
     ).fetchall()
 
 
-def fetch_daily_orders(client: KISClient) -> list[dict]:
-    """오늘의 KIS 주문·체결 목록. 조회 실패는 빈 목록으로 돌린다.
+def fetch_daily_orders(client: KISClient) -> list[dict] | None:
+    """오늘의 KIS 주문·체결 목록. 조회 실패는 None — "오늘 주문 없음"(빈 목록)과 구분한다.
 
     한 번만 받아 아래 판정들이 나눠 쓴다 — 판정마다 부르면 호출 한도를 갉아먹고
     그 사이에 상태가 바뀌어 판정끼리 어긋난다.
@@ -46,7 +46,7 @@ def fetch_daily_orders(client: KISClient) -> list[dict]:
     try:
         return client.get_daily_orders(kst_today().strftime("%Y%m%d"))
     except Exception:
-        return []                      # 장부만 보고 판단(과잉 등록보다 낫다)
+        return None
 
 
 def find_filled_stops(orders: list[dict], positions: list[dict]) -> list[dict]:
@@ -102,34 +102,39 @@ def settle_filled_stops(conn, hits: list[dict], *, mode: str) -> list[dict]:
     return done
 
 
-def find_missing_stops(orders: list[dict], positions: list[dict]) -> list[dict]:
-    """상주 스톱이 없거나 KIS에서 이미 사라진 보유를 찾는다.
+def find_missing_stops(orders: list[dict] | None, positions: list[dict]) -> list[dict]:
+    """오늘 KIS 원장에 살아 있는 손절이 없는 보유를 찾는다.
 
-    체결된 손절은 호출부가 미리 걸러 넘긴다 — 방금 팔린 종목에 손절을 다시 걸면
-    보유하지도 않은 주식에 매도 예약이 서게 된다.
+    손절 예약은 당일만 유효해 매일 만료된다. 그래서 오늘 주문이 아직 없는 아침에도
+    전부 "없음"이다(10-ops 10.13). 원장 조회가 실패했으면(None) 판정할 수 없으니
+    장부에 손절이 아예 연결 안 된 보유만 고른다.
+    체결된 손절은 호출부가 미리 걸러 넘긴다 — 팔린 종목에 다시 걸면 안 된다.
     """
+    if orders is None:
+        return [p for p in positions if p["active_stop_order_id"] is None]
     live_by_code = {
         o.get("pdno") for o in orders
         if o.get("ord_dvsn_cd") == STOP_ORD_DVSN and _is_alive(o)
     }
-    missing = []
-    for p in positions:
-        if p["active_stop_order_id"] is None:
-            missing.append(p)
-        elif orders and p["symbol_id"] not in live_by_code:
-            missing.append(p)          # 장부엔 있는데 KIS엔 없다
-    return missing
+    return [p for p in positions
+            if p["active_stop_order_id"] is None or p["symbol_id"] not in live_by_code]
 
 
 def _is_alive(order: dict) -> bool:
-    """KIS 일별주문 한 건이 아직 살아 있는지(취소되지 않고 잔량 있음) 판정한다."""
+    """KIS 일별주문 한 건이 아직 살아 있는지 판정한다 — 잔량(`rmn_qty`)이 기준이다.
+
+    만료·자동취소된 주문도 `주문수량 > 체결수량`이라, 그걸로 보면 살아 있다고
+    착각한다(2026-09-17 실측: 마감 후 손절 5건이 잔량 0인데 "정상"으로 보고).
+    """
+    if (order.get("cncl_yn") or "N").upper() == "Y":
+        return False
     try:
-        ordered = int(order.get("ord_qty") or 0)
-        filled = int(order.get("tot_ccld_qty") or 0)
+        remaining = order.get("rmn_qty")
+        if remaining not in (None, ""):
+            return int(float(remaining)) > 0
+        return int(order.get("ord_qty") or 0) > int(order.get("tot_ccld_qty") or 0)
     except (TypeError, ValueError):
         return False
-    cancelled = (order.get("cncl_yn") or "N").upper() == "Y"
-    return not cancelled and ordered > filled
 
 
 def register_missing_stops(conn, client: KISClient, missing: list[dict], *,
@@ -156,8 +161,16 @@ def register_missing_stops(conn, client: KISClient, missing: list[dict], *,
             symbol_id=p["symbol_id"], side="sell", purpose="stop",
             order_type=STOP_ORD_DVSN, order_quantity=p["quantity"],
             filled_quantity=0, order_price=float(trigger), trigger_price=float(trigger),
-            kis_order_no=fill.broker_order_id, status=fill.status, mode=mode,
+            kis_order_no=fill.broker_order_id,
+            kis_order_org_no=fill.broker_org_no,     # 없으면 그날 트레일링 정정이 불가능하다
+            status=fill.status, mode=mode,
         )
+        if fill.status not in ("submitted", "filled", "partial"):
+            # 거부된 주문으로 상주 스톱을 바꾸지 않는다 — 다음 감시가 다시 시도한다
+            print(f"  {p['symbol_id']}: 손절 재등록 거부({fill.status}) {fill.reason or ''}")
+            continue
+        if p["active_stop_order_id"]:
+            journal.close_expired_stop(conn, p["active_stop_order_id"])
         journal.set_active_stop(conn, p["position_id"], coid)
         ids.append(coid)
     return ids
@@ -268,10 +281,12 @@ def main() -> None:
         return
     print(f"[{mode}] 보유 {len(positions)}종목 감시")
     orders = fetch_daily_orders(client)
+    if orders is None:
+        print("  원장 조회 실패 — 손절 생존은 판정하지 않는다")
 
     # ⓪ 걸어 둔 손절이 스스로 체결됐나 — 나머지 판정보다 먼저 봐야 한다.
     #    팔린 종목에 손절을 다시 걸거나, 다음 사이클이 잔고 불일치로 전체를 멈추는 것을 막는다.
-    filled = find_filled_stops(orders, positions)
+    filled = find_filled_stops(orders or [], positions)
     settled: list[dict] = []
     if filled:
         for h in filled:
@@ -299,15 +314,19 @@ def main() -> None:
     else:
         print("  ⓪ 손절 체결 없음")
 
-    # ① 상주 스톱 무결성
-    missing = find_missing_stops(orders, positions)
+    # ① 상주 스톱 무결성 — 마감 후엔 손절이 전부 만료되는 게 정상이라 판정하지 않는다
     ids: list[str] = []
+    if not market_open:
+        missing: list[dict] = []
+        print("  ① 장 마감 — 손절 예약은 당일 만료, 다음 장 시작 감시가 다시 건다")
+    else:
+        missing = find_missing_stops(orders, positions)
     if missing:
         codes = [p["symbol_id"] for p in missing]
         print(f"  손절 없는 보유 {len(missing)}종목: {codes}")
         ids = register_missing_stops(conn, client, missing, dry_run=not can_order)
         print(f"  {'등록 예정' if not can_order else '등록 완료'} {len(ids)}건")
-    else:
+    elif market_open:
         print("  ① 상주 스톱 정상")
 
     # ② 손절선 어긋남 — 장부는 올렸는데 KIS 예약이 옛 가격인 경우

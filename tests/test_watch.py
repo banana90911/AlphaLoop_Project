@@ -13,10 +13,12 @@ from exec.orders import Fill, execute_entries
 from memory import journal
 from pipeline.cycle import PlannedOrder
 from run_watch import (
+    _is_alive,
     find_filled_stops,
     find_missing_stops,
     find_stale_stops,
     load_open_positions,
+    register_missing_stops,
     settle_filled_stops,
 )
 
@@ -148,3 +150,75 @@ def test_호가단위_도입_전에_저장된_손절가는_어긋남이_아니�
     """옛 장부값 27,342는 브로커에 27,300으로 걸린다. 정렬해서 비교하지 않으면
     영원히 '어긋남'으로 잡혀 감시마다 정정을 되풀이한다(무한 정정 루프)."""
     assert find_stale_stops([_stop_row(27_342, 27_300)]) == []
+
+
+# ── 손절 예약은 당일 만료 — 매일 다시 건다 (2026-09-17 실측) ─────────────
+
+def _kis_stop(rmn: str | None, *, pdno: str = "005930") -> dict:
+    """KIS 일별주문 손절 행. 그날 마감 후 원장은 주문 1·체결 0·잔량 0이었다."""
+    row = {"odno": "ODNO-STOP", "pdno": pdno, "ord_dvsn_cd": _STOP,
+           "ord_qty": "3", "tot_ccld_qty": "0", "avg_prvs": "0", "cncl_yn": ""}
+    if rmn is not None:
+        row["rmn_qty"] = rmn
+    return row
+
+
+def test_잔량_0인_손절은_살아_있지_않다():
+    """주문수량 > 체결수량으로 보면 만료된 주문도 살아 있다고 착각한다."""
+    assert _is_alive(_kis_stop("0")) is False
+    assert _is_alive(_kis_stop("3")) is True
+
+
+def test_잔량_칸이_없으면_수량으로_대신_판정한다():
+    assert _is_alive(_kis_stop(None)) is True
+
+
+def test_아침에_오늘_주문이_없으면_전부_손절_없음이다(held):
+    """어제 건 손절은 이미 만료됐다. 빈 목록을 '판정 불가'로 넘기면 하루 종일 무방비다."""
+    assert [p["symbol_id"] for p in find_missing_stops([], held)] == ["005930"]
+
+
+def test_원장_조회_실패는_판정하지_않는다(held):
+    """실패(None)와 '오늘 주문 없음'(빈 목록)은 다르다 — 모르면 장부만 본다."""
+    assert find_missing_stops(None, held) == []
+
+
+def test_오늘_잔량이_남은_손절이_있으면_정상이다(held):
+    assert find_missing_stops([_kis_stop("3")], held) == []
+
+
+def test_마감으로_만료된_손절은_없음으로_본다(held):
+    assert len(find_missing_stops([_kis_stop("0")], held)) == 1
+
+
+class _StopBroker:
+    def __init__(self, fill: Fill) -> None:
+        self.fill, self.calls = fill, []
+
+    def place_stop(self, *, code, qty, trigger_price, limit_price, client_order_id) -> Fill:
+        self.calls.append((code, qty, trigger_price))
+        return self.fill
+
+
+def test_다시_건_손절은_조직번호를_남기고_옛_행을_닫는다(conn, held):
+    """조직번호가 없으면 그날 트레일링 정정이 불가능하다."""
+    old_id = held[0]["active_stop_order_id"]
+    broker = _StopBroker(Fill(0, None, "submitted", "ODNO-NEW", broker_org_no="91259"))
+    ids = register_missing_stops(conn, broker, held, dry_run=False)
+
+    assert len(ids) == 1 and broker.calls == [("005930", 3, 65_000)]
+    new = conn.execute("SELECT * FROM orders WHERE client_order_id=%s", (ids[0],)).fetchone()
+    assert new["kis_order_no"] == "ODNO-NEW" and new["kis_order_org_no"] == "91259"
+    old = conn.execute("SELECT status FROM orders WHERE client_order_id=%s", (old_id,)).fetchone()
+    assert old["status"] == "cancelled"
+    assert load_open_positions(conn)[0]["active_stop_order_id"] == ids[0]
+
+
+def test_거부된_재등록은_상주_스톱을_바꾸지_않는다(conn, held):
+    """거부된 주문을 상주 스톱으로 삼으면 정정·감시가 죽은 주문을 쫓는다."""
+    old_id = held[0]["active_stop_order_id"]
+    broker = _StopBroker(Fill(0, None, "rejected", reason="rt_cd=1 msg1=장 종료"))
+    assert register_missing_stops(conn, broker, held, dry_run=False) == []
+    assert load_open_positions(conn)[0]["active_stop_order_id"] == old_id
+    old = conn.execute("SELECT status FROM orders WHERE client_order_id=%s", (old_id,)).fetchone()
+    assert old["status"] == "submitted"

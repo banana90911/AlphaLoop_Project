@@ -8,6 +8,7 @@ remarks:
 
 import json
 import logging
+import random
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -161,6 +162,10 @@ class KISClient:
             self._min_interval = 1.0 / per_sec
         self._max_retries = int(rl["retry"]["max_retries"])
         self._backoff_base = float(rl["retry"]["backoff_base_sec"])
+        # 일시적 오류는 인내를 따로 둔다(초당 제한은 몇 초간 이어진다)
+        self._transient_attempts = int(rl["retry"].get("transient_max_attempts", 6))
+        self._transient_base = float(rl["retry"].get("transient_backoff_base_sec", 2.0))
+        self._transient_jitter = float(rl["retry"].get("transient_jitter_sec", 0.5))
 
         self._token: _Token | None = None
         self._last_call = 0.0
@@ -238,22 +243,24 @@ class KISClient:
         (2026-09-09·09-10 이틀 연속 발생, 매번 다른 종목).
         """
         url = f"{domain}{path}"
-        last: Exception | None = None
-        for attempt in range(self._max_retries):
+        tries = transient = 0          # 일시적 오류는 따로 센다 — 기다리는 시간이 다르다
+        while True:
             self._throttle()
             try:
                 response = requests.get(
                     url, headers=self._headers(tr_id), params=params, timeout=10
                 )
             except (requests.ConnectionError, requests.Timeout) as e:
-                last = e
-                if attempt < self._max_retries - 1:
-                    time.sleep(self._backoff_base * (2**attempt))
+                tries += 1
+                if tries < self._max_retries:
+                    time.sleep(self._backoff_base * (2 ** (tries - 1)))
                     continue
                 raise KISError(f"{tr_id} 연결 실패 — 재시도 소진: {e}") from e
-            if response.status_code in _RETRYABLE and attempt < self._max_retries - 1:
-                time.sleep(self._backoff_base * (2**attempt))
-                continue
+            if response.status_code in _RETRYABLE:
+                tries += 1
+                if tries < self._max_retries:
+                    time.sleep(self._backoff_base * (2 ** (tries - 1)))
+                    continue
             try:
                 return self._unwrap(response, tr_id)
             except KISTransientError as e:
@@ -261,14 +268,14 @@ class KISClient:
                 # 응답 레벨 오류라 위 status_code 판정에 걸리지 못하고 그대로
                 # 빠져나갔다. 2026-09-15 실측: 잔고조회 첫 호출이 여기 걸려
                 # 그날 사이클이 시작도 못 했다(기록 전이라 알림도 없었다).
-                last = e
-                if attempt >= self._max_retries - 1:
+                transient += 1
+                if transient >= self._transient_attempts:
                     raise
-                wait = self._backoff_base * (2**attempt)
+                wait = (self._transient_base * (2 ** (transient - 1))
+                        + random.uniform(0, self._transient_jitter))
                 log.warning("%s 일시적 오류 — %.1f초 후 재시도(%d/%d): %s",
-                            tr_id, wait, attempt + 1, self._max_retries, e)
+                            tr_id, wait, transient, self._transient_attempts, e)
                 time.sleep(wait)
-        raise KISError(f"{tr_id} 재시도 소진{f': {last}' if last else ''}")
 
     def _post_order(self, path: str, tr_id: str, body: dict[str, str]) -> dict[str, Any]:
         """주문 POST — 재시도하지 않는다(중복 주문 방지)."""

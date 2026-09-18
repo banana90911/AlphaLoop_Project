@@ -15,3 +15,9 @@ min_interval_sec = 0.6       # 일봉 등 대량 조회 루프 간격(실측 기
 # 외부 API 공통 재시도(지수 백오프) — 현재 사용처는 KIS 어댑터.
 max_retries = 3
 backoff_base_sec = 1.0
+# 일시적 KIS 오류(초당 호출 제한)는 따로 둔다. 계좌 단위로 잠깐 막히는 것으로 보이고,
+# 1~2초 간격 재시도는 그 구간 안에 다 들어간다 — 2026-09-15·09-18 사이클이 첫 호출인
+# 잔고조회에서 8초 만에 죽었다. 6회·2초 지수면 약 62초까지 버틴다(동시호가 15:20까지 여유).
+transient_max_attempts = 6
+transient_backoff_base_sec = 2.0
+transient_jitter_sec = 0.5         # 여러 프로세스가 같은 초에 몰리지 않게

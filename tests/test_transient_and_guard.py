@@ -8,6 +8,7 @@ remarks:            2026-09-15 실거래 첫날 실패 재현. 잔고조회가 "
 """
 
 import pytest
+import requests
 
 from broker.kis_client import KISClient, KISError, KISTransientError
 from ops.guard import guard
@@ -15,6 +16,8 @@ from ops.guard import guard
 # 그날 실제로 돌아온 응답
 _RATE_LIMIT = {"rt_cd": "1", "msg_cd": "EGW00201",
                "msg1": "원장에서 허용 가능한 초당 거래건수를 초과하였습니다."}
+# 2026-09-18에 온 것은 코드가 달랐다(EGW00215). 문구로도 걸러야 하는 이유다.
+_RATE_LIMIT_215 = {**_RATE_LIMIT, "msg_cd": "EGW00215"}
 _NO_CASH = {"rt_cd": "1", "msg_cd": "40240000", "msg1": "주문가능금액이 부족합니다."}
 
 
@@ -55,6 +58,7 @@ def client(monkeypatch):
     c = KISClient.__new__(KISClient)
     c._min_interval, c._last_call = 0.0, 0.0
     c._max_retries, c._backoff_base = 3, 0.0     # 테스트는 기다리지 않는다
+    c._transient_attempts, c._transient_base, c._transient_jitter = 6, 0.0, 0.0
     monkeypatch.setattr(KISClient, "_headers", lambda self, tr: {})
     return c
 
@@ -84,7 +88,45 @@ def test_계속_제한이면_결국_올린다(client, monkeypatch):
     calls = _responses(monkeypatch, _RATE_LIMIT)
     with pytest.raises(KISTransientError):
         client._get("https://x", "/p", "TTTC8434R", {})
-    assert calls["n"] == 3                      # max_retries만큼만 시도
+    assert calls["n"] == 6                      # 일시적 오류 전용 횟수만큼
+
+
+def test_초당_제한은_일반_재시도보다_오래_버틴다(client, monkeypatch):
+    """1~2초 재시도 3번은 제한 구간 안에 다 들어간다 — 2026-09-15·09-18 사이클 사망."""
+    calls = _responses(monkeypatch, *([_RATE_LIMIT_215] * 4), {"rt_cd": "0", "output": "ok"})
+    assert client._get("https://x", "/p", "TTTC8434R", {})["output"] == "ok"
+    assert calls["n"] == 5                      # 3회에서 포기하지 않는다
+
+
+def test_다른_코드로_와도_문구로_걸러진다(client, monkeypatch):
+    calls = _responses(monkeypatch, _RATE_LIMIT_215, {"rt_cd": "0", "output": "ok"})
+    assert client._get("https://x", "/p", "TTTC8434R", {})["output"] == "ok"
+    assert calls["n"] == 2
+
+
+def test_대기는_점점_길어지고_지터가_붙는다(client, monkeypatch):
+    """같은 초에 여러 프로세스가 몰리면 다 같이 다시 막힌다."""
+    client._transient_base, client._transient_jitter = 2.0, 0.5
+    waits: list[float] = []
+    monkeypatch.setattr("broker.kis_client.time.sleep", waits.append)
+    _responses(monkeypatch, *([_RATE_LIMIT] * 3), {"rt_cd": "0", "output": "ok"})
+    client._get("https://x", "/p", "TTTC8434R", {})
+    assert len(waits) == 3
+    assert 2.0 <= waits[0] < 2.5 and 4.0 <= waits[1] < 4.5 and 8.0 <= waits[2] < 8.5
+
+
+def test_연결_실패는_기존_횟수를_지킨다(client, monkeypatch):
+    """일시적 오류만 오래 버틴다 — 연결 실패까지 1분을 끌면 배치가 늘어진다."""
+    calls = {"n": 0}
+
+    def boom(url, **kw):
+        calls["n"] += 1
+        raise requests.ConnectionError("끊김")
+
+    monkeypatch.setattr("broker.kis_client.requests.get", boom)
+    with pytest.raises(KISError):
+        client._get("https://x", "/p", "TTTC8434R", {})
+    assert calls["n"] == 3                      # max_retries
 
 
 def test_영구_오류는_재시도하지_않는다(client, monkeypatch):

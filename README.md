@@ -14,6 +14,7 @@
 - **리스크 통제**: 손절·트레일링·종목당 한도·총노출·일일 손실 한도를 코드가 강제한다. 손절은 KIS에 스톱지정가로 미리 등록해, 시스템이 꺼져 있는 동안에도 자동 체결된다.
 - **성과 측정**: 거래세·수수료·슬리피지·세금을 뺀 뒤 코스피 매수후보유 등 벤치마크 4종과 비교한다.
 - **대시보드**: 같은 DB를 조회 전용으로 열어 수익·포지션·결정 근거·정지 이력을 보여준다. 비밀번호로 로그인한 뒤 어느 기기에서든 본다.
+- **에이전트**: 알림이 오는 디스코드 채널에서 멘션으로 물으면 DB를 조회해 답한다. 조회 전용 도구만 쥐고 있어 주문·수정은 할 수 없고, DB로 답할 수 없는 질문에는 답하지 않는다.
 
 
 
@@ -52,6 +53,7 @@
 | 스키마·설정    | `pydantic` v2, `pydantic-settings`, `tomllib`                       |
 | 저장소       | `PostgreSQL` — 매매 코어와 같은 서버, 모든 프로세스의 유일한 공유점 (쓰기·조회 계정 분리)         |
 | 대시보드      | `FastAPI` 조회 전용 JSON API + `React`·`Vite`·`Tailwind CSS` (비밀번호 로그인) |
+| 에이전트       | `discord.py` 게이트웨이 봇 + `anthropic` SDK 도구 사용 (Claude Haiku, 조회 전용)      |
 | 배포        | 매매·DB·API는 NCP 서울 서버, 화면은 Vercel, 둘을 잇는 길은 Tailscale Funnel         |
 | 로깅·테스트    | `structlog`, `pytest`, `ruff`, `mypy`                               |
 
@@ -71,11 +73,12 @@
 | 04  | [04-data](docs/04-data.md)                         | 데이터 구성·품질 보정·후보 선별·vintage     |
 | 05  | [05-risk-engine](docs/05-risk-engine.md)           | 리스크 엔진 — 하드룰·검사 순서·안전 정지       |
 | 06  | [06-sizing-portfolio](docs/06-sizing-portfolio.md) | 포지션 사이징·청산                     |
-| 07  | [07-data-model](docs/07-data-model.md)             | 데이터 모델 (PostgreSQL 19개 표)      |
+| 07  | [07-data-model](docs/07-data-model.md)             | 데이터 모델 (PostgreSQL 21개 표 — 에이전트 2개는 후속) |
 | 08  | [08-dashboard](docs/08-dashboard.md)               | 대시보드 — 불변식·화면 구성·접속·로그인        |
 | 09  | [09-evaluation](docs/09-evaluation.md)             | 성과 평가·벤치마크·백테스트·게이트·실행 이력      |
 | 10  | [10-operations](docs/10-operations.md)             | 운영 — 멱등성·DB 권한·백업·배포·조용한 실패 차단 |
 | 11  | [11-infrastructure](docs/11-infrastructure.md)     | 인프라 — 서버·DB·API·배포·cron이 실제로 도는 방식 |
+| 12  | [12-agent](docs/12-agent.md)                       | 에이전트 — 디스코드 조회 창구·도구·쓰기 금지·프롬프트·검증 |
 
 
 외부 API 명세 -> [docs/reference/external-apis.md](docs/reference/external-apis.md)

@@ -73,6 +73,7 @@ KIS API로 주문 송출. 손절 예약.
 ├── run_watch.py                # 보유 감시 진입점 (장중 30분 간격, 손절 무결성만) ✅
 ├── run_gate.py                 # Go/No-Go 게이트 실행기 (설계 정합 엔진 연속 실행)
 ├── run_walkforward.py          # 워크포워드 OOS 검증 (학습 구간 선택 → 검증 구간 적용) ✅
+├── run_agent.py                # 에이전트 상주 진입점 (systemd가 띄운다 — cron 아님) ○
 ├── pyproject.toml              # 의존성 + ruff/mypy 가드레일 설정 (불변식 기계 강제)
 ├── README.md                   # 리포 진입 안내 (설계 정본은 docs/)
 │
@@ -147,6 +148,15 @@ KIS API로 주문 송출. 손절 예약.
 │   ├── api.py                  #   FastAPI 조회 JSON API (SELECT 전용 계정 — 08-dashboard 8.1) ✅(네 영역 + 균등가중 워치리스트 벤치마크)
 │   ├── auth.py                 #   비밀번호 로그인·출입증 발급/검증 — 08-dashboard 8.6 ✅
 │   └── web/                    #   프론트 React+Vite+Tailwind (Vercel 배포 — 10-ops 10.13) ○
+│
+├── agent/                      # 디스코드 조회 창구 (읽기 전용 — 매매 코어를 한 줄도 안 건드림) — 12-agent
+│   ├── bot.py                  #   게이트웨이 연결·멘션 수신·발신자 대조 ○
+│   ├── loop.py                 #   anthropic 도구 사용 루프 (프레임워크 없음) ○
+│   ├── tools.py                #   도구 정의 + 고정 SQL (모델은 SQL을 쓰지 않는다) — 12.4 ○
+│   ├── render.py               #   도구별 렌더러 — 숫자를 만드는 유일한 곳 — 12.6 ○
+│   ├── journal.py              #   agent_messages·agent_tool_calls 적재 — 12.10 ○
+│   ├── prompts/                #   프롬프트 파일 + 버전·해시 로더 — 12.9 ○
+│   └── eval/                   #   골든 데이터셋·3층 채점 (시드 DB에 대고 실행) — 12.11 ○
 │
 ├── analysis/                   # 탐색용 분석 (정식 산출물 아님 — 파라미터 정립 근거 수집)
 │   ├── momentum_ic.py          #   모멘텀 정의별 Rank IC 비교 (신호 자체의 예측력 분리) ✅

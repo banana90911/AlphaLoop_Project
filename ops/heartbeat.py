@@ -2,7 +2,7 @@
 description:        Heartbeat — 조용한 실패 차단 (외부 모니터링 ping)
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/08/30
+last modified date: 2026/09/27
 remarks:
 """
 
@@ -33,26 +33,28 @@ def _ping(suffix: str = "", payload: str | None = None) -> bool:
 
 
 def ping_start() -> bool:
-    """사이클 시작 신호를 보낸다."""
+    """사이클 시작 신호 전송"""
     return _ping("/start")
 
 
 def ping_success(detail: str = "") -> bool:
-    """정상 종료 신호를 보낸다(안 오면 모니터링이 알람)."""
+    """정상 종료 신호 전송"""
     return _ping("", detail)
 
 
 def ping_failure(detail: str = "") -> bool:
-    """사이클 실패를 즉시 알린다."""
+    """사이클 실패 알림"""
     return _ping("/fail", detail)
 
 
 def ping_safe_stop(cause: str) -> bool:
-    """안전 정지 신호를 별도 주소로 즉시 보낸다(없으면 /fail로 대체)."""
+    """안전 정지 신호를 별도 주소로 전송"""
     s = get_settings()
     url = getattr(s, "healthcheck_safestop_url", "") or ""
+    
     if not url:
         return ping_failure(f"SafeStop: {cause}")
+    
     try:
         r = requests.post(url, data=f"SafeStop: {cause}"[:2000], timeout=TIMEOUT_S)
         return r.status_code < 400

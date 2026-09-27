@@ -2,7 +2,7 @@
 description:        설정 단일 로딩 진입점 (시크릿 .env + 운영 파라미터 toml)
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/08/30
+last modified date: 2026/09/17
 remarks:
 """
 
@@ -17,7 +17,7 @@ REPO_ROOT = CONFIG_DIR.parent
 
 
 class Settings(BaseSettings):
-    """시크릿 — `.env`/환경변수에서만 로드. 기본값은 빈 문자열(미설정 허용, 사용처에서 검증)."""
+    """시크릿 값"""
 
     model_config = SettingsConfigDict(
         env_file=REPO_ROOT / ".env", extra="ignore", case_sensitive=False
@@ -54,13 +54,13 @@ class Settings(BaseSettings):
     # ── 외부 현금흐름(입출금) 감지 — 매매 결정을 바꾸지 않으므로 손잡이 7개에 안 든다 ──
     # 관찰 모드: 흡수 임계 미만 잔차까지 전부 기록해 분포를 모은다(임계 확정 전까지 켜둔다).
     cashflow_observation_mode: bool = True
-    # 금액 서명(입금 ...777 / 출금 ...555)으로 Kind를 자동 확정. 기본 비활성(10-ops).
+    # 금액 서명(입금 ...777 / 출금 ...555)으로 Kind를 자동 확정
     cashflow_signature_enabled: bool = False
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """시크릿 싱글톤."""
+    """시크릿 반환"""
     return Settings()
 
 

@@ -2,7 +2,7 @@
 description:        Discord 웹훅 알림 (조기 경보 + 시크릿 마스킹)
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/09/08
+last modified date: 2026/09/27
 remarks:
 """
 
@@ -140,9 +140,9 @@ def notify_ingest_summary(
 
 class TradeLine(NamedTuple):
     """매매 알림 (1 건) — `orders` 한 행"""
-    code: str
-    name: str | None
-    side: str                   # buy / sell
+    code: str                   # 종목코드
+    name: str | None            # 종목명
+    side: str                   # 매수 / 매도 / None
     purpose: str                # entry / exit / stop / stopAmend
     quantity: int               # 체결 수량(미체결이면 0)
     price: float | None         # 평균 체결가

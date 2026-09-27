@@ -2,7 +2,7 @@
 description:        사이클 실행
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/09/08
+last modified date: 2026/09/22
 remarks:
 """
 
@@ -26,7 +26,7 @@ LOOKBACK_DAYS = 450
 
 
 def build_account(client: KISClient, market_map: dict[str, str]) -> tuple[Account, dict[str, int]]:
-    """KIS 잔고 -> Account + {종목코드: 보유수량}"""
+    """원시 KIS 잔고 데이터를 Account 객체로 변환"""
     balance = client.fetch_balance()
 
     positions = [
@@ -34,25 +34,23 @@ def build_account(client: KISClient, market_map: dict[str, str]) -> tuple[Accoun
                  market_map.get(holding.code, "KOSPI"))
         for holding in balance.holdings
     ]
-    account = Account(start_capital=balance.base_asset, cash=balance.cash,
-                      positions=positions)
+    account = Account(start_capital=balance.base_asset, cash=balance.cash, positions=positions)
 
     return account, {holding.code: holding.qty for holding in balance.holdings}
 
 
 def _cycle_trades(conn, cycle_id: str) -> list[notify.TradeLine]:
-    """이 사이클이 실제로 낸 주문을 장부에서 읽어 온다.
-
-    `CycleResult.order_ids`는 식별자뿐이라 무엇을 얼마에 샀는지가 없다. 계획이 아니라
-    **체결된 결과**를 알려야 하므로 기록된 쪽(`orders`)을 읽는다.
-    """
+    """사이클 주문 조회"""
     rows = conn.execute(
         'SELECT o.symbol_id, s.name, o.side, o.purpose, o.filled_quantity, '
-        'o.average_fill_price, o.status FROM orders o '
+        'o.average_fill_price, o.status '
+        'FROM orders o '
         'LEFT JOIN symbols s ON s.symbol_id = o.symbol_id '
-        'WHERE o.cycle_id = %s ORDER BY o.ordered_date_time',
+        'WHERE o.cycle_id = %s '
+        'ORDER BY o.ordered_date_time',
         (cycle_id,),
     ).fetchall()
+    
     return [
         notify.TradeLine(
             r["symbol_id"], r["name"], r["side"], r["purpose"],
@@ -65,7 +63,7 @@ def _cycle_trades(conn, cycle_id: str) -> list[notify.TradeLine]:
 
 
 def _open_holdings(conn) -> list[notify.HoldingLine]:
-    """사이클이 끝난 시점의 보유 목록."""
+    """사이클이 끝난 시점의 보유 목록"""
     rows = conn.execute(
         'SELECT p.symbol_id, s.name, p.quantity, p.average_price, p.current_stop_price '
         'FROM positions p LEFT JOIN symbols s ON s.symbol_id = p.symbol_id '
@@ -81,7 +79,7 @@ def _open_holdings(conn) -> list[notify.HoldingLine]:
 
 
 def main() -> None:
-    """CLI 진입점 — 잔고·시세·게이트 입력을 모아 cycle.run에 넘기고 결과를 출력한다."""
+    """CLI 진입점 — 잔고·시세·게이트 입력을 모아 cycle.run에 넘기고 결과를 출력"""
     ap = argparse.ArgumentParser(description="AlphaLoop 매매 사이클")
     ap.add_argument("--codes", nargs="*", default=None,
                     help="후보 종목코드. 생략 시 당일 DailyScores 통과 종목 전체(+보유 종목)")

@@ -2,7 +2,7 @@
 description:        KIS(한국투자증권) Open API 클라이언트
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/08/30
+last modified date: 2026/09/27
 remarks:
 """
 
@@ -81,9 +81,7 @@ class KISTransientError(KISError):
     """
 
 
-# 일시적으로 판정할 근거. msg_cd가 오면 그걸 쓰고, 없으면 문구로 가린다.
-# 2026-09-15 실측 메시지: "원장에서 허용 가능한 초당 거래건수를 초과하였습니다."
-_TRANSIENT_CODES = frozenset({"EGW00201"})
+_TRANSIENT_CODES = frozenset({"EGW00201"})  # 초당 거래건수
 _TRANSIENT_HINTS = ("초당 거래건수", "초당거래건수", "잠시 후 다시", "일시적")
 
 
@@ -94,7 +92,7 @@ class _Token:
 
 
 def _num(v: Any) -> float:
-    """KIS 응답의 숫자 — 문자열로 오고 빈 값·None이 섞인다. 못 읽으면 0.0."""
+    """KIS가 숫자를 문자열로 줌. 형변환 : text -> float"""
     try:
         return float(v)
     except (TypeError, ValueError):
@@ -102,12 +100,7 @@ def _num(v: Any) -> float:
 
 
 def _num_or_none(v: Any) -> float | None:
-    """`_num`과 같되 **못 읽으면 None**을 준다.
-
-    "값이 0"과 "값이 없음"을 가려야 하는 자리에 쓴다. `_num`은 둘 다 0.0으로 만들어,
-    `a or b` 폴백에서 진짜 0이 "없음"으로 오인된다(2026-09-10 실측: 어제 잔고가
-    진짜 0원이었는데 오늘 총자산으로 폴백해 당일 손익률이 −50%로 나왔다).
-    """
+    """`_num`과 동일. 못 읽으면 None 반환"""
     try:
         return float(v)
     except (TypeError, ValueError):
@@ -116,7 +109,7 @@ def _num_or_none(v: Any) -> float | None:
 
 @dataclass
 class Holding:
-    """정규화한 보유 1건. KIS 응답 필드명을 바깥으로 새어나가지 않게 하는 경계."""
+    """정규화한 보유 1건"""
     code: str
     qty: int
     avg_price: float
@@ -126,7 +119,7 @@ class Holding:
 
 @dataclass
 class Balance:
-    """정규화한 계좌 스냅샷(base_asset=전일 총자산 = 서킷브레이커 기준선, 05-risk 5.2)."""
+    """정규화한 계좌 스냅샷"""
     cash: float
     total_asset: float
     base_asset: float
@@ -137,7 +130,7 @@ class KISClient:
     """KIS REST 클라이언트"""
 
     def __init__(self, mode: str | None = None, settings: Settings | None = None) -> None:
-        """모드(real/paper)별 프로필·인증키·요청 한도를 로드한다."""
+        """모드(real/paper)별 프로필·인증키·요청 한도 로드"""
         settings = settings or get_settings()
         mode = mode or settings.trading_mode
         if mode not in _PROFILES:
@@ -175,8 +168,10 @@ class KISClient:
     # ── 토큰 ────────────────────────────────────────────────────────
     def _load_cached_token(self) -> _Token | None:
         """캐시된 토큰이 유효하면(만료 10분 전까지) 반환, 아니면 None."""
+        # 토큰의 만료시각이 지금부터 10분 후 보다 더 뒤
         if self._token and self._token.expires_at > now_utc() + timedelta(minutes=10):
             return self._token
+        # 메모리 캐시가 없거나 곧 만료 예정
         if self._token_file.exists():
             data = json.loads(self._token_file.read_text())
             exp = datetime.fromisoformat(data["expires_at"])
@@ -186,7 +181,7 @@ class KISClient:
         return None
 
     def _issue_token(self) -> _Token:
-        """새 액세스 토큰을 발급받아 캐시 파일에 저장한다."""
+        """새 액세스 토큰을 발급받아 캐시 파일에 저장"""
         response = requests.post(
             f"{self._profile['domain']}/oauth2/tokenP",
             json={
@@ -197,6 +192,8 @@ class KISClient:
             timeout=10,
         )
         body = response.json()
+
+        # 실패 시
         if "access_token" not in body:
             # EGW00133 = 발급 1분당 1회 제한
             ec, ed = body.get("error_code"), body.get("error_description")
@@ -211,19 +208,20 @@ class KISClient:
         return tok
 
     def _bearer(self) -> str:
-        """유효한 액세스 토큰 문자열을 반환한다(캐시 우선, 없으면 발급)."""
+        """유효한 액세스 토큰 문자열 반환"""
         return (self._load_cached_token() or self._issue_token()).access_token
 
     # ── 공통 요청 ────────────────────────────────────────────────────
     def _throttle(self) -> None:
-        """직전 호출과의 최소 간격을 지킨다(레이트 리밋 준수)."""
+        """직전 API 호출 시각(self._last_call)과 지금 시각의 간격이 self._min_interval보다
+        짧으면 그 차이만큼 time.sleep"""
         wait = self._min_interval - (time.monotonic() - self._last_call)
         if wait > 0:
             time.sleep(wait)
         self._last_call = time.monotonic()
 
     def _headers(self, tr_id: str) -> dict[str, str]:
-        """인증·TR ID가 포함된 공통 요청 헤더를 만든다."""
+        """모든 요청에 필요한 공통 헤더"""
         return {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self._bearer()}",
@@ -234,18 +232,15 @@ class KISClient:
         }
 
     def _get(self, domain: str, path: str, tr_id: str, params: dict[str, str]) -> dict[str, Any]:
-        """조회 GET — 일시적 5xx와 연결 실패는 지수 백오프로 재시도한다.
-
-        연결 자체가 끊기면(`ConnectionError`·`Timeout`) 상태 코드가 없어서 5xx 판정에
-        걸리지 못하고 예외가 그대로 빠져나갔다. 성격은 5xx와 같은 일시적 장애인데
-        재시도 한 번 없이 실패로 기록됐다 — 전 종목 배치에서 2,535번 중 한 번만 끊겨도
-        그날 배치가 `partial`이 되고 신선도 검사가 사이클을 통째로 멈춘다
-        (2026-09-09·09-10 이틀 연속 발생, 매번 다른 종목).
-        """
+        """조회 KIS API 호출이 공통으로 거치는 GET 요청 함수"""
         url = f"{domain}{path}"
-        tries = transient = 0          # 일시적 오류는 따로 센다 — 기다리는 시간이 다르다
+        
+        tries = 0       # '연결 실패/5xx'용 재시도 횟수
+        transient = 0   # 'KIS 응답상 일시적 오류'용 재시도 횟수
+        
         while True:
-            self._throttle()
+            self._throttle()  # 초당 호출 제한 때문에
+            
             try:
                 response = requests.get(
                     url, headers=self._headers(tr_id), params=params, timeout=10
@@ -256,6 +251,8 @@ class KISClient:
                     time.sleep(self._backoff_base * (2 ** (tries - 1)))
                     continue
                 raise KISError(f"{tr_id} 연결 실패 — 재시도 소진: {e}") from e
+            
+            # 서버 일시장애
             if response.status_code in _RETRYABLE:
                 tries += 1
                 if tries < self._max_retries:
@@ -264,10 +261,6 @@ class KISClient:
             try:
                 return self._unwrap(response, tr_id)
             except KISTransientError as e:
-                # 초당 호출 제한은 5xx·연결 실패와 성격이 같은 일시적 장애인데,
-                # 응답 레벨 오류라 위 status_code 판정에 걸리지 못하고 그대로
-                # 빠져나갔다. 2026-09-15 실측: 잔고조회 첫 호출이 여기 걸려
-                # 그날 사이클이 시작도 못 했다(기록 전이라 알림도 없었다).
                 transient += 1
                 if transient >= self._transient_attempts:
                     raise
@@ -288,12 +281,13 @@ class KISClient:
         )
         return self._unwrap(response, tr_id)
 
-    @staticmethod
+    @staticmethod  # self 없이 클래스 자체로도 부를 수 있음. KISClient._unwrap(response, tr_id)
     def _unwrap(response: requests.Response, tr_id: str) -> dict[str, Any]:
-        """HTTP/응답코드 오류를 검사하고 본문(JSON)만 꺼내 반환한다."""
+        """HTTP/응답코드 오류 검사. 본문(JSON)만 꺼내 반환"""
         if response.status_code in (401, 403, 404):
             raise KISError(f"{tr_id} 영구 오류 HTTP {response.status_code}: {response.text[:200]}")
         body = response.json()
+        
         if str(body.get("rt_cd", "0")) not in ("0", ""):
             msg = str(body.get("msg1") or "")
             code = str(body.get("msg_cd") or "")
@@ -305,26 +299,26 @@ class KISClient:
 
     # ── 조회 API ─────────────────────────────────────────────────────
     def get_balance(self) -> dict[str, Any]:
-        """주식 잔고 조회"""
+        """KIS 잔고조회 API를 호출해서 JSON 그대로 반환 (가공X)"""
         path = "/uapi/domestic-stock/v1/trading/inquire-balance"
         params = {
-            "CANO": self.cano,
-            "ACNT_PRDT_CD": self.acnt_prdt,
-            "AFHR_FLPR_YN": "N",
-            "OFL_YN": "",
-            "INQR_DVSN": "02",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "00",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": "",
+            "CANO": self.cano,                  # 계좌번호 앞 8자리
+            "ACNT_PRDT_CD": self.acnt_prdt,     # 계좌번호 뒷 2자리 
+            "AFHR_FLPR_YN": "N",                # 시간외단일가 여부 
+            "OFL_YN": "",                       # 오프라인 여부
+            "INQR_DVSN": "02",                  # 조회구분 (02=종목별, 01=대출일별)
+            "UNPR_DVSN": "01",                  # 단가구분 (01=평균단가-고정값)
+            "FUND_STTL_ICLD_YN": "N",           # 펀드결제분 포함여부 (미사용)
+            "FNCG_AMT_AUTO_RDPT_YN": "N",       # 융자금액자동상환여부 (미사용)
+            "PRCS_DVSN": "00",                  # 처리 유형 (00=기본값)
+            "CTX_AREA_FK100": "",               # 페이지네이션(다음 페이지 조회용)
+            "CTX_AREA_NK100": "",               # 페이지네이션(다음 페이지 조회용)
         }
 
         return self._get(self._profile["domain"], path, self._profile["tr"]["balance"], params)
 
     def fetch_balance(self) -> Balance:
-        """잔고를 정규화해서 반환"""
+        """'get_balance'가 돌려주는 KIS 원시 JSON을 파싱해서 정규화된 Balance 객체로 변환"""
         body = self.get_balance()
         summary = (body.get("output2") or [{}])[0]
 
@@ -343,16 +337,12 @@ class KISClient:
         d2 = _num_or_none(summary.get("prvs_rcdl_excc_amt"))
         cash = d2 if d2 is not None else _num(summary.get("dnca_tot_amt"))
 
-        # 0원을 "값이 없다"로 읽으면 안 된다. 계좌가 정말 비어 있던 날 KIS는
-        # 전일 총자산을 '0'으로 **정확히** 돌려주는데, 그걸 폴백으로 흘려보내면
-        # 기준선이 오늘 총자산이 되고, 그 위에 오늘 입금액을 또 더해 손익률이
-        # 반토막 난다(2026-09-10 실측: +13,694원 입금이 당일 −50%로 찍혔다).
         total = _num_or_none(summary.get("tot_evlu_amt"))
         bfdy = _num_or_none(summary.get("bfdy_tot_asst_evlu_amt"))
+        
         return Balance(
             cash=cash,
             total_asset=total if total is not None else cash,
-            # 전일 총자산 필드가 아예 없을 때만(계좌 개설 첫날 등) 오늘 값으로 대신한다
             base_asset=bfdy if bfdy is not None
                        else (total if total is not None else cash),
             holdings=holdings,

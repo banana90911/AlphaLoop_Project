@@ -2,8 +2,9 @@
 description:        워크포워드 OOS 검증 (학습 구간 선택 → 다음 구간 적용)
 author:             siheon jung
 created date:       2026/08/29
-last modified date: 2026/08/30
-remarks:
+last modified date: 2026/09/27
+remarks:            --capital 추가 — 소액 실계좌(예: 20만원) 규모에서 max_positions
+                     저값(3~5)이 동일가중 수량 0주 floor 문제를 완화하는지 검증하기 위함
 """
 
 import argparse
@@ -20,7 +21,7 @@ from config.settings import load_params
 from data import cache
 from eval import metrics
 
-CAPITAL = 10_000_000.0
+DEFAULT_CAPITAL = 10_000_000.0
 WARMUP_START = date(2022, 1, 1)      # 12-1 모멘텀 워밍업 이후부터 분할
 
 # 과최적화 위험이 큰 손잡이만 그리드로
@@ -28,7 +29,7 @@ GRID = {
     ("exits", "partial_frac"): [0.0, 0.4],
     ("exits", "trail_k"): [2.75, 4.0],
     ("exits", "max_hold_days"): [20, 9999],
-    ("limits", "max_positions"): [10, 20],
+    ("limits", "max_positions"): [3, 4, 5, 10, 20],
 }
 
 
@@ -51,6 +52,8 @@ def main() -> None:
     ap.add_argument("--train", type=int, default=250, help="학습 거래일 수(약 12개월)")
     ap.add_argument("--test", type=int, default=125, help="검증 거래일 수(약 6개월)")
     ap.add_argument("--out", default="tune_results/walkforward_oos.json")
+    ap.add_argument("--capital", type=float, default=DEFAULT_CAPITAL,
+                    help="백테스트 초기 자본(원) — 소액 실계좌 검증 시 실제 잔고로 지정")
     args = ap.parse_args()
 
     base, tax = load_params("risk_params"), load_params("tax_rates")
@@ -68,7 +71,7 @@ def main() -> None:
     print(f"학습 {args.train}일 → 검증 {args.test}일\n")
 
     def run(params, start, end, schedule=None):
-        return se.run(prices, markets, start=start, end=end, initial_capital=CAPITAL,
+        return se.run(prices, markets, start=start, end=end, initial_capital=args.capital,
                       entry_timing="last", params=params, tax_params=tax, feats=feats,
                       params_schedule=schedule)
 

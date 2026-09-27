@@ -3,7 +3,10 @@
 
 [limits]
 daily_loss_pct = 0.04        # 일일 -4% 서킷브레이커 (05-risk A A: 실현+미실현 MTM·당일시작자본 대비)
-max_positions = 20           # 동시 보유 종목 수 = 동일가중 사이징의 목표 보유 수 (06-sizing 6.1)
+max_positions = 5            # 동시 보유 종목 수 = 동일가중 사이징의 목표 보유 수 (06-sizing 6.1)
+                              # 20만원 소액 실계좌 검증 중: 20분할은 종목당 1만원이라 대부분
+                              # 0주로 floor됨(워크포워드+실사이클 검증, 2026/09/27). 5분할(4만원)로
+                              # 완화 — single_order_pct(30%) 한도 대비 20%라 SafeStop 여유 있음.
 gross_exposure_max = 1.0     # 총노출 상한(레버리지 금지 — 05-risk A.1)
 adv_participation = 0.01     # 유동성 한도: 일평균거래대금(ADV)의 1%
 
